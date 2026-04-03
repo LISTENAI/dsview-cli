@@ -1,0 +1,7 @@
+[package]
+name = "dsview-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dsview-sys = { path = "../dsview-sys" }

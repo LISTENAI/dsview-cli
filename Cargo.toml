@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "crates/dsview-cli",
+  "crates/dsview-core",
+  "crates/dsview-sys",
+]
+resolver = "2"
