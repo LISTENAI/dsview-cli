@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 dsview-sys = { path = "../dsview-sys" }
+thiserror = "2"

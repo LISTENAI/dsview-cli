@@ -1,0 +1,96 @@
+cmake_minimum_required(VERSION 3.16)
+project(dsview_runtime C CXX)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+if(NOT DEFINED DSVIEW_REPO_ROOT)
+    message(FATAL_ERROR "DSVIEW_REPO_ROOT must point at the repository root")
+endif()
+
+set(DSVIEW_ROOT "${DSVIEW_REPO_ROOT}/DSView")
+set(LIBSIGROK_ROOT "${DSVIEW_ROOT}/libsigrok4DSL")
+set(COMMON_ROOT "${DSVIEW_ROOT}/common")
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLIB REQUIRED glib-2.0)
+pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+pkg_check_modules(FFTW REQUIRED fftw3)
+find_package(ZLIB REQUIRED)
+find_package(Threads REQUIRED)
+
+add_library(dsview_runtime SHARED
+    ${COMMON_ROOT}/log/xlog.c
+    ${COMMON_ROOT}/minizip/ioapi.c
+    ${COMMON_ROOT}/minizip/unzip.c
+    ${COMMON_ROOT}/minizip/zip.c
+    ${LIBSIGROK_ROOT}/version.c
+    ${LIBSIGROK_ROOT}/strutil.c
+    ${LIBSIGROK_ROOT}/std.c
+    ${LIBSIGROK_ROOT}/session_driver.c
+    ${LIBSIGROK_ROOT}/session.c
+    ${LIBSIGROK_ROOT}/log.c
+    ${LIBSIGROK_ROOT}/hwdriver.c
+    ${LIBSIGROK_ROOT}/error.c
+    ${LIBSIGROK_ROOT}/backend.c
+    ${LIBSIGROK_ROOT}/output/output.c
+    ${LIBSIGROK_ROOT}/input/input.c
+    ${LIBSIGROK_ROOT}/hardware/demo/demo.c
+    ${LIBSIGROK_ROOT}/input/in_binary.c
+    ${LIBSIGROK_ROOT}/input/in_vcd.c
+    ${LIBSIGROK_ROOT}/input/in_wav.c
+    ${LIBSIGROK_ROOT}/output/csv.c
+    ${LIBSIGROK_ROOT}/output/gnuplot.c
+    ${LIBSIGROK_ROOT}/output/srzip.c
+    ${LIBSIGROK_ROOT}/output/vcd.c
+    ${LIBSIGROK_ROOT}/hardware/DSL/dslogic.c
+    ${LIBSIGROK_ROOT}/hardware/common/usb.c
+    ${LIBSIGROK_ROOT}/hardware/common/ezusb.c
+    ${LIBSIGROK_ROOT}/trigger.c
+    ${LIBSIGROK_ROOT}/dsdevice.c
+    ${LIBSIGROK_ROOT}/hardware/DSL/dscope.c
+    ${LIBSIGROK_ROOT}/hardware/DSL/command.c
+    ${LIBSIGROK_ROOT}/hardware/DSL/dsl.c
+    ${LIBSIGROK_ROOT}/lib_main.c
+)
+
+target_include_directories(dsview_runtime PRIVATE
+    ${DSVIEW_ROOT}
+    ${LIBSIGROK_ROOT}
+    ${COMMON_ROOT}
+    ${GLIB_INCLUDE_DIRS}
+    ${LIBUSB_INCLUDE_DIRS}
+    ${FFTW_INCLUDE_DIRS}
+)
+
+target_compile_definitions(dsview_runtime PRIVATE
+    HAVE_LIBUSB_1_0=1
+    HAVE_DSL_DEVICE=1
+    HAVE_LA_DEMO=1
+)
+
+target_compile_options(dsview_runtime PRIVATE
+    -Wall
+    -Wextra
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-sign-compare
+    -Wno-missing-field-initializers
+    -Wno-discarded-qualifiers
+)
+
+target_link_libraries(dsview_runtime PRIVATE
+    ${GLIB_LIBRARIES}
+    ${LIBUSB_LIBRARIES}
+    ${FFTW_LIBRARIES}
+    ZLIB::ZLIB
+    Threads::Threads
+    m
+)
+
+set_target_properties(dsview_runtime PROPERTIES
+    OUTPUT_NAME dsview_runtime
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)

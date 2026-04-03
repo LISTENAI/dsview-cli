@@ -7,7 +7,7 @@ This roadmap takes DSView CLI from project setup to a first usable Rust-based ca
 ## Phases
 
 - [x] **Phase 1: Native Integration Foundation** - Prove and stabilize the Rust-to-DSView native boundary.
-- [ ] **Phase 2: Device Discovery and Session Bring-Up** - Enumerate `DSLogic Plus` devices and open sessions safely.
+- [x] **Phase 2: Device Discovery and Session Bring-Up** - Enumerate `DSLogic Plus` devices and open sessions safely.
 - [ ] **Phase 3: Capture Configuration Surface** - Expose and validate the minimum useful capture parameters.
 - [ ] **Phase 4: Acquisition Execution** - Run reliable logic captures and handle session lifecycle cleanly.
 - [ ] **Phase 5: Export Artifacts** - Produce VCD waveform files and machine-readable capture metadata.
@@ -41,9 +41,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Implement device enumeration and filtering for supported devices.
-- [ ] 02-02: Implement session open/close flow for `DSLogic Plus`.
-- [ ] 02-03: Normalize native device/session errors into stable CLI diagnostics.
+- [x] 02-01: Implement device enumeration and filtering for supported devices.
+- [x] 02-02: Implement session open/close flow for `DSLogic Plus`.
+- [x] 02-03: Normalize native device/session errors into stable CLI diagnostics.
 
 ### Phase 3: Capture Configuration Surface
 **Goal**: Expose the minimum useful capture controls for `DSLogic Plus` and validate them before acquisition starts.
@@ -113,7 +113,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Native Integration Foundation | 3/3 | Complete | 2026-04-03 |
-| 2. Device Discovery and Session Bring-Up | 0/3 | Not started | - |
+| 2. Device Discovery and Session Bring-Up | 3/3 | Complete | 2026-04-03 |
 | 3. Capture Configuration Surface | 0/3 | Not started | - |
 | 4. Acquisition Execution | 0/3 | Not started | - |
 | 5. Export Artifacts | 0/3 | Not started | - |
