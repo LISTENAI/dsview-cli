@@ -1,1 +1,3 @@
 /target
+/.openlobby-cache/
+.planning/phases/**/.continue-here.md
