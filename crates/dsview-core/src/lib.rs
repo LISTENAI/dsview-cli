@@ -2,6 +2,8 @@ use std::fmt;
 use std::fs;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 mod capture_config;
 
@@ -9,9 +11,11 @@ pub use capture_config::{
     CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
     ValidatedCaptureConfig,
 };
-use dsview_sys::RuntimeBridge;
+use dsview_sys::{
+    AcquisitionPacketStatus, AcquisitionSummary, AcquisitionTerminalEvent, RuntimeBridge,
+};
 pub use dsview_sys::{
-    source_runtime_library_path, DeviceHandle, DeviceSummary, NativeErrorCode, RuntimeError,
+    DeviceHandle, DeviceSummary, NativeErrorCode, RuntimeError, source_runtime_library_path,
 };
 use thiserror::Error;
 
@@ -91,6 +95,81 @@ impl ResourceDirectory {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreflightStatus {
+    Ready,
+    EnvironmentNotReady,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcquisitionPreflight {
+    pub usb_permissions_ready: bool,
+    pub resource_dir_ready: bool,
+    pub source_runtime_ready: bool,
+    pub source_runtime_path: Option<PathBuf>,
+    pub supported_devices_available: bool,
+    pub selected_device_open_ready: bool,
+    pub config_apply_ready: bool,
+    pub status: PreflightStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureCompletion {
+    CleanSuccess,
+    StartFailure,
+    Detached,
+    ErrorTerminal,
+    Incomplete,
+    CleanupFailure,
+    Timeout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureRunSummary {
+    pub completion: CaptureCompletion,
+    pub summary: AcquisitionSummary,
+    pub cleanup_succeeded: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureRunRequest {
+    pub selection_handle: SelectionHandle,
+    pub config: CaptureConfigRequest,
+    pub wait_timeout: Duration,
+    pub poll_interval: Duration,
+}
+
+#[derive(Debug, Error)]
+pub enum CaptureRunError {
+    #[error(transparent)]
+    BringUp(#[from] BringUpError),
+    #[error("capture preflight is not ready for execution")]
+    EnvironmentNotReady,
+    #[error("capture start failed with {code:?}")]
+    StartFailed { code: NativeErrorCode },
+    #[error("capture timed out before natural completion")]
+    Timeout,
+    #[error("capture completed without the clean finite-capture signal")]
+    Incomplete,
+    #[error("capture cleanup failed: {0}")]
+    CleanupFailed(String),
+}
+
+#[derive(Debug)]
+pub struct CaptureSession<'a> {
+    opened: OpenedDevice<'a>,
+}
+
+impl<'a> CaptureSession<'a> {
+    pub fn device(&self) -> &SupportedDevice {
+        self.opened.device()
+    }
+
+    pub fn release(self) -> Result<(), BringUpError> {
+        self.opened.release()
+    }
+}
+
 #[derive(Debug)]
 pub struct Discovery {
     runtime: RuntimeBridge,
@@ -98,7 +177,10 @@ pub struct Discovery {
 }
 
 impl Discovery {
-    pub fn connect(library_path: impl AsRef<Path>, resource_dir: impl AsRef<Path>) -> Result<Self, BringUpError> {
+    pub fn connect(
+        library_path: impl AsRef<Path>,
+        resource_dir: impl AsRef<Path>,
+    ) -> Result<Self, BringUpError> {
         let resources = ResourceDirectory::discover(resource_dir)?;
         let runtime = RuntimeBridge::load(library_path).map_err(BringUpError::Runtime)?;
         runtime
@@ -110,7 +192,8 @@ impl Discovery {
     }
 
     pub fn connect_auto(resource_dir: impl AsRef<Path>) -> Result<Self, BringUpError> {
-        let library_path = source_runtime_library_path().ok_or(BringUpError::SourceRuntimeUnavailable)?;
+        let library_path =
+            source_runtime_library_path().ok_or(BringUpError::SourceRuntimeUnavailable)?;
         Self::connect(library_path, resource_dir)
     }
 
@@ -154,6 +237,7 @@ impl Drop for Discovery {
     }
 }
 
+#[derive(Debug)]
 pub struct OpenedDevice<'a> {
     runtime: &'a RuntimeBridge,
     device: SupportedDevice,
@@ -164,18 +248,63 @@ pub struct OpenedDevice<'a> {
 
 impl Discovery {
     pub fn dslogic_plus_capabilities(&self) -> Result<CaptureCapabilities, CaptureConfigError> {
-        let native = self.runtime.capture_capabilities().map_err(CaptureConfigError::from_runtime_error)?;
+        let opened = self
+            .open_first_supported_device_for_capabilities()
+            .map_err(CaptureConfigError::from_runtime_error)?;
+        let capabilities = self.dslogic_plus_capabilities_for_opened(&opened)?;
+        opened
+            .release()
+            .map_err(|error| CaptureConfigError::Runtime(error.to_string()))?;
+        Ok(capabilities)
+    }
+
+    fn open_first_supported_device_for_capabilities(
+        &self,
+    ) -> Result<OpenedDevice<'_>, RuntimeError> {
+        let devices = self.list_supported_devices().map_err(|error| match error {
+            BringUpError::Runtime(runtime) => runtime,
+            other => RuntimeError::InvalidArgument(other.to_string()),
+        })?;
+        let selected = devices.into_iter().next().ok_or_else(|| {
+            RuntimeError::InvalidArgument(BringUpError::NoSupportedDevices.to_string())
+        })?;
+
+        self.open_device(selected.selection_handle)
+            .map_err(|error| match error {
+                BringUpError::Runtime(runtime) => runtime,
+                other => RuntimeError::InvalidArgument(other.to_string()),
+            })
+    }
+
+    fn dslogic_plus_capabilities_for_opened(
+        &self,
+        _opened: &OpenedDevice<'_>,
+    ) -> Result<CaptureCapabilities, CaptureConfigError> {
+        let native = self
+            .runtime
+            .capture_capabilities()
+            .map_err(CaptureConfigError::from_runtime_error)?;
         Ok(CaptureCapabilities {
             total_channel_count: native.total_channel_count,
             active_channel_mode: native.active_channel_mode,
             channel_modes: native
                 .channel_modes
                 .into_iter()
-                .map(|mode| ChannelModeCapability {
-                    id: mode.id,
-                    name: mode.name,
-                    max_enabled_channels: mode.max_enabled_channels,
-                    supported_sample_rates: native.samplerates_hz.clone(),
+                .map(|mode| {
+                    let max_enabled_channels =
+                        channel_mode_max_enabled_channels(&mode.name, mode.max_enabled_channels);
+                    ChannelModeCapability {
+                        id: mode.id,
+                        name: mode.name.clone(),
+                        max_enabled_channels: if max_enabled_channels == 0
+                            && mode.id == native.active_channel_mode
+                        {
+                            native.valid_channel_count
+                        } else {
+                            max_enabled_channels
+                        },
+                        supported_sample_rates: native.samplerates_hz.clone(),
+                    }
                 })
                 .collect(),
             hardware_sample_capacity: native.hardware_depth,
@@ -206,6 +335,170 @@ impl Discovery {
             .set_samplerate(config.sample_rate_hz)
             .map_err(BringUpError::Runtime)?;
         Ok(())
+    }
+
+    pub fn acquisition_preflight(
+        &self,
+        selection_handle: SelectionHandle,
+        request: &CaptureConfigRequest,
+    ) -> AcquisitionPreflight {
+        let supported_devices = self.list_supported_devices().unwrap_or_default();
+        let supported_devices_available = !supported_devices.is_empty();
+        let source_runtime_path = source_runtime_library_path().map(Path::to_path_buf);
+        let source_runtime_ready = source_runtime_path.is_some();
+        let usb_permissions_ready = supported_devices_available;
+        let resource_dir_ready = true;
+
+        let mut selected_device_open_ready = false;
+        let mut config_apply_ready = false;
+
+        if supported_devices
+            .iter()
+            .any(|device| device.selection_handle == selection_handle)
+        {
+            if let Ok(opened) = self.open_device(selection_handle) {
+                selected_device_open_ready = true;
+                if let Ok(capabilities) = self.dslogic_plus_capabilities_for_opened(&opened) {
+                    if let Ok(validated) = capabilities.validate_request(request) {
+                        config_apply_ready = self
+                            .apply_capture_config(&validated, capabilities.total_channel_count)
+                            .is_ok();
+                    }
+                }
+                let _ = opened.release();
+            }
+        }
+
+        let status = if usb_permissions_ready
+            && resource_dir_ready
+            && source_runtime_ready
+            && selected_device_open_ready
+            && config_apply_ready
+        {
+            PreflightStatus::Ready
+        } else {
+            PreflightStatus::EnvironmentNotReady
+        };
+
+        AcquisitionPreflight {
+            usb_permissions_ready,
+            resource_dir_ready,
+            source_runtime_ready,
+            source_runtime_path,
+            supported_devices_available,
+            selected_device_open_ready,
+            config_apply_ready,
+            status,
+        }
+    }
+
+    pub fn prepare_capture_session(
+        &self,
+        selection_handle: SelectionHandle,
+        config: &ValidatedCaptureConfig,
+    ) -> Result<CaptureSession<'_>, CaptureRunError> {
+        let request = CaptureConfigRequest {
+            sample_rate_hz: config.sample_rate_hz,
+            sample_limit: config.requested_sample_limit,
+            enabled_channels: config.enabled_channels.iter().copied().collect(),
+        };
+        let preflight = self.acquisition_preflight(selection_handle, &request);
+        if preflight.status != PreflightStatus::Ready {
+            return Err(CaptureRunError::EnvironmentNotReady);
+        }
+
+        let opened = self.open_device(selection_handle)?;
+        let capabilities = self
+            .dslogic_plus_capabilities_for_opened(&opened)
+            .map_err(|error| {
+                CaptureRunError::BringUp(BringUpError::Runtime(RuntimeError::InvalidArgument(
+                    error.to_string(),
+                )))
+            })?;
+        self.apply_capture_config(config, capabilities.total_channel_count)?;
+        self.runtime
+            .reset_acquisition_summary()
+            .map_err(BringUpError::Runtime)?;
+        self.runtime
+            .register_acquisition_callbacks()
+            .map_err(BringUpError::Runtime)?;
+        Ok(CaptureSession { opened })
+    }
+
+    pub fn run_capture(
+        &self,
+        request: &CaptureRunRequest,
+    ) -> Result<CaptureRunSummary, CaptureRunError> {
+        let validated = self
+            .validate_capture_config(&request.config)
+            .map_err(|error| {
+                CaptureRunError::BringUp(BringUpError::Runtime(RuntimeError::InvalidArgument(
+                    error.to_string(),
+                )))
+            })?;
+        let session = self.prepare_capture_session(request.selection_handle, &validated)?;
+
+        let started = self
+            .runtime
+            .start_collect()
+            .map_err(BringUpError::Runtime)?;
+        if !started.start_status.is_ok() {
+            let _ = self.runtime.clear_acquisition_callbacks();
+            let _ = session.release();
+            return Err(CaptureRunError::StartFailed {
+                code: started.start_status,
+            });
+        }
+
+        let deadline = Instant::now() + request.wait_timeout;
+        let mut summary = started.summary;
+        while Instant::now() < deadline {
+            summary = self
+                .runtime
+                .acquisition_summary()
+                .map_err(BringUpError::Runtime)?;
+            if matches!(
+                summary.terminal_event,
+                AcquisitionTerminalEvent::NormalEnd
+                    | AcquisitionTerminalEvent::EndByDetached
+                    | AcquisitionTerminalEvent::EndByError
+            ) && !summary.is_collecting
+            {
+                break;
+            }
+            thread::sleep(request.poll_interval);
+        }
+
+        if summary.is_collecting {
+            let _ = self.runtime.stop_collect();
+            let _ = self.runtime.clear_acquisition_callbacks();
+            let _ = session.release();
+            return Err(CaptureRunError::Timeout);
+        }
+
+        let cleanup_succeeded =
+            self.runtime.clear_acquisition_callbacks().is_ok() && session.release().is_ok();
+        let completion = classify_capture_completion(&summary, cleanup_succeeded);
+        if !cleanup_succeeded {
+            return Err(CaptureRunError::CleanupFailed(
+                "failed to clear acquisition callbacks or release the active device".to_string(),
+            ));
+        }
+        if completion != CaptureCompletion::CleanSuccess {
+            return Err(match completion {
+                CaptureCompletion::Timeout => CaptureRunError::Timeout,
+                CaptureCompletion::CleanupFailure => CaptureRunError::CleanupFailed(
+                    "capture cleanup did not finish cleanly".to_string(),
+                ),
+                _ => CaptureRunError::Incomplete,
+            });
+        }
+
+        Ok(CaptureRunSummary {
+            completion,
+            summary,
+            cleanup_succeeded,
+        })
     }
 }
 
@@ -247,11 +540,12 @@ pub enum BringUpError {
     #[error("resource directory `{path}` is not readable")]
     UnreadableResourceDirectory { path: PathBuf },
     #[error("resource directory `{path}` is missing required files: {missing:?}")]
-    MissingResourceFiles { path: PathBuf, missing: Vec<&'static str> },
-    #[error("selected device handle `{selection_handle}` is not a supported DSLogic Plus")]
-    UnsupportedSelection {
-        selection_handle: SelectionHandle,
+    MissingResourceFiles {
+        path: PathBuf,
+        missing: Vec<&'static str>,
     },
+    #[error("selected device handle `{selection_handle}` is not a supported DSLogic Plus")]
+    UnsupportedSelection { selection_handle: SelectionHandle },
     #[error("no supported DSLogic Plus devices are currently available")]
     NoSupportedDevices,
 }
@@ -293,7 +587,9 @@ fn classify_supported_device_kind(
     }
 }
 
-pub fn require_supported_devices(devices: &[DeviceSummary]) -> Result<Vec<SupportedDevice>, BringUpError> {
+pub fn require_supported_devices(
+    devices: &[DeviceSummary],
+) -> Result<Vec<SupportedDevice>, BringUpError> {
     let filtered = filter_supported_devices(devices);
     if filtered.is_empty() {
         Err(BringUpError::NoSupportedDevices)
@@ -309,7 +605,9 @@ pub fn describe_native_error(code: NativeErrorCode) -> &'static str {
         NativeErrorCode::DeviceUsbIo => "USB io error!",
         NativeErrorCode::DeviceExclusive => "Device is busy!",
         NativeErrorCode::CallStatus => "The device is not in a state that allows this operation.",
-        NativeErrorCode::AlreadyDone => "The DSView runtime has already completed this lifecycle step.",
+        NativeErrorCode::AlreadyDone => {
+            "The DSView runtime has already completed this lifecycle step."
+        }
         NativeErrorCode::Arg => "The native runtime rejected an invalid argument.",
         _ => "The DSView runtime reported an unspecified error.",
     }
@@ -318,6 +616,44 @@ pub fn describe_native_error(code: NativeErrorCode) -> &'static str {
 /// Safe orchestration entry point for the Rust CLI layers.
 pub fn workspace_status() -> &'static str {
     "dsview-core ready"
+}
+
+fn classify_capture_completion(
+    summary: &AcquisitionSummary,
+    cleanup_succeeded: bool,
+) -> CaptureCompletion {
+    if !NativeErrorCode::from_raw(summary.start_status).is_ok() {
+        return CaptureCompletion::StartFailure;
+    }
+    if !cleanup_succeeded || summary.is_collecting {
+        return CaptureCompletion::CleanupFailure;
+    }
+    match summary.terminal_event {
+        AcquisitionTerminalEvent::EndByDetached => return CaptureCompletion::Detached,
+        AcquisitionTerminalEvent::EndByError => return CaptureCompletion::ErrorTerminal,
+        AcquisitionTerminalEvent::NormalEnd => {}
+        AcquisitionTerminalEvent::None | AcquisitionTerminalEvent::Unknown(_) => {
+            return CaptureCompletion::Incomplete;
+        }
+    }
+    if !summary.saw_collect_task_start
+        || !summary.saw_device_running
+        || !summary.saw_device_stopped
+        || !summary.saw_terminal_normal_end
+        || summary.saw_terminal_end_by_detached
+        || summary.saw_terminal_end_by_error
+        || !summary.saw_logic_packet
+        || !summary.saw_end_packet
+        || !summary.saw_end_packet_ok
+        || summary.saw_data_error_packet
+    {
+        return CaptureCompletion::Incomplete;
+    }
+
+    match summary.end_packet_status {
+        Some(AcquisitionPacketStatus::Ok) | None => CaptureCompletion::CleanSuccess,
+        _ => CaptureCompletion::Incomplete,
+    }
 }
 
 fn ensure_resource_file_set(path: &Path) -> Result<(), BringUpError> {
@@ -361,7 +697,19 @@ fn ensure_resource_file_set(path: &Path) -> Result<(), BringUpError> {
 }
 
 fn has_any_file(path: &Path, candidates: &[&str]) -> bool {
-    candidates.iter().any(|candidate| path.join(candidate).is_file())
+    candidates
+        .iter()
+        .any(|candidate| path.join(candidate).is_file())
+}
+
+fn channel_mode_max_enabled_channels(name: &str, native_limit: u16) -> u16 {
+    if native_limit != 0 {
+        return native_limit;
+    }
+
+    name.rsplit_once('x')
+        .and_then(|(_, tail)| tail.parse::<u16>().ok())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -380,13 +728,26 @@ fn dslogic_plus_capabilities() -> CaptureCapabilities {
                 id: 21,
                 name: "Buffer 200x8".to_string(),
                 max_enabled_channels: 8,
-                supported_sample_rates: vec![20_000_000, 25_000_000, 50_000_000, 100_000_000, 200_000_000],
+                supported_sample_rates: vec![
+                    20_000_000,
+                    25_000_000,
+                    50_000_000,
+                    100_000_000,
+                    200_000_000,
+                ],
             },
             ChannelModeCapability {
                 id: 22,
                 name: "Buffer 400x4".to_string(),
                 max_enabled_channels: 4,
-                supported_sample_rates: vec![20_000_000, 25_000_000, 50_000_000, 100_000_000, 200_000_000, 400_000_000],
+                supported_sample_rates: vec![
+                    20_000_000,
+                    25_000_000,
+                    50_000_000,
+                    100_000_000,
+                    200_000_000,
+                    400_000_000,
+                ],
             },
         ],
         hardware_sample_capacity: 268_435_456,
@@ -511,10 +872,22 @@ mod tests {
 
     #[test]
     fn native_error_messages_match_upstream_wording() {
-        assert_eq!(describe_native_error(NativeErrorCode::FirmwareVersionLow), "Please reconnect the device!");
-        assert_eq!(describe_native_error(NativeErrorCode::FirmwareMissing), "Firmware not exist!");
-        assert_eq!(describe_native_error(NativeErrorCode::DeviceUsbIo), "USB io error!");
-        assert_eq!(describe_native_error(NativeErrorCode::DeviceExclusive), "Device is busy!");
+        assert_eq!(
+            describe_native_error(NativeErrorCode::FirmwareVersionLow),
+            "Please reconnect the device!"
+        );
+        assert_eq!(
+            describe_native_error(NativeErrorCode::FirmwareMissing),
+            "Firmware not exist!"
+        );
+        assert_eq!(
+            describe_native_error(NativeErrorCode::DeviceUsbIo),
+            "USB io error!"
+        );
+        assert_eq!(
+            describe_native_error(NativeErrorCode::DeviceExclusive),
+            "Device is busy!"
+        );
     }
 
     #[test]
@@ -523,5 +896,66 @@ mod tests {
         assert_eq!(capabilities.total_channel_count, 16);
         assert_eq!(capabilities.active_channel_mode, 20);
         assert_eq!(capabilities.channel_modes.len(), 3);
+    }
+
+    fn clean_summary() -> AcquisitionSummary {
+        AcquisitionSummary {
+            callback_registration_active: true,
+            start_status: NativeErrorCode::Ok.raw(),
+            saw_collect_task_start: true,
+            saw_device_running: true,
+            saw_device_stopped: true,
+            saw_terminal_normal_end: true,
+            saw_terminal_end_by_detached: false,
+            saw_terminal_end_by_error: false,
+            terminal_event: AcquisitionTerminalEvent::NormalEnd,
+            saw_logic_packet: true,
+            saw_end_packet: true,
+            end_packet_status: Some(AcquisitionPacketStatus::Ok),
+            saw_end_packet_ok: true,
+            saw_data_error_packet: false,
+            last_error: NativeErrorCode::Ok,
+            is_collecting: false,
+        }
+    }
+
+    #[test]
+    fn clean_summary_maps_to_clean_success() {
+        let summary = clean_summary();
+        assert_eq!(
+            classify_capture_completion(&summary, true),
+            CaptureCompletion::CleanSuccess
+        );
+    }
+
+    #[test]
+    fn missing_logic_packet_maps_to_incomplete() {
+        let mut summary = clean_summary();
+        summary.saw_logic_packet = false;
+        assert_eq!(
+            classify_capture_completion(&summary, true),
+            CaptureCompletion::Incomplete
+        );
+    }
+
+    #[test]
+    fn detached_terminal_event_maps_to_detached() {
+        let mut summary = clean_summary();
+        summary.terminal_event = AcquisitionTerminalEvent::EndByDetached;
+        summary.saw_terminal_normal_end = false;
+        summary.saw_terminal_end_by_detached = true;
+        assert_eq!(
+            classify_capture_completion(&summary, true),
+            CaptureCompletion::Detached
+        );
+    }
+
+    #[test]
+    fn failed_cleanup_maps_to_cleanup_failure() {
+        let summary = clean_summary();
+        assert_eq!(
+            classify_capture_completion(&summary, false),
+            CaptureCompletion::CleanupFailure
+        );
     }
 }

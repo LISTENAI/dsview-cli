@@ -16,10 +16,33 @@ typedef int (*ds_get_actived_device_init_status_fn)(int *status);
 typedef int (*ds_get_actived_device_config_fn)(const void *ch, const void *cg, int key, GVariant **data);
 typedef int (*ds_get_actived_device_config_list_fn)(const void *cg, int key, GVariant **data);
 typedef int (*ds_set_actived_device_config_fn)(const void *ch, const void *cg, int key, GVariant *data);
-typedef int (*ds_enable_device_channel_index_fn)(int ch_index, gboolean enable);
+typedef int (*ds_set_event_callback_fn)(void *cb);
+typedef int (*ds_set_datafeed_callback_fn)(void *cb);
+typedef int (*ds_start_collect_fn)(void);
+typedef int (*ds_stop_collect_fn)(void);
+typedef int (*ds_is_collecting_fn)(void);
+typedef int (*ds_enable_device_channel_index_fn)(int channel_index, gboolean enable);
+
+typedef void (*dslib_event_callback_t)(int event);
+typedef void (*ds_datafeed_callback_t)(const void *sdi, const struct sr_datafeed_packet *packet);
+
+struct sr_datafeed_packet {
+    int type;
+    int status;
+    const void *payload;
+};
 
 enum {
     SR_OK = 0,
+    SR_PKT_OK = 0,
+    SR_DF_END = 10001,
+    SR_DF_LOGIC = 10004,
+    DS_EV_COLLECT_TASK_START = 101,
+    DS_EV_COLLECT_TASK_END = 102,
+    DS_EV_DEVICE_RUNNING = 103,
+    DS_EV_DEVICE_STOPPED = 104,
+    DS_EV_COLLECT_TASK_END_BY_DETACHED = 105,
+    DS_EV_COLLECT_TASK_END_BY_ERROR = 106,
     SR_CONF_SAMPLERATE = 30000,
     SR_CONF_VLD_CH_NUM = 30027,
     SR_CONF_TOTAL_CH_NUM = 30026,
@@ -38,6 +61,11 @@ struct dsview_bridge_api {
     void *library_handle;
     ds_lib_init_fn ds_lib_init;
     ds_lib_exit_fn ds_lib_exit;
+    ds_set_event_callback_fn ds_set_event_callback;
+    ds_set_datafeed_callback_fn ds_set_datafeed_callback;
+    ds_start_collect_fn ds_start_collect;
+    ds_stop_collect_fn ds_stop_collect;
+    ds_is_collecting_fn ds_is_collecting;
     ds_set_firmware_resource_dir_fn ds_set_firmware_resource_dir;
     ds_get_device_list_fn ds_get_device_list;
     ds_active_device_fn ds_active_device;
@@ -52,6 +80,10 @@ struct dsview_bridge_api {
 };
 
 static struct dsview_bridge_api g_bridge_api;
+static struct dsview_bridge_acquisition_summary g_acquisition_summary;
+static int g_acquisition_callback_registration_active = 0;
+
+static void dsview_bridge_clear_registered_callbacks(void);
 
 static void dsview_bridge_set_error_from_text(const char *message)
 {
@@ -161,6 +193,29 @@ static int dsview_bridge_get_double_config(int key, double *value)
     return SR_OK;
 }
 
+static unsigned short dsview_bridge_mode_max_enabled_channels(const char *name)
+{
+    const char *marker;
+    char *end = NULL;
+    unsigned long parsed;
+
+    if (name == NULL) {
+        return 0;
+    }
+
+    marker = strrchr(name, 'x');
+    if (marker == NULL || marker[1] == '\0') {
+        return 0;
+    }
+
+    parsed = strtoul(marker + 1, &end, 10);
+    if (end == marker + 1 || (end != NULL && *end != '\0') || parsed > 0xffffUL) {
+        return 0;
+    }
+
+    return (unsigned short)parsed;
+}
+
 int dsview_bridge_load_library(const char *path)
 {
     int status = DSVIEW_BRIDGE_OK;
@@ -186,6 +241,41 @@ int dsview_bridge_load_library(const char *path)
     }
 
     g_bridge_api.ds_lib_exit = (ds_lib_exit_fn)dsview_bridge_load_symbol("ds_lib_exit", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_set_event_callback =
+        (ds_set_event_callback_fn)dsview_bridge_load_symbol("ds_set_event_callback", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_set_datafeed_callback =
+        (ds_set_datafeed_callback_fn)dsview_bridge_load_symbol("ds_set_datafeed_callback", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_start_collect =
+        (ds_start_collect_fn)dsview_bridge_load_symbol("ds_start_collect", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_stop_collect =
+        (ds_stop_collect_fn)dsview_bridge_load_symbol("ds_stop_collect", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_is_collecting =
+        (ds_is_collecting_fn)dsview_bridge_load_symbol("ds_is_collecting", &status);
     if (status != DSVIEW_BRIDGE_OK) {
         dsview_bridge_unload_library();
         return status;
@@ -267,11 +357,14 @@ int dsview_bridge_load_library(const char *path)
 
 void dsview_bridge_unload_library(void)
 {
+    dsview_bridge_clear_registered_callbacks();
+
     if (g_bridge_api.library_handle != NULL) {
         dlclose(g_bridge_api.library_handle);
     }
 
     memset(&g_bridge_api, 0, sizeof(g_bridge_api));
+    memset(&g_acquisition_summary, 0, sizeof(g_acquisition_summary));
 }
 
 int dsview_bridge_is_loaded(void)
@@ -470,6 +563,7 @@ int dsview_bridge_ds_get_channel_modes(struct dsview_channel_mode *out_modes, in
             memset(out_modes[index].name, 0, sizeof(out_modes[index].name));
             if (items[index].name != NULL) {
                 strncpy(out_modes[index].name, items[index].name, sizeof(out_modes[index].name) - 1);
+                out_modes[index].max_enabled_channels = dsview_bridge_mode_max_enabled_channels(items[index].name);
             }
         }
         index++;
@@ -512,3 +606,192 @@ int dsview_bridge_ds_enable_channel(int channel_index, int enable)
 
     return g_bridge_api.ds_enable_device_channel_index(channel_index, enable ? TRUE : FALSE);
 }
+
+static void dsview_bridge_record_terminal_event(int terminal_event)
+{
+    g_acquisition_summary.terminal_event = terminal_event;
+    if (terminal_event == DSVIEW_ACQ_TERMINAL_NORMAL_END) {
+        g_acquisition_summary.saw_terminal_normal_end = 1;
+    } else if (terminal_event == DSVIEW_ACQ_TERMINAL_END_BY_DETACHED) {
+        g_acquisition_summary.saw_terminal_end_by_detached = 1;
+    } else if (terminal_event == DSVIEW_ACQ_TERMINAL_END_BY_ERROR) {
+        g_acquisition_summary.saw_terminal_end_by_error = 1;
+    }
+}
+
+static void dsview_bridge_event_callback(int event)
+{
+    switch (event) {
+    case DS_EV_COLLECT_TASK_START:
+        g_acquisition_summary.saw_collect_task_start = 1;
+        break;
+    case DS_EV_DEVICE_RUNNING:
+        g_acquisition_summary.saw_device_running = 1;
+        break;
+    case DS_EV_DEVICE_STOPPED:
+        g_acquisition_summary.saw_device_stopped = 1;
+        break;
+    case DS_EV_COLLECT_TASK_END:
+        dsview_bridge_record_terminal_event(DSVIEW_ACQ_TERMINAL_NORMAL_END);
+        break;
+    case DS_EV_COLLECT_TASK_END_BY_DETACHED:
+        dsview_bridge_record_terminal_event(DSVIEW_ACQ_TERMINAL_END_BY_DETACHED);
+        break;
+    case DS_EV_COLLECT_TASK_END_BY_ERROR:
+        dsview_bridge_record_terminal_event(DSVIEW_ACQ_TERMINAL_END_BY_ERROR);
+        break;
+    default:
+        break;
+    }
+}
+
+static void dsview_bridge_datafeed_callback(const void *sdi, const struct sr_datafeed_packet *packet)
+{
+    (void)sdi;
+
+    if (packet == NULL) {
+        return;
+    }
+
+    if (packet->type == SR_DF_LOGIC) {
+        g_acquisition_summary.saw_logic_packet = 1;
+    } else if (packet->type == SR_DF_END) {
+        g_acquisition_summary.saw_end_packet = 1;
+        g_acquisition_summary.end_packet_status = packet->status;
+        if (packet->status == SR_PKT_OK) {
+            g_acquisition_summary.saw_end_packet_ok = 1;
+        } else {
+            g_acquisition_summary.saw_data_error_packet = 1;
+        }
+    }
+}
+
+static int dsview_bridge_capture_is_collecting(void)
+{
+    if (g_bridge_api.ds_is_collecting == NULL) {
+        return 0;
+    }
+
+    return g_bridge_api.ds_is_collecting();
+}
+
+static void dsview_bridge_refresh_collecting_flag(void)
+{
+    g_acquisition_summary.is_collecting = dsview_bridge_capture_is_collecting() ? 1 : 0;
+}
+
+static void dsview_bridge_refresh_last_error(void)
+{
+    if (g_bridge_api.ds_get_last_error == NULL) {
+        g_acquisition_summary.last_error = DSVIEW_BRIDGE_ERR_NOT_LOADED;
+        return;
+    }
+
+    g_acquisition_summary.last_error = g_bridge_api.ds_get_last_error();
+}
+
+static void dsview_bridge_clear_registered_callbacks(void)
+{
+    if (g_bridge_api.ds_set_event_callback != NULL) {
+        g_bridge_api.ds_set_event_callback(NULL);
+    }
+    if (g_bridge_api.ds_set_datafeed_callback != NULL) {
+        g_bridge_api.ds_set_datafeed_callback(NULL);
+    }
+
+    g_acquisition_callback_registration_active = 0;
+    g_acquisition_summary.callback_registration_active = 0;
+}
+
+int dsview_bridge_ds_register_acquisition_callbacks(void)
+{
+    if (g_bridge_api.ds_set_event_callback == NULL || g_bridge_api.ds_set_datafeed_callback == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+    if (g_acquisition_callback_registration_active) {
+        return SR_OK;
+    }
+
+    g_bridge_api.ds_set_event_callback((void *)(dslib_event_callback_t)dsview_bridge_event_callback);
+    g_bridge_api.ds_set_datafeed_callback((void *)(ds_datafeed_callback_t)dsview_bridge_datafeed_callback);
+    g_acquisition_callback_registration_active = 1;
+    g_acquisition_summary.callback_registration_active = 1;
+    return SR_OK;
+}
+
+int dsview_bridge_ds_clear_acquisition_callbacks(void)
+{
+    if (g_bridge_api.ds_set_event_callback == NULL || g_bridge_api.ds_set_datafeed_callback == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    dsview_bridge_clear_registered_callbacks();
+    return SR_OK;
+}
+
+int dsview_bridge_ds_start_collect(void)
+{
+    int status;
+
+    if (g_bridge_api.ds_start_collect == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    status = g_bridge_api.ds_start_collect();
+    g_acquisition_summary.start_status = status;
+    dsview_bridge_refresh_last_error();
+    dsview_bridge_refresh_collecting_flag();
+    return status;
+}
+
+int dsview_bridge_ds_stop_collect(void)
+{
+    int status;
+
+    if (g_bridge_api.ds_stop_collect == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    status = g_bridge_api.ds_stop_collect();
+    dsview_bridge_refresh_last_error();
+    dsview_bridge_refresh_collecting_flag();
+    return status;
+}
+
+int dsview_bridge_ds_is_collecting(int *value)
+{
+    if (value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_is_collecting == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    *value = dsview_bridge_capture_is_collecting() ? 1 : 0;
+    g_acquisition_summary.is_collecting = *value;
+    return SR_OK;
+}
+
+int dsview_bridge_ds_reset_acquisition_summary(void)
+{
+    memset(&g_acquisition_summary, 0, sizeof(g_acquisition_summary));
+    g_acquisition_summary.terminal_event = DSVIEW_ACQ_TERMINAL_NONE;
+    g_acquisition_summary.end_packet_status = -1;
+    g_acquisition_summary.callback_registration_active = g_acquisition_callback_registration_active ? 1 : 0;
+    dsview_bridge_refresh_last_error();
+    dsview_bridge_refresh_collecting_flag();
+    return SR_OK;
+}
+
+int dsview_bridge_ds_get_acquisition_summary(struct dsview_bridge_acquisition_summary *out_summary)
+{
+    if (out_summary == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    dsview_bridge_refresh_last_error();
+    dsview_bridge_refresh_collecting_flag();
+    *out_summary = g_acquisition_summary;
+    return SR_OK;
+}
+

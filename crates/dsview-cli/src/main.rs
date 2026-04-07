@@ -1,10 +1,13 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_core::{
-    describe_native_error, BringUpError, Discovery, NativeErrorCode, RuntimeError,
-    SelectionHandle, SupportedDevice,
+    BringUpError, CaptureCompletion, CaptureConfigRequest, CaptureRunError, CaptureRunRequest,
+    Discovery, NativeErrorCode, RuntimeError, SelectionHandle, SupportedDevice,
+    describe_native_error,
 };
 use serde::Serialize;
 
@@ -19,6 +22,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     Devices(DeviceArgs),
+    Capture(CaptureArgs),
 }
 
 #[derive(Args, Debug)]
@@ -59,6 +63,24 @@ struct OpenArgs {
     handle: u64,
 }
 
+#[derive(Args, Debug)]
+struct CaptureArgs {
+    #[command(flatten)]
+    runtime: SharedRuntimeArgs,
+    #[arg(long, value_name = "HANDLE")]
+    handle: u64,
+    #[arg(long = "sample-rate-hz", value_name = "HZ")]
+    sample_rate_hz: u64,
+    #[arg(long = "sample-limit", value_name = "SAMPLES")]
+    sample_limit: u64,
+    #[arg(long = "channels", value_delimiter = ',', value_name = "IDX[,IDX...]")]
+    channels: Vec<u16>,
+    #[arg(long = "wait-timeout-ms", default_value_t = 10_000)]
+    wait_timeout_ms: u64,
+    #[arg(long = "poll-interval-ms", default_value_t = 50)]
+    poll_interval_ms: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
     Json,
@@ -86,6 +108,16 @@ struct OpenResponse {
     native_init_status: Option<i32>,
 }
 
+#[derive(Serialize)]
+struct CaptureResponse {
+    selected_handle: u64,
+    completion: &'static str,
+    saw_logic_packet: bool,
+    saw_end_packet: bool,
+    saw_terminal_normal_end: bool,
+    cleanup_succeeded: bool,
+}
+
 #[derive(Serialize, Debug, PartialEq, Eq)]
 struct ErrorResponse {
     code: &'static str,
@@ -99,6 +131,7 @@ fn main() -> ExitCode {
             DeviceCommand::List(args) => run_list(args),
             DeviceCommand::Open(args) => run_open(args),
         },
+        Command::Capture(args) => run_capture(args),
     };
 
     match result {
@@ -149,6 +182,37 @@ fn run_open(args: OpenArgs) -> Result<(), FailedCommand> {
     Ok(())
 }
 
+fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
+    let discovery = connect_runtime(&args.runtime)?;
+    let handle = SelectionHandle::new(args.handle)
+        .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
+    let config_request = CaptureConfigRequest {
+        sample_rate_hz: args.sample_rate_hz,
+        sample_limit: args.sample_limit,
+        enabled_channels: args.channels.iter().copied().collect::<BTreeSet<_>>(),
+    };
+    let run_request = CaptureRunRequest {
+        selection_handle: handle,
+        config: config_request,
+        wait_timeout: Duration::from_millis(args.wait_timeout_ms),
+        poll_interval: Duration::from_millis(args.poll_interval_ms),
+    };
+    let result = discovery
+        .run_capture(&run_request)
+        .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
+
+    let response = CaptureResponse {
+        selected_handle: args.handle,
+        completion: completion_name(result.completion),
+        saw_logic_packet: result.summary.saw_logic_packet,
+        saw_end_packet: result.summary.saw_end_packet,
+        saw_terminal_normal_end: result.summary.saw_terminal_normal_end,
+        cleanup_succeeded: result.cleanup_succeeded,
+    };
+    render_success(args.runtime.format, &response, &[]);
+    Ok(())
+}
+
 fn connect_runtime(args: &SharedRuntimeArgs) -> Result<Discovery, FailedCommand> {
     let result = if args.use_source_runtime {
         Discovery::connect_auto(&args.resource_dir)
@@ -188,7 +252,8 @@ fn classify_error(error: &BringUpError) -> ErrorResponse {
     match error {
         BringUpError::SourceRuntimeUnavailable => ErrorResponse {
             code: "source_runtime_unavailable",
-            message: "this build does not include a source-built DSView runtime library".to_string(),
+            message: "this build does not include a source-built DSView runtime library"
+                .to_string(),
         },
         BringUpError::MissingResourceDirectory { path } => ErrorResponse {
             code: "resource_dir_missing",
@@ -226,7 +291,10 @@ fn classify_runtime_error(error: &RuntimeError) -> ErrorResponse {
         },
         RuntimeError::SymbolLoad { path, detail } => ErrorResponse {
             code: "symbol_load_failed",
-            message: format!("`{}` is missing required ds_* symbols: {detail}", path.display()),
+            message: format!(
+                "`{}` is missing required ds_* symbols: {detail}",
+                path.display()
+            ),
         },
         RuntimeError::BridgeNotLoaded => ErrorResponse {
             code: "runtime_not_loaded",
@@ -241,12 +309,54 @@ fn classify_runtime_error(error: &RuntimeError) -> ErrorResponse {
                 NativeErrorCode::CallStatus => "call_status_error",
                 _ => "native_call_failed",
             },
-            message: format!("{operation} failed: {} ({})", describe_native_error(*code), code.name()),
+            message: format!(
+                "{operation} failed: {} ({})",
+                describe_native_error(*code),
+                code.name()
+            ),
         },
         other => ErrorResponse {
             code: "runtime_error",
             message: other.to_string(),
         },
+    }
+}
+
+fn classify_capture_error(error: &CaptureRunError) -> ErrorResponse {
+    match error {
+        CaptureRunError::BringUp(error) => classify_error(error),
+        CaptureRunError::EnvironmentNotReady => ErrorResponse {
+            code: "capture_environment_not_ready",
+            message: "capture preflight did not confirm USB permissions, runtime resources, and open/config readiness".to_string(),
+        },
+        CaptureRunError::StartFailed { code } => ErrorResponse {
+            code: "capture_start_failed",
+            message: format!("capture start failed with {} ({})", describe_native_error(*code), code.name()),
+        },
+        CaptureRunError::Timeout => ErrorResponse {
+            code: "capture_timeout",
+            message: "capture did not reach natural completion before the timeout".to_string(),
+        },
+        CaptureRunError::Incomplete => ErrorResponse {
+            code: "capture_incomplete",
+            message: "capture did not satisfy the clean finite-capture success rule".to_string(),
+        },
+        CaptureRunError::CleanupFailed(message) => ErrorResponse {
+            code: "capture_cleanup_failed",
+            message: message.clone(),
+        },
+    }
+}
+
+fn completion_name(completion: CaptureCompletion) -> &'static str {
+    match completion {
+        CaptureCompletion::CleanSuccess => "clean_success",
+        CaptureCompletion::StartFailure => "start_failure",
+        CaptureCompletion::Detached => "detached",
+        CaptureCompletion::ErrorTerminal => "error_terminal",
+        CaptureCompletion::Incomplete => "incomplete",
+        CaptureCompletion::CleanupFailure => "cleanup_failure",
+        CaptureCompletion::Timeout => "timeout",
     }
 }
 
@@ -264,7 +374,10 @@ fn render_success<T: Serialize>(format: OutputFormat, payload: &T, text_devices:
                 println!("ok");
             } else {
                 for device in text_devices {
-                    println!("{}\t{}\t{}\t{}", device.handle, device.stable_id, device.model, device.native_name);
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        device.handle, device.stable_id, device.model, device.native_name
+                    );
                 }
             }
         }
@@ -293,7 +406,10 @@ mod tests {
 
     #[test]
     fn missing_runtime_selector_maps_to_stable_error_code() {
-        assert_eq!(missing_runtime_selector_error().code, "runtime_selector_missing");
+        assert_eq!(
+            missing_runtime_selector_error().code,
+            "runtime_selector_missing"
+        );
     }
 
     #[test]
@@ -322,5 +438,24 @@ mod tests {
     fn source_runtime_unavailable_maps_to_stable_error_code() {
         let error = classify_error(&BringUpError::SourceRuntimeUnavailable);
         assert_eq!(error.code, "source_runtime_unavailable");
+    }
+
+    #[test]
+    fn capture_timeout_maps_to_stable_error_code() {
+        let error = classify_capture_error(&CaptureRunError::Timeout);
+        assert_eq!(error.code, "capture_timeout");
+    }
+
+    #[test]
+    fn capture_completion_names_are_machine_readable() {
+        assert_eq!(
+            completion_name(CaptureCompletion::CleanSuccess),
+            "clean_success"
+        );
+        assert_eq!(
+            completion_name(CaptureCompletion::ErrorTerminal),
+            "error_terminal"
+        );
+        assert_eq!(completion_name(CaptureCompletion::Timeout), "timeout");
     }
 }

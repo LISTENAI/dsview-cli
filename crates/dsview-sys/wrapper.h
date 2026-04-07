@@ -9,6 +9,32 @@ extern "C" {
 
 typedef uint64_t ds_device_handle;
 
+enum dsview_acquisition_terminal_event {
+    DSVIEW_ACQ_TERMINAL_NONE = 0,
+    DSVIEW_ACQ_TERMINAL_NORMAL_END = 1,
+    DSVIEW_ACQ_TERMINAL_END_BY_DETACHED = 2,
+    DSVIEW_ACQ_TERMINAL_END_BY_ERROR = 3,
+};
+
+struct dsview_bridge_acquisition_summary {
+    int callback_registration_active;
+    int start_status;
+    int saw_collect_task_start;
+    int saw_device_running;
+    int saw_device_stopped;
+    int saw_terminal_normal_end;
+    int saw_terminal_end_by_detached;
+    int saw_terminal_end_by_error;
+    int terminal_event;
+    int saw_logic_packet;
+    int saw_end_packet;
+    int end_packet_status;
+    int saw_end_packet_ok;
+    int saw_data_error_packet;
+    int last_error;
+    int is_collecting;
+};
+
 #define NULL_HANDLE ((ds_device_handle)0)
 
 struct ds_device_base_info {
@@ -61,6 +87,13 @@ int dsview_bridge_ds_get_channel_modes(struct dsview_channel_mode *out_modes, in
 int dsview_bridge_ds_set_samplerate(unsigned long long value);
 int dsview_bridge_ds_set_sample_limit(unsigned long long value);
 int dsview_bridge_ds_enable_channel(int channel_index, int enable);
+int dsview_bridge_ds_register_acquisition_callbacks(void);
+int dsview_bridge_ds_clear_acquisition_callbacks(void);
+int dsview_bridge_ds_start_collect(void);
+int dsview_bridge_ds_stop_collect(void);
+int dsview_bridge_ds_is_collecting(int *value);
+int dsview_bridge_ds_reset_acquisition_summary(void);
+int dsview_bridge_ds_get_acquisition_summary(struct dsview_bridge_acquisition_summary *out_summary);
 
 #ifdef __cplusplus
 }

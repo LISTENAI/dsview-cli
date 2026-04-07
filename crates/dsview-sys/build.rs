@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"));
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"));
     let repo_root = manifest_dir
         .parent()
         .and_then(|path| path.parent())
@@ -18,13 +19,28 @@ fn main() {
     let native_root = manifest_dir.join("native");
 
     println!("cargo:rerun-if-changed={}", wrapper_header.display());
-    println!("cargo:rerun-if-changed={}", dsview_root.join("CMakeLists.txt").display());
-    println!("cargo:rerun-if-changed={}", libsigrok_root.join("libsigrok.h").display());
-    println!("cargo:rerun-if-changed={}", libsigrok_root.join("version.c").display());
-    println!("cargo:rerun-if-changed={}", libsigrok_root.join("version.h").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        dsview_root.join("CMakeLists.txt").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libsigrok_root.join("libsigrok.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libsigrok_root.join("version.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libsigrok_root.join("version.h").display()
+    );
     println!("cargo:rerun-if-changed={}", smoke_shim.display());
     println!("cargo:rerun-if-changed={}", runtime_bridge.display());
-    println!("cargo:rerun-if-changed={}", native_root.join("CMakeLists.txt").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("CMakeLists.txt").display()
+    );
 
     if !dsview_root.exists() {
         panic!(
@@ -48,7 +64,10 @@ fn main() {
     println!("cargo:rustc-cfg=dsview_runtime_bridge");
     println!("cargo:include={}", libsigrok_root.display());
     println!("cargo:include={}", common_root.display());
-    println!("cargo:rustc-env=DSVIEW_LIBSIGROK_HEADER={}", libsigrok_root.join("libsigrok.h").display());
+    println!(
+        "cargo:rustc-env=DSVIEW_LIBSIGROK_HEADER={}",
+        libsigrok_root.join("libsigrok.h").display()
+    );
 
     let bridge_include_flags = glib_include_flags();
     build_static_object_archive(&runtime_bridge, "bridge_runtime", &bridge_include_flags);
@@ -66,24 +85,38 @@ fn main() {
             ],
         );
         println!("cargo:rustc-cfg=dsview_runtime_smoke_available");
-        println!("cargo:warning=Built dsview-sys runtime smoke shim for sr_get_lib_version_string() using DSView/libsigrok4DSL/version.h.");
+        println!(
+            "cargo:warning=Built dsview-sys runtime smoke shim for sr_get_lib_version_string() using DSView/libsigrok4DSL/version.h."
+        );
     } else {
-        println!("cargo:warning=Skipping dsview-sys runtime smoke shim because the environment is missing glib development headers.");
+        println!(
+            "cargo:warning=Skipping dsview-sys runtime smoke shim because the environment is missing glib development headers."
+        );
     }
 
     match build_source_runtime(&repo_root, &native_root) {
         Ok(library_path) => {
             println!("cargo:rustc-cfg=dsview_source_runtime_available");
-            println!("cargo:rustc-env=DSVIEW_SOURCE_RUNTIME_LIBRARY={}", library_path.display());
-            println!("cargo:warning=Built source-backed DSView runtime at {}.", library_path.display());
+            println!(
+                "cargo:rustc-env=DSVIEW_SOURCE_RUNTIME_LIBRARY={}",
+                library_path.display()
+            );
+            println!(
+                "cargo:warning=Built source-backed DSView runtime at {}.",
+                library_path.display()
+            );
         }
         Err(message) => {
             println!("cargo:warning=Skipping source-backed DSView runtime build: {message}");
         }
     }
 
-    println!("cargo:warning=dsview-sys is pinned to DSView/libsigrok4DSL headers and now exposes a narrow dynamic ds_* bring-up bridge.");
-    println!("cargo:warning=dsview-sys can use either a caller-supplied runtime library path or the locally built source runtime when native prerequisites are present.");
+    println!(
+        "cargo:warning=dsview-sys is pinned to DSView/libsigrok4DSL headers and now exposes a narrow dynamic ds_* bring-up bridge."
+    );
+    println!(
+        "cargo:warning=dsview-sys can use either a caller-supplied runtime library path or the locally built source runtime when native prerequisites are present."
+    );
 }
 
 fn should_build_smoke_runtime() -> bool {
@@ -136,7 +169,10 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path) -> Result<PathBuf,
 
     let library_path = build_dir.join("libdsview_runtime.so");
     if !library_path.exists() {
-        return Err(format!("expected source runtime artifact at {}", library_path.display()));
+        return Err(format!(
+            "expected source runtime artifact at {}",
+            library_path.display()
+        ));
     }
 
     Ok(library_path)
@@ -170,7 +206,9 @@ fn emit_glib_link_flags() {
         } else if let Some(lib) = flag.strip_prefix("-l") {
             println!("cargo:rustc-link-lib={lib}");
         } else {
-            println!("cargo:warning=Ignoring unsupported glib link flag `{flag}` for dsview-sys bridge build.");
+            println!(
+                "cargo:warning=Ignoring unsupported glib link flag `{flag}` for dsview-sys bridge build."
+            );
         }
     }
 }
@@ -186,9 +224,14 @@ fn build_static_object_archive(source: &Path, archive_stem: &str, include_flags:
         compile.arg(include);
     }
 
-    let status = compile.status().expect("failed to invoke cc for dsview-sys shim");
+    let status = compile
+        .status()
+        .expect("failed to invoke cc for dsview-sys shim");
     if !status.success() {
-        panic!("failed to compile dsview-sys shim source {}", source.display());
+        panic!(
+            "failed to compile dsview-sys shim source {}",
+            source.display()
+        );
     }
 
     let status = Command::new("ar")
@@ -198,12 +241,18 @@ fn build_static_object_archive(source: &Path, archive_stem: &str, include_flags:
         .status()
         .expect("failed to invoke ar for dsview-sys shim");
     if !status.success() {
-        panic!("failed to archive dsview-sys shim source {}", source.display());
+        panic!(
+            "failed to archive dsview-sys shim source {}",
+            source.display()
+        );
     }
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=dsview_sys_{archive_stem}");
-    println!("cargo:warning=Built dsview-sys shim {}.", source.file_name().unwrap_or_default().to_string_lossy());
+    println!(
+        "cargo:warning=Built dsview-sys shim {}.",
+        source.file_name().unwrap_or_default().to_string_lossy()
+    );
 }
 
 fn header_exists(path: &str) -> bool {

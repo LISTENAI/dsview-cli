@@ -63,14 +63,23 @@ pub enum CaptureConfigError {
     ChannelOutOfRange { channel: u16 },
     #[error("active channel mode `{mode}` is not available in the capability snapshot")]
     UnknownChannelMode { mode: i16 },
-    #[error("sample rate {sample_rate_hz} Hz is not supported in active channel mode `{mode_name}`")]
-    UnsupportedSampleRate { sample_rate_hz: u64, mode_name: String },
-    #[error("enabled channel count {enabled_channel_count} exceeds the active channel mode limit of {max_enabled_channels}")]
+    #[error(
+        "sample rate {sample_rate_hz} Hz is not supported in active channel mode `{mode_name}`"
+    )]
+    UnsupportedSampleRate {
+        sample_rate_hz: u64,
+        mode_name: String,
+    },
+    #[error(
+        "enabled channel count {enabled_channel_count} exceeds the active channel mode limit of {max_enabled_channels}"
+    )]
     TooManyEnabledChannels {
         enabled_channel_count: usize,
         max_enabled_channels: u16,
     },
-    #[error("effective sample limit {effective_sample_limit} exceeds the maximum {maximum_sample_limit} for {enabled_channel_count} enabled channels")]
+    #[error(
+        "effective sample limit {effective_sample_limit} exceeds the maximum {maximum_sample_limit} for {enabled_channel_count} enabled channels"
+    )]
     SampleLimitExceedsCapacity {
         effective_sample_limit: u64,
         maximum_sample_limit: u64,
@@ -103,11 +112,7 @@ impl CaptureCapabilities {
         }
 
         let active_mode = self.active_mode()?;
-        let enabled_channels = request
-            .enabled_channels
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
+        let enabled_channels = request.enabled_channels.iter().copied().collect::<Vec<_>>();
 
         for channel in &enabled_channels {
             if *channel >= self.total_channel_count {
@@ -132,7 +137,8 @@ impl CaptureCapabilities {
             });
         }
 
-        let effective_sample_limit = align_sample_limit(request.sample_limit, self.sample_limit_alignment);
+        let effective_sample_limit =
+            align_sample_limit(request.sample_limit, self.sample_limit_alignment);
         let maximum_sample_limit = align_down(
             self.hardware_sample_capacity / enabled_channels.len() as u64,
             self.sample_limit_alignment,
@@ -196,13 +202,26 @@ mod tests {
                     id: 21,
                     name: "Buffer 200x8".to_string(),
                     max_enabled_channels: 8,
-                    supported_sample_rates: vec![20_000_000, 25_000_000, 50_000_000, 100_000_000, 200_000_000],
+                    supported_sample_rates: vec![
+                        20_000_000,
+                        25_000_000,
+                        50_000_000,
+                        100_000_000,
+                        200_000_000,
+                    ],
                 },
                 ChannelModeCapability {
                     id: 22,
                     name: "Buffer 400x4".to_string(),
                     max_enabled_channels: 4,
-                    supported_sample_rates: vec![20_000_000, 25_000_000, 50_000_000, 100_000_000, 200_000_000, 400_000_000],
+                    supported_sample_rates: vec![
+                        20_000_000,
+                        25_000_000,
+                        50_000_000,
+                        100_000_000,
+                        200_000_000,
+                        400_000_000,
+                    ],
                 },
             ],
             hardware_sample_capacity: 268_435_456,
@@ -211,7 +230,11 @@ mod tests {
         }
     }
 
-    fn request(sample_rate_hz: u64, sample_limit: u64, enabled_channels: &[u16]) -> CaptureConfigRequest {
+    fn request(
+        sample_rate_hz: u64,
+        sample_limit: u64,
+        enabled_channels: &[u16],
+    ) -> CaptureConfigRequest {
         CaptureConfigRequest {
             sample_rate_hz,
             sample_limit,
@@ -234,7 +257,9 @@ mod tests {
     #[test]
     fn rejects_zero_enabled_channels() {
         let capabilities = dslogic_plus_capabilities();
-        let error = capabilities.validate_request(&request(100_000_000, 2048, &[])).unwrap_err();
+        let error = capabilities
+            .validate_request(&request(100_000_000, 2048, &[]))
+            .unwrap_err();
         assert_eq!(error, CaptureConfigError::NoEnabledChannels);
     }
 
@@ -298,13 +323,18 @@ mod tests {
     fn enabled_channel_count_changes_maximum_depth() {
         let capabilities = dslogic_plus_capabilities();
 
-        let valid_two_channel = capabilities.validate_request(&request(100_000_000, 80_000_000, &[0, 1]));
+        let valid_two_channel =
+            capabilities.validate_request(&request(100_000_000, 80_000_000, &[0, 1]));
         assert!(valid_two_channel.is_ok());
 
-        let invalid_four_channel = capabilities.validate_request(&request(100_000_000, 80_000_000, &[0, 1, 2, 3]));
+        let invalid_four_channel =
+            capabilities.validate_request(&request(100_000_000, 80_000_000, &[0, 1, 2, 3]));
         assert!(matches!(
             invalid_four_channel,
-            Err(CaptureConfigError::SampleLimitExceedsCapacity { enabled_channel_count: 4, .. })
+            Err(CaptureConfigError::SampleLimitExceedsCapacity {
+                enabled_channel_count: 4,
+                ..
+            })
         ));
     }
 }
