@@ -1,8 +1,8 @@
 use dsview_core::{
     AcquisitionSummary, AcquisitionTerminalEvent, CaptureCleanup, CaptureCompletion,
-    CaptureExportError, CaptureRunError, NativeErrorCode,
+    CaptureExportError, CaptureExportFailureKind, CaptureRunError, NativeErrorCode,
 };
-use dsview_sys::AcquisitionPacketStatus;
+use dsview_sys::{AcquisitionPacketStatus, ExportErrorCode};
 use serde_json::json;
 
 #[path = "../src/main.rs"]
@@ -106,6 +106,58 @@ fn run_failure_shape_is_non_zero_class() {
     assert_eq!(error.terminal_event, Some("end_by_error"));
     assert_eq!(error.native_error, Some("SR_ERR"));
 }
+
+#[test]
+fn export_precondition_failure_uses_distinct_cli_code() {
+    let error = cli::classify_export_error(&CaptureExportError::ExportFailed {
+        path: "artifacts/run.vcd".into(),
+        kind: CaptureExportFailureKind::Precondition {
+            code: ExportErrorCode::Overflow,
+        },
+        detail: "export call `ds_export_recorded_vcd` failed with Overflow".to_string(),
+    });
+
+    assert_eq!(error.code, "capture_export_precondition_failed");
+    assert_eq!(error.message, "failed to write VCD artifact `artifacts/run.vcd`");
+    assert!(error.detail.unwrap().contains("Overflow"));
+}
+
+#[test]
+fn export_runtime_failure_keeps_runtime_specific_cli_code() {
+    let error = cli::classify_export_error(&CaptureExportError::ExportFailed {
+        path: "artifacts/run.vcd".into(),
+        kind: CaptureExportFailureKind::Runtime,
+        detail: "export call `ds_export_recorded_vcd` failed with OutputModuleUnavailable"
+            .to_string(),
+    });
+
+    assert_eq!(error.code, "capture_export_failed");
+    assert_eq!(error.message, "failed to write VCD artifact `artifacts/run.vcd`");
+    assert!(error
+        .detail
+        .unwrap()
+        .contains("OutputModuleUnavailable"));
+}
+
+#[test]
+fn cleanup_failure_shape_preserves_callback_clear_errors() {
+    let error = cli::classify_capture_error(&CaptureRunError::CleanupFailed {
+        during: "run_failure",
+        summary: clean_summary(),
+        cleanup: CaptureCleanup {
+            callbacks_cleared: false,
+            clear_callbacks_error: Some("clear failed".to_string()),
+            release_succeeded: true,
+            ..CaptureCleanup::default()
+        },
+    });
+
+    assert_eq!(error.code, "capture_cleanup_failed");
+    let cleanup = error.cleanup.expect("cleanup detail should be present");
+    assert!(!cleanup.callbacks_cleared);
+    assert_eq!(cleanup.clear_callbacks_error.as_deref(), Some("clear failed"));
+}
+
 
 #[test]
 fn cleanup_failure_shape_preserves_cleanup_fields() {
