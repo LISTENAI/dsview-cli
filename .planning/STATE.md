@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 research refinement after updating planning assumptions to reflect successful manual open/release verification and remaining acquisition-validation gates
-last_updated: "2026-04-07T07:29:44.333Z"
-last_activity: 2026-04-07
+stopped_at: Completed 05-01 plan closeout after upstream-backed VCD replay integration, Wave 0 export coverage, and green workspace verification
+last_updated: "2026-04-07T14:16:40Z"
+last_activity: 2026-04-07 -- Completed Phase 05 Plan 01
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 12
-  completed_plans: 12
-  percent: 56
+  total_plans: 15
+  completed_plans: 13
+  percent: 61
 ---
 
 # Project State
@@ -25,20 +25,20 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
-Status: Ready to begin Phase 05
-Last activity: 2026-04-07 -- Phase 04 completed after verified DSLogic Plus hardware UAT
+Phase: 05 (export-artifacts) — EXECUTING
+Plan: 2 of 3
+Status: Phase 05 plan 01 complete; ready for metadata sidecar work
+Last activity: 2026-04-07 -- Completed 05-01 upstream VCD replay integration and export verification
 
-Progress: [######----] 56%
+Progress: [######----] 61%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 9
-- Average duration: 36 min
-- Total execution time: 5.3 hours
+- Total plans completed: 10
+- Average duration: 39 min
+- Total execution time: 6.4 hours
 
 **By Phase:**
 
@@ -47,11 +47,13 @@ Progress: [######----] 56%
 | 01 | 3 | 1.3h | 26 min |
 | 02 | 3 | 2.5h | 50 min |
 | 03 | 3 | 1.5h | 30 min |
+| 04 | 3 | 2.1h | 42 min |
+| 05 | 1 | 1.2h | 70 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 55 min, 35 min, 55 min, 30 min
-- Trend: Stable with stronger native/core validation coverage
+- Last 5 plans: 35 min, 55 min, 30 min, 59 min, 70 min
+- Trend: Stable with heavier native export integration and stronger layered verification
 
 | Phase 01 P01 | 12 min | 3 tasks | 8 files |
 | Phase 01 P02 | 35 min | 3 tasks | 5 files |
@@ -63,6 +65,7 @@ Progress: [######----] 56%
 | Phase 03 P02 | 55 min | 3 tasks | 5 files |
 | Phase 03 P03 | 30 min | 3 tasks | 3 files |
 | Phase 04 P01 | 59 min | 5 tasks | 7 files |
+| Phase 05 P01 | 70 min | 5 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -75,19 +78,23 @@ Recent decisions affecting current work:
 - Initialization: Scope v1 to `DSLogic Plus` only.
 - Initialization: Use VCD as the primary waveform export format.
 - Phase 4 planning: treat clean finite-capture success as normal terminal event plus observed logic packet plus observed end marker plus successful cleanup.
-- Phase 4 planning: treat natural finite completion and post-error reuse as bounded hardware assumptions gated by explicit verification, not already-proven facts.
+- Phase 5 plan 01: reuse the upstream VCD output-module path via `sr_output_*` replay instead of adding a Rust-side serializer.
+- Phase 5 plan 01: export stays gated on `CleanSuccess` and publishes the final VCD path only after temp-file write and promotion succeed.
+- Phase 5 plan 01: keep retained packet details inside `dsview-sys` and surface only stable export facts plus precondition/runtime failure classes to higher layers.
 
 ### Pending Todos
 
-- Phase 5 planning and execution for VCD export plus metadata sidecar
+- Phase 05 plan 02: generate and validate JSON metadata sidecar output
+- Phase 05 plan 03: add artifact goldens, validation matrix updates, and hardware sign-off
 
 ### Blockers/Concerns
 
-- Phase 5 now depends on preserving the validated Phase 4 capture lifecycle while integrating export artifacts.
-- The source-built runtime path currently depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
+- Phase 05 metadata work must preserve the new “VCD first, metadata last” artifact ordering from 05-01.
+- Manual DSLogic Plus artifact plausibility and post-export reuse remain a phase-completion gate in 05-03.
+- The source-built runtime path still depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
 
 ## Session Continuity
 
-Last session: 2026-04-07T12:50:00Z
-Stopped at: Phase 04 completed after real hardware capture, timeout-failure cleanup validation, and post-failure device reuse proof
-Resume file: .planning/ROADMAP.md
+Last session: 2026-04-07T14:16:40Z
+Stopped at: Completed 05-01 upstream VCD replay integration, Wave 0 export coverage, and workspace verification
+Resume file: .planning/phases/05-export-artifacts/05-02-PLAN.md

@@ -83,10 +83,12 @@ Plans:
   1. User receives a valid VCD file from a successful capture run.
   2. Exported VCD retains channel naming and timing semantics needed for analysis.
   3. The CLI also writes a machine-readable metadata file with capture context.
+  4. VCD and metadata writes follow an atomic-or-cleanup-safe contract so failed export does not leave misleading final-path artifacts.
+  5. Phase completion includes explicit DSLogic Plus manual sign-off for real-hardware artifact plausibility and post-run device reusability.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 05-01: Integrate or wrap the DSView-side VCD export path for CLI usage.
+- [x] 05-01: Integrate or wrap the DSView-side VCD export path for CLI usage.
 - [ ] 05-02: Generate and validate JSON metadata sidecar output.
 - [ ] 05-03: Add artifact validation and golden-file checks for export correctness.
 
@@ -116,5 +118,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 2. Device Discovery and Session Bring-Up | 3/3 | Complete | 2026-04-03 |
 | 3. Capture Configuration Surface | 3/3 | Complete | 2026-04-03 |
 | 4. Acquisition Execution | 3/3 | Complete | 2026-04-07 |
-| 5. Export Artifacts | 0/3 | Not started | - |
+| 5. Export Artifacts | 1/3 | In Progress | - |
 | 6. CLI Productization | 0/3 | Not started | - |
