@@ -3,8 +3,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_core::{
-    describe_native_error, BringUpError, DeviceHandle, Discovery, NativeErrorCode, RuntimeError,
-    SupportedDevice,
+    describe_native_error, BringUpError, Discovery, NativeErrorCode, RuntimeError,
+    SelectionHandle, SupportedDevice,
 };
 use serde::Serialize;
 
@@ -130,7 +130,7 @@ fn run_list(args: ListArgs) -> Result<(), FailedCommand> {
 
 fn run_open(args: OpenArgs) -> Result<(), FailedCommand> {
     let discovery = connect_runtime(&args.runtime)?;
-    let handle = DeviceHandle::new(args.handle)
+    let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
     let opened = discovery
         .open_device(handle)
@@ -163,7 +163,7 @@ fn connect_runtime(args: &SharedRuntimeArgs) -> Result<Discovery, FailedCommand>
 
 fn device_record(device: &SupportedDevice) -> DeviceRecord {
     DeviceRecord {
-        handle: device.handle.raw(),
+        handle: device.selection_handle.raw(),
         stable_id: device.stable_id,
         model: device.kind.display_name(),
         native_name: device.name.clone(),
@@ -206,9 +206,9 @@ fn classify_error(error: &BringUpError) -> ErrorResponse {
                 missing.join(", ")
             ),
         },
-        BringUpError::UnsupportedSelection { handle } => ErrorResponse {
+        BringUpError::UnsupportedSelection { selection_handle } => ErrorResponse {
             code: "unsupported_selection",
-            message: format!("device handle `{handle}` is not a supported DSLogic Plus"),
+            message: format!("device handle `{selection_handle}` is not a supported DSLogic Plus"),
         },
         BringUpError::NoSupportedDevices => ErrorResponse {
             code: "no_supported_devices",

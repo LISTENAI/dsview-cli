@@ -1,4 +1,6 @@
+use std::fmt;
 use std::fs;
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
 mod capture_config;
@@ -7,17 +9,40 @@ pub use capture_config::{
     CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
     ValidatedCaptureConfig,
 };
-pub use dsview_sys::{
-    source_runtime_library_path, CaptureCapabilities as NativeCaptureCapabilities,
-    DeviceHandle, DeviceSummary, NativeErrorCode, RuntimeError,
-};
 use dsview_sys::RuntimeBridge;
+pub use dsview_sys::{
+    source_runtime_library_path, DeviceHandle, DeviceSummary, NativeErrorCode, RuntimeError,
+};
 use thiserror::Error;
 
 const DSLOGIC_PLUS_MODELS: &[&str] = &["DSLogic PLus"];
 const DSLOGIC_PLUS_PRIMARY_FIRMWARES: &[&str] = &["DSLogicPlus.fw"];
 const DSLOGIC_PLUS_FIRMWARE_FALLBACKS: &[&str] = &["DSLogic.fw"];
 const DSLOGIC_PLUS_BITSTREAMS: &[&str] = &["DSLogicPlus.bin", "DSLogicPlus-pgl12.bin"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionHandle(NonZeroU64);
+
+impl SelectionHandle {
+    pub fn for_supported_index(index: usize) -> Option<Self> {
+        let raw = u64::try_from(index).ok()?.checked_add(1)?;
+        NonZeroU64::new(raw).map(Self)
+    }
+
+    pub fn new(raw: u64) -> Option<Self> {
+        NonZeroU64::new(raw).map(Self)
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for SelectionHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.raw())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportedDeviceKind {
@@ -40,7 +65,8 @@ impl SupportedDeviceKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupportedDevice {
-    pub handle: DeviceHandle,
+    pub selection_handle: SelectionHandle,
+    pub native_handle: DeviceHandle,
     pub name: String,
     pub kind: SupportedDeviceKind,
     pub stable_id: &'static str,
@@ -97,14 +123,19 @@ impl Discovery {
         Ok(filter_supported_devices(&devices))
     }
 
-    pub fn open_device(&self, handle: DeviceHandle) -> Result<OpenedDevice<'_>, BringUpError> {
+    pub fn open_device(
+        &self,
+        selection_handle: SelectionHandle,
+    ) -> Result<OpenedDevice<'_>, BringUpError> {
         let devices = self.list_supported_devices()?;
         let selected = devices
             .into_iter()
-            .find(|device| device.handle == handle)
-            .ok_or(BringUpError::UnsupportedSelection { handle })?;
+            .find(|device| device.selection_handle == selection_handle)
+            .ok_or(BringUpError::UnsupportedSelection { selection_handle })?;
 
-        self.runtime.open_device(handle).map_err(BringUpError::Runtime)?;
+        self.runtime
+            .open_device(selected.native_handle)
+            .map_err(BringUpError::Runtime)?;
         let init_status = self.runtime.active_device_init_status().ok();
         let last_error = self.runtime.last_error();
         Ok(OpenedDevice {
@@ -217,8 +248,10 @@ pub enum BringUpError {
     UnreadableResourceDirectory { path: PathBuf },
     #[error("resource directory `{path}` is missing required files: {missing:?}")]
     MissingResourceFiles { path: PathBuf, missing: Vec<&'static str> },
-    #[error("selected device handle `{handle}` is not a supported DSLogic Plus")]
-    UnsupportedSelection { handle: DeviceHandle },
+    #[error("selected device handle `{selection_handle}` is not a supported DSLogic Plus")]
+    UnsupportedSelection {
+        selection_handle: SelectionHandle,
+    },
     #[error("no supported DSLogic Plus devices are currently available")]
     NoSupportedDevices,
 }
@@ -226,18 +259,35 @@ pub enum BringUpError {
 pub fn filter_supported_devices(devices: &[DeviceSummary]) -> Vec<SupportedDevice> {
     devices
         .iter()
-        .filter_map(|device| classify_supported_device(device))
+        .filter_map(classify_supported_device_kind)
+        .enumerate()
+        .filter_map(|(index, (device, kind))| {
+            Some(SupportedDevice {
+                selection_handle: SelectionHandle::for_supported_index(index)?,
+                native_handle: device.handle,
+                name: device.name.clone(),
+                kind,
+                stable_id: kind.stable_id(),
+            })
+        })
         .collect()
 }
 
 pub fn classify_supported_device(device: &DeviceSummary) -> Option<SupportedDevice> {
+    classify_supported_device_kind(device).map(|(device, kind)| SupportedDevice {
+        selection_handle: SelectionHandle::for_supported_index(0).unwrap(),
+        native_handle: device.handle,
+        name: device.name.clone(),
+        kind,
+        stable_id: kind.stable_id(),
+    })
+}
+
+fn classify_supported_device_kind(
+    device: &DeviceSummary,
+) -> Option<(&DeviceSummary, SupportedDeviceKind)> {
     if DSLOGIC_PLUS_MODELS.iter().any(|name| *name == device.name) {
-        Some(SupportedDevice {
-            handle: device.handle,
-            name: device.name.clone(),
-            kind: SupportedDeviceKind::DsLogicPlus,
-            stable_id: SupportedDeviceKind::DsLogicPlus.stable_id(),
-        })
+        Some((device, SupportedDeviceKind::DsLogicPlus))
     } else {
         None
     }
@@ -375,8 +425,27 @@ mod tests {
 
         let filtered = filter_supported_devices(&devices);
         assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].selection_handle.raw(), 1);
         assert_eq!(filtered[0].stable_id, "dslogic-plus");
         assert_eq!(filtered[0].kind, SupportedDeviceKind::DsLogicPlus);
+    }
+
+    #[test]
+    fn selection_handles_are_stable_across_native_handle_changes() {
+        let first_scan = vec![DeviceSummary {
+            handle: DeviceHandle::new(101).unwrap(),
+            name: "DSLogic PLus".into(),
+        }];
+        let second_scan = vec![DeviceSummary {
+            handle: DeviceHandle::new(202).unwrap(),
+            name: "DSLogic PLus".into(),
+        }];
+
+        let first = filter_supported_devices(&first_scan);
+        let second = filter_supported_devices(&second_scan);
+
+        assert_eq!(first[0].selection_handle, second[0].selection_handle);
+        assert_ne!(first[0].native_handle, second[0].native_handle);
     }
 
     #[test]
