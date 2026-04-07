@@ -5,6 +5,7 @@
 
 use std::ffi::{CStr, CString};
 use std::fmt;
+use std::fs;
 use std::os::raw::{c_char, c_int};
 use std::path::{Path, PathBuf};
 
@@ -56,6 +57,18 @@ unsafe extern "C" {
     fn dsview_bridge_ds_is_collecting(value: *mut c_int) -> c_int;
     fn dsview_bridge_ds_reset_acquisition_summary() -> c_int;
     fn dsview_bridge_ds_get_acquisition_summary(out_summary: *mut RawAcquisitionSummary) -> c_int;
+    fn dsview_bridge_ds_export_recorded_vcd(
+        request: *const RawVcdExportRequest,
+        out_buffer: *mut RawExportBuffer,
+    ) -> c_int;
+    fn dsview_bridge_render_vcd_from_samples(
+        request: *const RawVcdExportRequest,
+        sample_bytes: *const u8,
+        sample_bytes_len: usize,
+        unitsize: u16,
+        out_buffer: *mut RawExportBuffer,
+    ) -> c_int;
+    fn dsview_bridge_free_export_buffer(buffer: *mut RawExportBuffer);
 }
 
 const SR_OK: i32 = 0;
@@ -77,6 +90,14 @@ const DSVIEW_BRIDGE_ERR_ARG: i32 = -1;
 const DSVIEW_BRIDGE_ERR_NOT_LOADED: i32 = -2;
 const DSVIEW_BRIDGE_ERR_DLOPEN: i32 = -3;
 const DSVIEW_BRIDGE_ERR_DLSYM: i32 = -4;
+const DSVIEW_EXPORT_ERR_GENERIC: i32 = -100;
+const DSVIEW_EXPORT_ERR_NO_STREAM: i32 = -101;
+const DSVIEW_EXPORT_ERR_OVERFLOW: i32 = -102;
+const DSVIEW_EXPORT_ERR_BAD_END_STATUS: i32 = -103;
+const DSVIEW_EXPORT_ERR_MISSING_SAMPLERATE: i32 = -104;
+const DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS: i32 = -105;
+const DSVIEW_EXPORT_ERR_OUTPUT_MODULE: i32 = -106;
+const DSVIEW_EXPORT_ERR_RUNTIME: i32 = -107;
 
 const DEVICE_NAME_CAPACITY: usize = 150;
 const END_PACKET_STATUS_UNKNOWN: i32 = -1;
@@ -101,6 +122,86 @@ struct RawChannelMode {
 struct RawSamplerateList {
     count: u32,
     values: [u64; 64],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct RawVcdExportRequest {
+    samplerate_hz: u64,
+    enabled_channels: *const u16,
+    enabled_channel_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawExportBuffer {
+    data: *mut u8,
+    len: usize,
+    sample_count: u64,
+    packet_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcdExportRequest {
+    pub samplerate_hz: u64,
+    pub enabled_channels: Vec<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcdExport {
+    pub bytes: Vec<u8>,
+    pub sample_count: u64,
+    pub packet_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcdExportFacts {
+    pub sample_count: u64,
+    pub packet_count: usize,
+    pub output_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportErrorCode {
+    Generic,
+    NoStream,
+    Overflow,
+    BadEndStatus,
+    MissingSamplerate,
+    NoEnabledChannels,
+    OutputModuleUnavailable,
+    Runtime,
+    Unknown(i32),
+}
+
+impl ExportErrorCode {
+    fn from_raw(raw: i32) -> Self {
+        match raw {
+            DSVIEW_EXPORT_ERR_GENERIC => Self::Generic,
+            DSVIEW_EXPORT_ERR_NO_STREAM => Self::NoStream,
+            DSVIEW_EXPORT_ERR_OVERFLOW => Self::Overflow,
+            DSVIEW_EXPORT_ERR_BAD_END_STATUS => Self::BadEndStatus,
+            DSVIEW_EXPORT_ERR_MISSING_SAMPLERATE => Self::MissingSamplerate,
+            DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS => Self::NoEnabledChannels,
+            DSVIEW_EXPORT_ERR_OUTPUT_MODULE => Self::OutputModuleUnavailable,
+            DSVIEW_EXPORT_ERR_RUNTIME => Self::Runtime,
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Generic => "export_generic",
+            Self::NoStream => "export_no_stream",
+            Self::Overflow => "export_overflow",
+            Self::BadEndStatus => "export_bad_end_status",
+            Self::MissingSamplerate => "export_missing_samplerate",
+            Self::NoEnabledChannels => "export_no_enabled_channels",
+            Self::OutputModuleUnavailable => "export_output_module_unavailable",
+            Self::Runtime => "export_runtime",
+            Self::Unknown(_) => "export_unknown",
+        }
+    }
 }
 
 #[repr(C)]
@@ -397,12 +498,25 @@ pub enum RuntimeError {
         operation: &'static str,
         code: NativeErrorCode,
     },
+    #[error("export call `{operation}` failed with {code:?}")]
+    ExportCall {
+        operation: &'static str,
+        code: ExportErrorCode,
+    },
     #[error("device list returned an invalid handle")]
     InvalidDeviceHandle,
     #[error("device name contains invalid UTF-8")]
     InvalidDeviceName,
     #[error("path contains an interior NUL byte: {path}")]
     PathContainsNul { path: PathBuf },
+    #[error("failed to write VCD temp file `{path}`: {detail}")]
+    TempWrite { path: PathBuf, detail: String },
+    #[error("failed to promote VCD temp file `{from}` to `{to}`: {detail}")]
+    TempPromote {
+        from: PathBuf,
+        to: PathBuf,
+        detail: String,
+    },
 }
 
 #[derive(Debug)]
@@ -670,6 +784,83 @@ impl RuntimeBridge {
         })
     }
 
+    pub fn export_recorded_vcd(
+        &self,
+        request: &VcdExportRequest,
+    ) -> Result<VcdExport, RuntimeError> {
+        let raw_request = raw_vcd_export_request(request)?;
+        let mut raw = RawExportBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+            sample_count: 0,
+            packet_count: 0,
+        };
+        export_call_status("ds_export_recorded_vcd", unsafe {
+            dsview_bridge_ds_export_recorded_vcd(&raw_request, &mut raw)
+        })?;
+        export_from_raw(raw)
+    }
+
+    pub fn export_recorded_vcd_to_path(
+        &self,
+        request: &VcdExportRequest,
+        final_path: impl AsRef<Path>,
+    ) -> Result<VcdExportFacts, RuntimeError> {
+        let export = self.export_recorded_vcd(request)?;
+        write_vcd_atomically(final_path.as_ref(), &export.bytes)?;
+        Ok(VcdExportFacts {
+            sample_count: export.sample_count,
+            packet_count: export.packet_count,
+            output_bytes: export.bytes.len() as u64,
+        })
+    }
+
+    pub fn render_vcd_from_samples(
+        &self,
+        request: &VcdExportRequest,
+        sample_bytes: &[u8],
+        unitsize: u16,
+    ) -> Result<VcdExport, RuntimeError> {
+        if sample_bytes.is_empty() {
+            return Err(RuntimeError::InvalidArgument(
+                "sample bytes must not be empty".to_string(),
+            ));
+        }
+        let raw_request = raw_vcd_export_request(request)?;
+        let mut raw = RawExportBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+            sample_count: 0,
+            packet_count: 0,
+        };
+        export_call_status("render_vcd_from_samples", unsafe {
+            dsview_bridge_render_vcd_from_samples(
+                &raw_request,
+                sample_bytes.as_ptr(),
+                sample_bytes.len(),
+                unitsize,
+                &mut raw,
+            )
+        })?;
+        export_from_raw(raw)
+    }
+
+    pub fn render_vcd_from_samples_to_path(
+        &self,
+        request: &VcdExportRequest,
+        sample_bytes: &[u8],
+        unitsize: u16,
+        final_path: impl AsRef<Path>,
+    ) -> Result<VcdExportFacts, RuntimeError> {
+        let export = self.render_vcd_from_samples(request, sample_bytes, unitsize)?;
+        write_vcd_atomically(final_path.as_ref(), &export.bytes)?;
+        Ok(VcdExportFacts {
+            sample_count: export.sample_count,
+            packet_count: export.packet_count,
+            output_bytes: export.bytes.len() as u64,
+        })
+    }
+
     fn samplerates(&self) -> Result<Vec<u64>, RuntimeError> {
         let mut raw = RawSamplerateList {
             count: 0,
@@ -772,6 +963,41 @@ pub fn source_runtime_library_path() -> Option<&'static Path> {
     option_env!("DSVIEW_SOURCE_RUNTIME_LIBRARY").map(Path::new)
 }
 
+fn write_vcd_atomically(final_path: &Path, bytes: &[u8]) -> Result<(), RuntimeError> {
+    let parent = final_path.parent().ok_or_else(|| RuntimeError::InvalidArgument(format!(
+        "final VCD path `{}` must have a parent directory",
+        final_path.display()
+    )))?;
+    fs::create_dir_all(parent).map_err(|error| RuntimeError::TempWrite {
+        path: parent.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+
+    let temp_path = final_path.with_extension(format!(
+        "{}.tmp",
+        final_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("vcd")
+    ));
+
+    fs::write(&temp_path, bytes).map_err(|error| RuntimeError::TempWrite {
+        path: temp_path.clone(),
+        detail: error.to_string(),
+    })?;
+
+    if let Err(error) = fs::rename(&temp_path, final_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(RuntimeError::TempPromote {
+            from: temp_path,
+            to: final_path.to_path_buf(),
+            detail: error.to_string(),
+        });
+    }
+
+    Ok(())
+}
+
 fn bridge_last_error() -> String {
     unsafe {
         let raw = dsview_bridge_last_loader_error();
@@ -818,6 +1044,49 @@ fn path_to_cstring(path: &Path) -> Result<CString, RuntimeError> {
     })
 }
 
+fn raw_vcd_export_request(request: &VcdExportRequest) -> Result<RawVcdExportRequest, RuntimeError> {
+    if request.samplerate_hz == 0 {
+        return Err(RuntimeError::InvalidArgument(
+            "samplerate must be greater than zero".to_string(),
+        ));
+    }
+    if request.enabled_channels.is_empty() {
+        return Err(RuntimeError::InvalidArgument(
+            "at least one enabled channel is required for VCD export".to_string(),
+        ));
+    }
+
+    Ok(RawVcdExportRequest {
+        samplerate_hz: request.samplerate_hz,
+        enabled_channels: request.enabled_channels.as_ptr(),
+        enabled_channel_count: request.enabled_channels.len(),
+    })
+}
+
+fn export_from_raw(raw: RawExportBuffer) -> Result<VcdExport, RuntimeError> {
+    if raw.data.is_null() {
+        return Ok(VcdExport {
+            bytes: Vec::new(),
+            sample_count: raw.sample_count,
+            packet_count: raw.packet_count,
+        });
+    }
+
+    let bytes = unsafe {
+        let slice = std::slice::from_raw_parts(raw.data, raw.len);
+        let owned = slice.to_vec();
+        let mut raw = raw;
+        dsview_bridge_free_export_buffer(&mut raw);
+        owned
+    };
+
+    Ok(VcdExport {
+        bytes,
+        sample_count: raw.sample_count,
+        packet_count: raw.packet_count,
+    })
+}
+
 fn native_call_status(operation: &'static str, status: i32) -> Result<(), RuntimeError> {
     if status == SR_OK {
         Ok(())
@@ -827,6 +1096,23 @@ fn native_call_status(operation: &'static str, status: i32) -> Result<(), Runtim
         Err(RuntimeError::NativeCall {
             operation,
             code: NativeErrorCode::from_raw(status),
+        })
+    }
+}
+
+fn export_call_status(operation: &'static str, status: i32) -> Result<(), RuntimeError> {
+    if status == SR_OK {
+        Ok(())
+    } else if status == DSVIEW_BRIDGE_ERR_NOT_LOADED {
+        Err(RuntimeError::BridgeNotLoaded)
+    } else if status == DSVIEW_BRIDGE_ERR_ARG {
+        Err(RuntimeError::InvalidArgument(format!(
+            "bridge rejected export request for {operation}"
+        )))
+    } else {
+        Err(RuntimeError::ExportCall {
+            operation,
+            code: ExportErrorCode::from_raw(status),
         })
     }
 }
@@ -962,19 +1248,91 @@ mod tests {
     }
 
     #[test]
-    fn native_error_codes_map_expected_values() {
+    fn export_error_codes_map_expected_values() {
+        assert_eq!(ExportErrorCode::from_raw(DSVIEW_EXPORT_ERR_OVERFLOW), ExportErrorCode::Overflow);
         assert_eq!(
-            NativeErrorCode::from_raw(SR_ERR_FIRMWARE_NOT_EXIST),
-            NativeErrorCode::FirmwareMissing
+            ExportErrorCode::from_raw(DSVIEW_EXPORT_ERR_OUTPUT_MODULE),
+            ExportErrorCode::OutputModuleUnavailable
         );
-        assert_eq!(
-            NativeErrorCode::from_raw(SR_ERR_DEVICE_IS_EXCLUSIVE),
-            NativeErrorCode::DeviceExclusive
-        );
-        assert_eq!(
-            NativeErrorCode::from_raw(12345),
-            NativeErrorCode::Unknown(12345)
-        );
+    }
+
+    #[test]
+    fn raw_vcd_export_request_rejects_missing_inputs() {
+        let missing_samplerate = raw_vcd_export_request(&VcdExportRequest {
+            samplerate_hz: 0,
+            enabled_channels: vec![0],
+        })
+        .unwrap_err();
+        assert!(matches!(missing_samplerate, RuntimeError::InvalidArgument(_)));
+
+        let missing_channels = raw_vcd_export_request(&VcdExportRequest {
+            samplerate_hz: 1,
+            enabled_channels: Vec::new(),
+        })
+        .unwrap_err();
+        assert!(matches!(missing_channels, RuntimeError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn raw_vcd_export_request_preserves_multichannel_packed_shape() {
+        let request = VcdExportRequest {
+            samplerate_hz: 100_000_000,
+            enabled_channels: vec![0, 1, 2, 3, 8, 9, 10, 11, 12],
+        };
+
+        let raw = raw_vcd_export_request(&request).unwrap();
+        assert_eq!(raw.samplerate_hz, 100_000_000);
+        assert_eq!(raw.enabled_channel_count, 9);
+
+        let channels = unsafe {
+            std::slice::from_raw_parts(raw.enabled_channels, raw.enabled_channel_count)
+        };
+        assert_eq!(channels, &[0, 1, 2, 3, 8, 9, 10, 11, 12]);
+
+        let packed_unitsize = request.enabled_channels.len().div_ceil(8) as u16;
+        assert_eq!(packed_unitsize, 2);
+    }
+
+    #[test]
+    fn export_from_raw_copies_owned_bytes() {
+        unsafe extern "C" {
+            fn malloc(size: usize) -> *mut std::ffi::c_void;
+        }
+
+        let raw = RawExportBuffer {
+            data: unsafe { malloc(4) }.cast(),
+            len: 4,
+            sample_count: 2,
+            packet_count: 0,
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(b"vcd\n".as_ptr(), raw.data, 4);
+        }
+
+        let export = export_from_raw(raw).unwrap();
+        assert_eq!(export.bytes, b"vcd\n");
+        assert_eq!(export.sample_count, 2);
+        assert_eq!(export.packet_count, 0);
+    }
+
+    #[test]
+    fn write_vcd_atomically_promotes_temp_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "dsview-sys-vcd-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let final_path = dir.join("capture.vcd");
+        let temp_path = dir.join("capture.vcd.tmp");
+
+        write_vcd_atomically(&final_path, b"$date\n$end\n").unwrap();
+
+        assert!(final_path.is_file());
+        assert!(!temp_path.exists());
+        assert_eq!(std::fs::read(&final_path).unwrap(), b"$date\n$end\n");
     }
 
     #[test]

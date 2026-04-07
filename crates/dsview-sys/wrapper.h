@@ -1,13 +1,14 @@
 #ifndef DSVIEW_SYS_WRAPPER_H
 #define DSVIEW_SYS_WRAPPER_H
 
+#include <stddef.h>
 #include <stdint.h>
+
+#include "libsigrok.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef uint64_t ds_device_handle;
 
 enum dsview_acquisition_terminal_event {
     DSVIEW_ACQ_TERMINAL_NONE = 0,
@@ -35,11 +36,17 @@ struct dsview_bridge_acquisition_summary {
     int is_collecting;
 };
 
-#define NULL_HANDLE ((ds_device_handle)0)
+struct dsview_vcd_export_request {
+    unsigned long long samplerate_hz;
+    const uint16_t *enabled_channels;
+    size_t enabled_channel_count;
+};
 
-struct ds_device_base_info {
-    ds_device_handle handle;
-    char name[150];
+struct dsview_export_buffer {
+    uint8_t *data;
+    size_t len;
+    unsigned long long sample_count;
+    size_t packet_count;
 };
 
 enum dsview_bridge_status {
@@ -94,6 +101,16 @@ int dsview_bridge_ds_stop_collect(void);
 int dsview_bridge_ds_is_collecting(int *value);
 int dsview_bridge_ds_reset_acquisition_summary(void);
 int dsview_bridge_ds_get_acquisition_summary(struct dsview_bridge_acquisition_summary *out_summary);
+int dsview_bridge_ds_export_recorded_vcd(
+    const struct dsview_vcd_export_request *request,
+    struct dsview_export_buffer *out_buffer);
+int dsview_bridge_render_vcd_from_samples(
+    const struct dsview_vcd_export_request *request,
+    const uint8_t *sample_bytes,
+    size_t sample_bytes_len,
+    uint16_t unitsize,
+    struct dsview_export_buffer *out_buffer);
+void dsview_bridge_free_export_buffer(struct dsview_export_buffer *buffer);
 
 #ifdef __cplusplus
 }

@@ -31,11 +31,27 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-changed={}",
-        libsigrok_root.join("version.c").display()
+        libsigrok_root.join("output/output.c").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        libsigrok_root.join("version.h").display()
+        libsigrok_root.join("output/vcd.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libsigrok_root.join("dsdevice.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libsigrok_root.join("libsigrok-internal.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libsigrok_root.join("config.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        dsview_root.join("common/ds_types.h").display()
     );
     println!("cargo:rerun-if-changed={}", smoke_shim.display());
     println!("cargo:rerun-if-changed={}", runtime_bridge.display());
@@ -65,7 +81,18 @@ fn main() {
     );
 
     let bridge_include_flags = glib_include_flags();
-    build_static_object_archive(&runtime_bridge, "bridge_runtime", &bridge_include_flags);
+    build_static_object_archive(
+        &runtime_bridge,
+        "bridge_runtime",
+        &[
+            format!("-I{}", dsview_root.display()),
+            format!("-I{}", libsigrok_root.display()),
+            format!("-I{}", common_root.display()),
+            format!("-I{}", manifest_dir.display()),
+            format!("-I{}", native_root.display()),
+        ],
+        &bridge_include_flags,
+    );
     emit_glib_link_flags();
     println!("cargo:rustc-link-lib=dl");
     println!("cargo:warning=Built dsview-sys runtime bridge shim for dynamic ds_* loading.");
@@ -75,9 +102,12 @@ fn main() {
             &smoke_shim,
             "smoke_version",
             &[
+                format!("-I{}", dsview_root.display()),
                 format!("-I{}", libsigrok_root.display()),
+                format!("-I{}", common_root.display()),
                 format!("-I{}", manifest_dir.display()),
             ],
+            &[],
         );
         println!("cargo:rustc-cfg=dsview_runtime_smoke_available");
         println!(
@@ -222,7 +252,12 @@ fn emit_glib_link_flags() {
     }
 }
 
-fn build_static_object_archive(source: &Path, archive_stem: &str, include_flags: &[String]) {
+fn build_static_object_archive(
+    source: &Path,
+    archive_stem: &str,
+    include_flags: &[String],
+    extra_flags: &[String],
+) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let object_path = out_dir.join(format!("{archive_stem}.o"));
     let archive_path = out_dir.join(format!("libdsview_sys_{archive_stem}.a"));
@@ -231,6 +266,9 @@ fn build_static_object_archive(source: &Path, archive_stem: &str, include_flags:
     compile.arg("-c").arg(source).arg("-o").arg(&object_path);
     for include in include_flags {
         compile.arg(include);
+    }
+    for flag in extra_flags {
+        compile.arg(flag);
     }
 
     let status = compile
