@@ -66,7 +66,7 @@ Each task was committed atomically:
 1. **Task 1-3: sys export replay bridge, retention contract, and research artifacts** - `a5d7705` (feat)
 2. **Task 4-5: clean-success core export wiring and Wave 0 export tests** - `a63ce13` (feat)
 
-**Plan metadata:** `TO_BE_FILLED` (docs)
+**Plan metadata:** `a8cc0e8` (docs)
 
 ## Files Created/Modified
 - `.planning/phases/05-export-artifacts/05-01-PLAN.md` - Restores the checked-in 05-01 execution plan inside the isolated worktree.
@@ -104,7 +104,7 @@ Each task was committed atomically:
 - **Fix:** Derived `Debug` for `RawVcdExportRequest` and switched the test helper to use a C-allocator-backed buffer compatible with the bridge free path.
 - **Files modified:** `crates/dsview-sys/src/lib.rs`
 - **Verification:** `cargo test --workspace`
-- **Committed in:** `TO_BE_FILLED` (included with docs closeout if no code-only follow-up commit is created)
+- **Committed in:** `a8cc0e8` (included with docs closeout)
 
 ---
 
