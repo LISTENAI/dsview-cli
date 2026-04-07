@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: ready_for_next_phase
 stopped_at: Phase 03 complete; ready to plan Phase 04
-last_updated: "2026-04-03T15:10:00Z"
-last_activity: 2026-04-03 -- Phase 03 plans 03-01, 03-02, and 03-03 completed
+last_updated: "2026-04-07T12:50:00Z"
+last_activity: 2026-04-07 -- Phase 4 research tightened after stable selector fix and successful manual open/release verification on hardware
 progress:
   total_phases: 6
   completed_phases: 3
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 Phase: 04 (acquisition-execution) — READY
 Plan: 0 of 3
 Status: Ready to plan Phase 04
-Last activity: 2026-04-03 -- Phase 03 plans 03-01, 03-02, and 03-03 completed
+Last activity: 2026-04-07 -- Phase 4 research tightened after hardware open/release verification and selector-fix validation context
 
 Progress: [#####-----] 50%
 
@@ -73,20 +73,24 @@ Recent decisions affecting current work:
 - Initialization: Build the CLI in Rust while treating `DSView/` as a read-only submodule dependency.
 - Initialization: Scope v1 to `DSLogic Plus` only.
 - Initialization: Use VCD as the primary waveform export format.
+- Phase 4 planning: treat clean finite-capture success as normal terminal event plus observed logic packet plus observed end marker plus successful cleanup.
+- Phase 4 planning: treat natural finite completion and post-error reuse as bounded hardware assumptions gated by explicit verification, not already-proven facts.
 
 ### Pending Todos
 
-- Manual DSLogic Plus open/close verification with USB permissions configured
-- Manual DSLogic Plus config-apply verification before acquisition start
+- Manual DSLogic Plus acquisition validation with one known-valid finite capture
+- Hardware-backed proof that post-error cleanup leaves the device reusable after at least one representative failure path
 
 ### Blockers/Concerns
 
-- Real `devices open` and Phase 3 config-apply verification may still fail under normal user permissions because the source-built runtime logs `LIBUSB_ERROR_ACCESS` during DSLogic profile checks on this machine.
+- Manual source-runtime `devices list` -> `devices open --handle 1` -> release has passed on this machine after the udev/USB permission fix, so open/release is no longer the active blocker.
+- Phase 3 manual UAT remained partial because the CLI does not expose standalone capability/config inspection or apply commands, not because the device cannot now be opened and released.
+- Phase 4 still needs hardware-backed validation that a finite configured capture ends naturally, yields the required logic/end signals, and leaves the device reusable after both success and one representative failure.
 - The current Phase 3 channel-mode capability shaping is sufficient for validation and apply ordering, but Phase 4 acquisition work may require tighter alignment with upstream per-mode behavior once real hardware capture runs are exercised.
 - The source-built runtime path currently depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
 
 ## Session Continuity
 
-Last session: 2026-04-03T15:10:00Z
-Stopped at: Phase 03 execution complete after capture-config modeling, active-device config bridge extension, and validation regression coverage
-Resume file: .planning/phases/03-capture-configuration-surface/03-03-SUMMARY.md
+Last session: 2026-04-07T12:50:00Z
+Stopped at: Phase 4 research refinement after updating planning assumptions to reflect successful manual open/release verification and remaining acquisition-validation gates
+Resume file: .planning/phases/04-acquisition-execution/04-RESEARCH.md
