@@ -90,7 +90,9 @@ Plans:
 Plans:
 - [x] 05-01: Integrate or wrap the DSView-side VCD export path for CLI usage.
 - [x] 05-02: Generate and validate JSON metadata sidecar output.
-- [ ] 05-03: Add artifact validation and golden-file checks for export correctness.
+- [x] 05-03: Add artifact validation and golden-file checks for export correctness.
+
+_Status note: automated 05-03 validation is complete, but Phase 5 remains in progress until the manual DSLogic Plus export UAT and reusability sign-off are recorded green._
 
 ### Phase 6: CLI Productization
 **Goal**: Deliver a polished non-interactive capture-and-export command that works well in shell and agent workflows.
@@ -118,5 +120,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 2. Device Discovery and Session Bring-Up | 3/3 | Complete | 2026-04-03 |
 | 3. Capture Configuration Surface | 3/3 | Complete | 2026-04-03 |
 | 4. Acquisition Execution | 3/3 | Complete | 2026-04-07 |
-| 5. Export Artifacts | 2/3 | In Progress | - |
+| 5. Export Artifacts | 3/3 | In Progress | - |
 | 6. CLI Productization | 0/3 | Not started | - |
