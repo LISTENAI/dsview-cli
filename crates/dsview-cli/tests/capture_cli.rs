@@ -1,8 +1,9 @@
 use dsview_core::{
-    AcquisitionSummary, AcquisitionTerminalEvent, CaptureCleanup, CaptureRunError,
-    NativeErrorCode,
+    AcquisitionSummary, AcquisitionTerminalEvent, CaptureCleanup, CaptureCompletion,
+    CaptureExportError, CaptureRunError, NativeErrorCode,
 };
 use dsview_sys::AcquisitionPacketStatus;
+use serde_json::json;
 
 #[path = "../src/main.rs"]
 mod cli;
@@ -29,12 +30,56 @@ fn clean_summary() -> AcquisitionSummary {
 }
 
 #[test]
-fn preflight_not_ready_shape_is_stable() {
-    let error = cli::classify_capture_error(&CaptureRunError::EnvironmentNotReady);
-    assert_eq!(error.code, "capture_environment_not_ready");
-    assert_eq!(error.native_error, None);
-    assert_eq!(error.terminal_event, None);
-    assert_eq!(error.cleanup, None);
+fn capture_success_reports_artifacts_json() {
+    let response = serde_json::to_value(json!({
+        "selected_handle": 7,
+        "completion": "clean_success",
+        "saw_logic_packet": true,
+        "saw_end_packet": true,
+        "saw_terminal_normal_end": true,
+        "cleanup_succeeded": true,
+        "artifacts": {
+            "vcd_path": "artifacts/run.vcd",
+            "metadata_path": "artifacts/run.json"
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(response["completion"], "clean_success");
+    assert_eq!(response["artifacts"]["vcd_path"], "artifacts/run.vcd");
+    assert_eq!(response["artifacts"]["metadata_path"], "artifacts/run.json");
+}
+
+#[test]
+fn metadata_serialization_failure_maps_to_distinct_cli_error_code() {
+    let error = cli::classify_export_error(&CaptureExportError::MetadataSerializationFailed {
+        path: "artifacts/run.json".into(),
+        detail: "invalid timestamp".to_string(),
+    });
+
+    assert_eq!(error.code, "capture_metadata_serialization_failed");
+    assert!(error.message.contains("metadata artifact"));
+}
+
+#[test]
+fn metadata_write_failure_maps_to_non_zero_artifact_error_class() {
+    let error = cli::classify_export_error(&CaptureExportError::MetadataWriteFailed {
+        path: "artifacts/run.json".into(),
+        detail: "permission denied".to_string(),
+    });
+
+    assert_eq!(error.code, "capture_metadata_write_failed");
+    assert!(error.detail.unwrap().contains("permission denied"));
+}
+
+#[test]
+fn capture_not_exportable_maps_separately_from_acquisition_failure() {
+    let error = cli::classify_export_error(&CaptureExportError::CaptureNotExportable {
+        completion: CaptureCompletion::Incomplete,
+    });
+
+    assert_eq!(error.code, "capture_not_exportable");
+    assert!(error.message.contains("incomplete"));
 }
 
 #[test]

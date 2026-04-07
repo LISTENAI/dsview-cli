@@ -6,8 +6,9 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_core::{
     AcquisitionSummary, AcquisitionTerminalEvent, BringUpError, CaptureCleanup,
-    CaptureCompletion, CaptureConfigRequest, CaptureRunError, CaptureRunRequest, Discovery,
-    NativeErrorCode, RuntimeError, SelectionHandle, SupportedDevice, describe_native_error,
+    CaptureCompletion, CaptureConfigRequest, CaptureExportError, CaptureRunError,
+    CaptureRunRequest, Discovery, NativeErrorCode, RuntimeError, SelectionHandle,
+    SupportedDevice, describe_native_error,
 };
 use serde::Serialize;
 
@@ -75,6 +76,8 @@ struct CaptureArgs {
     sample_limit: u64,
     #[arg(long = "channels", value_delimiter = ',', value_name = "IDX[,IDX...]")]
     channels: Vec<u16>,
+    #[arg(long = "output", value_name = "PATH")]
+    output: PathBuf,
     #[arg(long = "wait-timeout-ms", default_value_t = 10_000)]
     wait_timeout_ms: u64,
     #[arg(long = "poll-interval-ms", default_value_t = 50)]
@@ -116,6 +119,13 @@ struct CaptureResponse {
     saw_end_packet: bool,
     saw_terminal_normal_end: bool,
     cleanup_succeeded: bool,
+    artifacts: CaptureArtifactsResponse,
+}
+
+#[derive(Serialize)]
+struct CaptureArtifactsResponse {
+    vcd_path: String,
+    metadata_path: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -212,9 +222,25 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
+    let validated_config = discovery
+        .validate_capture_config(&run_request.config)
+        .map_err(|error| command_error(args.runtime.format, classify_runtime_error(&RuntimeError::InvalidArgument(error.to_string()))))?;
     let result = discovery
         .run_capture(&run_request)
         .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
+    let export = discovery
+        .export_clean_capture_vcd(&dsview_core::CaptureExportRequest {
+            capture: result.clone(),
+            validated_config,
+            vcd_path: args.output.clone(),
+            tool_name: env!("CARGO_PKG_NAME").to_string(),
+            tool_version: env!("CARGO_PKG_VERSION").to_string(),
+            capture_started_at: std::time::SystemTime::now(),
+            device_model: "DSLogic Plus".to_string(),
+            device_stable_id: "dslogic-plus".to_string(),
+            selected_handle: handle,
+        })
+        .map_err(|error| command_error(args.runtime.format, classify_export_error(&error)))?;
 
     let response = CaptureResponse {
         selected_handle: args.handle,
@@ -223,6 +249,10 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         saw_end_packet: result.summary.saw_end_packet,
         saw_terminal_normal_end: result.summary.saw_terminal_normal_end,
         cleanup_succeeded: result.cleanup.succeeded(),
+        artifacts: CaptureArtifactsResponse {
+            vcd_path: export.vcd_path.display().to_string(),
+            metadata_path: export.metadata_path.display().to_string(),
+        },
     };
     render_success(args.runtime.format, &response, &[]);
     Ok(())
@@ -485,6 +515,51 @@ pub(crate) fn classify_capture_error(error: &CaptureRunError) -> ErrorResponse {
             native_error: Some(summary.last_error.name()),
             terminal_event: Some(terminal_event_name(summary)),
             cleanup: Some(capture_cleanup_response(cleanup)),
+        },
+    }
+}
+
+pub(crate) fn classify_export_error(error: &CaptureExportError) -> ErrorResponse {
+    match error {
+        CaptureExportError::CaptureNotExportable { completion } => ErrorResponse {
+            code: "capture_not_exportable",
+            message: format!(
+                "capture completion `{}` is not eligible for artifact generation",
+                completion_name(*completion)
+            ),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureExportError::ExportFailed { path, kind, detail } => ErrorResponse {
+            code: match kind {
+                dsview_core::CaptureExportFailureKind::Precondition { .. } => {
+                    "capture_export_precondition_failed"
+                }
+                dsview_core::CaptureExportFailureKind::Runtime => "capture_export_failed",
+            },
+            message: format!("failed to write VCD artifact `{}`", path.display()),
+            detail: Some(detail.clone()),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureExportError::MetadataSerializationFailed { path, detail } => ErrorResponse {
+            code: "capture_metadata_serialization_failed",
+            message: format!("failed to serialize metadata artifact `{}`", path.display()),
+            detail: Some(detail.clone()),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureExportError::MetadataWriteFailed { path, detail } => ErrorResponse {
+            code: "capture_metadata_write_failed",
+            message: format!("failed to write metadata artifact `{}`", path.display()),
+            detail: Some(detail.clone()),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
         },
     }
 }
