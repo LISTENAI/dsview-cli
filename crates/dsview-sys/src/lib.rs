@@ -852,6 +852,86 @@ mod tests {
     }
 
     #[test]
+    fn acquisition_summary_preserves_end_marker_and_collecting_state() {
+        let raw = RawAcquisitionSummary {
+            callback_registration_active: 1,
+            start_status: SR_OK,
+            saw_collect_task_start: 1,
+            saw_device_running: 1,
+            saw_device_stopped: 1,
+            saw_terminal_normal_end: 1,
+            saw_terminal_end_by_detached: 0,
+            saw_terminal_end_by_error: 0,
+            terminal_event: 1,
+            saw_logic_packet: 1,
+            saw_end_packet: 1,
+            end_packet_status: 0,
+            saw_end_packet_ok: 1,
+            saw_data_error_packet: 0,
+            last_error: SR_OK,
+            is_collecting: 0,
+        };
+
+        let summary = AcquisitionSummary::from_raw(raw);
+        assert_eq!(summary.terminal_event, AcquisitionTerminalEvent::NormalEnd);
+        assert_eq!(summary.end_packet_status, Some(AcquisitionPacketStatus::Ok));
+        assert!(!summary.is_collecting);
+    }
+
+    #[test]
+    fn acquisition_summary_preserves_detach_terminal_event() {
+        let raw = RawAcquisitionSummary {
+            callback_registration_active: 1,
+            start_status: SR_OK,
+            saw_collect_task_start: 1,
+            saw_device_running: 1,
+            saw_device_stopped: 1,
+            saw_terminal_normal_end: 0,
+            saw_terminal_end_by_detached: 1,
+            saw_terminal_end_by_error: 0,
+            terminal_event: 2,
+            saw_logic_packet: 1,
+            saw_end_packet: 0,
+            end_packet_status: END_PACKET_STATUS_UNKNOWN,
+            saw_end_packet_ok: 0,
+            saw_data_error_packet: 0,
+            last_error: SR_ERR_DEVICE_USB_IO_ERROR,
+            is_collecting: 0,
+        };
+
+        let summary = AcquisitionSummary::from_raw(raw);
+        assert_eq!(summary.terminal_event, AcquisitionTerminalEvent::EndByDetached);
+        assert!(summary.saw_terminal_end_by_detached);
+        assert_eq!(summary.last_error, NativeErrorCode::DeviceUsbIo);
+    }
+
+    #[test]
+    fn acquisition_summary_treats_unknown_end_status_as_none() {
+        let raw = RawAcquisitionSummary {
+            callback_registration_active: 0,
+            start_status: SR_OK,
+            saw_collect_task_start: 0,
+            saw_device_running: 0,
+            saw_device_stopped: 0,
+            saw_terminal_normal_end: 0,
+            saw_terminal_end_by_detached: 0,
+            saw_terminal_end_by_error: 0,
+            terminal_event: 0,
+            saw_logic_packet: 0,
+            saw_end_packet: 0,
+            end_packet_status: END_PACKET_STATUS_UNKNOWN,
+            saw_end_packet_ok: 0,
+            saw_data_error_packet: 0,
+            last_error: SR_OK,
+            is_collecting: 1,
+        };
+
+        let summary = AcquisitionSummary::from_raw(raw);
+        assert_eq!(summary.end_packet_status, None);
+        assert!(summary.is_collecting);
+    }
+
+    #[test]
     fn runtime_smoke_matches_environment() {
         let expected = std::path::Path::new("/usr/include/glib-2.0/glib.h").exists()
             && std::path::Path::new("/usr/lib/x86_64-linux-gnu/glib-2.0/include/glibconfig.h")

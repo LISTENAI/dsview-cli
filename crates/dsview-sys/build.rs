@@ -10,7 +10,9 @@ fn main() {
         .and_then(|path| path.parent())
         .expect("dsview-sys should live under <repo>/crates/dsview-sys")
         .to_path_buf();
-    let dsview_root = repo_root.join("DSView");
+    let dsview_repo_root =
+        resolve_dsview_repo_root(&repo_root).unwrap_or_else(|| panic!("{}", missing_dsview_message(&repo_root)));
+    let dsview_root = dsview_repo_root.join("DSView");
     let libsigrok_root = dsview_root.join("libsigrok4DSL");
     let common_root = dsview_root.join("common");
     let smoke_shim = manifest_dir.join("smoke_version_shim.c");
@@ -41,13 +43,6 @@ fn main() {
         "cargo:rerun-if-changed={}",
         native_root.join("CMakeLists.txt").display()
     );
-
-    if !dsview_root.exists() {
-        panic!(
-            "DSView submodule not found at {}. Run `git submodule update --init --recursive` before building dsview-sys.",
-            dsview_root.display()
-        );
-    }
 
     if !libsigrok_root.join("libsigrok.h").exists() {
         panic!(
@@ -94,7 +89,7 @@ fn main() {
         );
     }
 
-    match build_source_runtime(&repo_root, &native_root) {
+    match build_source_runtime(&dsview_repo_root, &native_root) {
         Ok(library_path) => {
             println!("cargo:rustc-cfg=dsview_source_runtime_available");
             println!(
@@ -117,6 +112,20 @@ fn main() {
     println!(
         "cargo:warning=dsview-sys can use either a caller-supplied runtime library path or the locally built source runtime when native prerequisites are present."
     );
+}
+
+fn resolve_dsview_repo_root(repo_root: &Path) -> Option<PathBuf> {
+    repo_root
+        .ancestors()
+        .find(|candidate| candidate.join("DSView/libsigrok4DSL/libsigrok.h").exists())
+        .map(Path::to_path_buf)
+}
+
+fn missing_dsview_message(repo_root: &Path) -> String {
+    format!(
+        "DSView submodule not found from {}. Run `git submodule update --init --recursive` before building dsview-sys.",
+        repo_root.display()
+    )
 }
 
 fn should_build_smoke_runtime() -> bool {

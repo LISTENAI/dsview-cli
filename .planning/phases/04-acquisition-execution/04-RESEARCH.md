@@ -436,6 +436,62 @@ Important manual cases to include:
 | `cleanup_failure` | Injected stop/release failure tests | Must override apparent run success into command failure |
 | `post_error_reuse` | Manual hardware reopen/rerun after one safe induced failure | Must pass before Phase 4 hardware verification is considered complete |
 
+This matrix is the verifier-ready contract for Phase 4: every failure class promised by `04-02` now has a named proof path, even when that proof is synthetic, environment-gated, or manual-hardware-only.
+
+## 04-02 Verification Commitments
+
+`04-02` owns the failure-path contract rather than the happy-path run itself, so each promised failure class must be paired with one of these concrete checks:
+
+- `preflight_blocked`: environment-gated local run where preflight returns `EnvironmentNotReady`, plus CLI/core mapping checks that preserve the stable `capture_environment_not_ready` code.
+- `start_failure`: synthetic start result with non-`SR_OK` `start_status`, verified to attempt cleanup and report `capture_start_failed`.
+- `run_failure`: synthetic acquisition summary with `DS_EV_COLLECT_TASK_END_BY_ERROR`, verified through core classification and CLI normalization.
+- `detach`: synthetic acquisition summary with `DS_EV_COLLECT_TASK_END_BY_DETACHED`, plus optional safe hardware unplug validation if practical.
+- `incomplete`: synthetic summaries missing logic packets, end packets, or end-packet status, verified to fail even when a normal terminal event is present.
+- `timeout`: synthetic non-terminal wait outcome or timeout-path unit coverage that confirms forced cleanup and `capture_timeout` reporting.
+- `cleanup_failure`: injected stop/release callback-clear failure path, verified to override otherwise successful capture classification.
+
+The remaining hardware verifier for Phase 4 stays intentionally narrow: prove one representative failure path returns non-zero actionable diagnostics and then confirm the device can be reopened or rerun immediately after that failure.
+
+## 04-03 Validation Coverage Matrix
+
+| Case | Proof method | Location | Default mode |
+|------|--------------|----------|--------------|
+| `clean_success` | Synthetic success-shape assertions plus manual finite hardware capture that checks logic packet, end marker, terminal normal end, and clean release | `crates/dsview-core/tests/acquisition.rs`, `crates/dsview-core/src/lib.rs` tests, manual CLI UAT below | Mixed: automated + manual hardware |
+| `preflight_blocked` | CLI/core error normalization test for `EnvironmentNotReady`, plus local preflight run if USB/resource/runtime prerequisites are intentionally missing | `crates/dsview-cli/tests/capture_cli.rs`, `crates/dsview-cli/src/main.rs` tests, manual CLI UAT below | Automated + environment-gated |
+| `start_failure` | CLI error normalization test for `StartFailed` with cleanup detail | `crates/dsview-cli/src/main.rs` tests, `crates/dsview-core/tests/acquisition.rs` | Automated |
+| `run_failure` | Core classification test for terminal error event plus CLI stable code assertions | `crates/dsview-core/src/lib.rs` tests, `crates/dsview-cli/src/main.rs` tests, `crates/dsview-cli/tests/capture_cli.rs` | Automated |
+| `detach` | Core classification test for detached terminal event; sys summary boundary smoke; optional safe unplug manual check only if practical | `crates/dsview-core/src/lib.rs` tests, `crates/dsview-sys/src/lib.rs`, `crates/dsview-core/tests/acquisition.rs` | Automated by default |
+| `incomplete` | Core success-rule tests for missing logic packet, missing end marker, and missing normal terminal signal; CLI diagnostic-shape assertion | `crates/dsview-core/src/lib.rs` tests, `crates/dsview-cli/src/main.rs` tests, `crates/dsview-core/tests/acquisition.rs` | Automated |
+| `timeout` | CLI timeout normalization test and bounded-wait cleanup expectations from 04-02 | `crates/dsview-cli/src/main.rs` tests, `crates/dsview-core/tests/acquisition.rs`, `crates/dsview-core/src/lib.rs` tests | Automated |
+| `cleanup_failure` | Core cleanup predicate checks, sys summary-shape checks, and CLI cleanup-failure normalization | `crates/dsview-core/src/lib.rs` tests, `crates/dsview-core/tests/acquisition.rs`, `crates/dsview-sys/src/lib.rs`, `crates/dsview-sys/tests/boundary.rs`, `crates/dsview-cli/src/main.rs` tests, `crates/dsview-cli/tests/capture_cli.rs` | Automated |
+| `post_error_reuse` | Manual reopen or rerun immediately after one representative non-zero capture failure | Manual CLI UAT below | Manual hardware |
+
+## 04-03 Manual DSLogic Plus UAT
+
+Run these steps only on the current source-runtime machine with a connected `DSLogic Plus` after confirming the udev/USB permission fix is still present. If `LIBUSB_ERROR_ACCESS` reappears at any preflight step, stop and classify the machine as `preflight_blocked` rather than claiming Phase 4 hardware success.
+
+1. Preflight
+   - Confirm the source runtime library path still resolves and the DSView resource directory exists.
+   - Confirm the local user still has USB access to the device and explicitly watch for `LIBUSB_ERROR_ACCESS` during any list/open/capture command.
+   - Run `devices list --use-source-runtime --resource-dir <DSView/DSView/res>` and confirm a supported `dslogic-plus` handle is present.
+   - Run `devices open --use-source-runtime --resource-dir <DSView/DSView/res> --handle <handle>` and confirm open/release succeeds before capture validation.
+   - Use one known-valid Phase 3 configuration only through the capture flow; do not assume separate capability/config inspection commands exist.
+2. Clean finite capture
+   - Run `capture --use-source-runtime --resource-dir <DSView/DSView/res> --handle <handle> --sample-rate-hz 20000000 --sample-limit <known-valid finite limit> --channels 0,1,...` with the validated 16-channel-safe rate.
+   - Confirm exit code `0`.
+   - Confirm the JSON response reports `completion=clean_success`, `saw_logic_packet=true`, `saw_end_packet=true`, `saw_terminal_normal_end=true`, and `cleanup_succeeded=true`.
+3. Immediate rerun after success
+   - Repeat the same capture command immediately.
+   - Confirm the second run also succeeds without reopening the shell environment.
+4. Representative failure path
+   - Trigger one safe non-zero run, preferably by using a deliberately invalid local environment or another reversible operator-controlled condition rather than risky hardware manipulation.
+   - Confirm the CLI returns one of the stable failure codes (`capture_environment_not_ready`, `capture_start_failed`, `capture_run_failed`, `capture_detached`, `capture_incomplete`, `capture_timeout`, or `capture_cleanup_failed`) with actionable JSON detail.
+5. Immediate reuse after failure
+   - Immediately rerun `devices open` or a known-good finite `capture` after the failure case.
+   - Confirm the device is reusable without restarting the machine or manually resetting DSView internals.
+
+This plan deliberately limits manual proof to acquisition lifecycle behavior and does not claim any Phase 5 export validation.
+
 ## Recommended Phase Split
 
 ### 04-01: Implement capture start/run/finish orchestration in the Rust service layer

@@ -11,12 +11,11 @@ pub use capture_config::{
     CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
     ValidatedCaptureConfig,
 };
-use dsview_sys::{
-    AcquisitionPacketStatus, AcquisitionSummary, AcquisitionTerminalEvent, RuntimeBridge,
-};
 pub use dsview_sys::{
-    DeviceHandle, DeviceSummary, NativeErrorCode, RuntimeError, source_runtime_library_path,
+    AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, NativeErrorCode,
+    RuntimeError, source_runtime_library_path,
 };
+use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
 use thiserror::Error;
 
 const DSLOGIC_PLUS_MODELS: &[&str] = &["DSLogic PLus"];
@@ -118,17 +117,39 @@ pub enum CaptureCompletion {
     CleanSuccess,
     StartFailure,
     Detached,
-    ErrorTerminal,
+    RunFailure,
     Incomplete,
     CleanupFailure,
     Timeout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CaptureCleanup {
+    pub collecting_before_cleanup: bool,
+    pub stop_attempted: bool,
+    pub stop_succeeded: bool,
+    pub collecting_before_release: bool,
+    pub callbacks_cleared: bool,
+    pub release_succeeded: bool,
+    pub stop_error: Option<String>,
+    pub clear_callbacks_error: Option<String>,
+    pub release_error: Option<String>,
+}
+
+impl CaptureCleanup {
+    pub fn succeeded(&self) -> bool {
+        (!self.stop_attempted || self.stop_succeeded)
+            && !self.collecting_before_release
+            && self.callbacks_cleared
+            && self.release_succeeded
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureRunSummary {
     pub completion: CaptureCompletion,
     pub summary: AcquisitionSummary,
-    pub cleanup_succeeded: bool,
+    pub cleanup: CaptureCleanup,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,13 +167,37 @@ pub enum CaptureRunError {
     #[error("capture preflight is not ready for execution")]
     EnvironmentNotReady,
     #[error("capture start failed with {code:?}")]
-    StartFailed { code: NativeErrorCode },
-    #[error("capture timed out before natural completion")]
-    Timeout,
+    StartFailed {
+        code: NativeErrorCode,
+        last_error: NativeErrorCode,
+        cleanup: CaptureCleanup,
+    },
+    #[error("capture ended with a terminal runtime error")]
+    RunFailed {
+        summary: AcquisitionSummary,
+        cleanup: CaptureCleanup,
+    },
+    #[error("capture ended because the device detached")]
+    Detached {
+        summary: AcquisitionSummary,
+        cleanup: CaptureCleanup,
+    },
     #[error("capture completed without the clean finite-capture signal")]
-    Incomplete,
-    #[error("capture cleanup failed: {0}")]
-    CleanupFailed(String),
+    Incomplete {
+        summary: AcquisitionSummary,
+        cleanup: CaptureCleanup,
+    },
+    #[error("capture timed out before natural completion")]
+    Timeout {
+        summary: AcquisitionSummary,
+        cleanup: CaptureCleanup,
+    },
+    #[error("capture cleanup failed during {during}: {cleanup:?}")]
+    CleanupFailed {
+        during: &'static str,
+        summary: AcquisitionSummary,
+        cleanup: CaptureCleanup,
+    },
 }
 
 #[derive(Debug)]
@@ -165,8 +210,44 @@ impl<'a> CaptureSession<'a> {
         self.opened.device()
     }
 
-    pub fn release(self) -> Result<(), BringUpError> {
-        self.opened.release()
+    fn cleanup(self, runtime: &RuntimeBridge, stop_if_collecting: bool) -> CaptureCleanup {
+        let mut cleanup = CaptureCleanup::default();
+
+        let collecting_state = runtime.acquisition_state().ok();
+        cleanup.collecting_before_cleanup = collecting_state
+            .map(|state| state.is_collecting)
+            .unwrap_or(false);
+
+        if stop_if_collecting && cleanup.collecting_before_cleanup {
+            cleanup.stop_attempted = true;
+            match runtime.stop_collect() {
+                Ok(outcome) => {
+                    cleanup.stop_succeeded = true;
+                    cleanup.collecting_before_release = outcome.summary.is_collecting;
+                }
+                Err(error) => {
+                    cleanup.stop_error = Some(error.to_string());
+                    cleanup.collecting_before_release = runtime
+                        .acquisition_state()
+                        .map(|state| state.is_collecting)
+                        .unwrap_or(true);
+                }
+            }
+        } else {
+            cleanup.collecting_before_release = cleanup.collecting_before_cleanup;
+        }
+
+        match runtime.clear_acquisition_callbacks() {
+            Ok(_) => cleanup.callbacks_cleared = true,
+            Err(error) => cleanup.clear_callbacks_error = Some(error.to_string()),
+        }
+
+        match self.opened.release() {
+            Ok(()) => cleanup.release_succeeded = true,
+            Err(error) => cleanup.release_error = Some(error.to_string()),
+        }
+
+        cleanup
     }
 }
 
@@ -443,10 +524,19 @@ impl Discovery {
             .start_collect()
             .map_err(BringUpError::Runtime)?;
         if !started.start_status.is_ok() {
-            let _ = self.runtime.clear_acquisition_callbacks();
-            let _ = session.release();
-            return Err(CaptureRunError::StartFailed {
-                code: started.start_status,
+            let cleanup = session.cleanup(&self.runtime, true);
+            return Err(if cleanup.succeeded() {
+                CaptureRunError::StartFailed {
+                    code: started.start_status,
+                    last_error: started.summary.last_error,
+                    cleanup,
+                }
+            } else {
+                CaptureRunError::CleanupFailed {
+                    during: "start_failure",
+                    summary: started.summary,
+                    cleanup,
+                }
             });
         }
 
@@ -469,36 +559,42 @@ impl Discovery {
             thread::sleep(request.poll_interval);
         }
 
-        if summary.is_collecting {
-            let _ = self.runtime.stop_collect();
-            let _ = self.runtime.clear_acquisition_callbacks();
-            let _ = session.release();
-            return Err(CaptureRunError::Timeout);
-        }
+        let completion = if summary.is_collecting {
+            CaptureCompletion::Timeout
+        } else {
+            classify_capture_completion(&summary)
+        };
+        let cleanup = session.cleanup(&self.runtime, true);
 
-        let cleanup_succeeded =
-            self.runtime.clear_acquisition_callbacks().is_ok() && session.release().is_ok();
-        let completion = classify_capture_completion(&summary, cleanup_succeeded);
-        if !cleanup_succeeded {
-            return Err(CaptureRunError::CleanupFailed(
-                "failed to clear acquisition callbacks or release the active device".to_string(),
-            ));
-        }
-        if completion != CaptureCompletion::CleanSuccess {
-            return Err(match completion {
-                CaptureCompletion::Timeout => CaptureRunError::Timeout,
-                CaptureCompletion::CleanupFailure => CaptureRunError::CleanupFailed(
-                    "capture cleanup did not finish cleanly".to_string(),
-                ),
-                _ => CaptureRunError::Incomplete,
+        if !cleanup.succeeded() {
+            return Err(CaptureRunError::CleanupFailed {
+                during: capture_completion_stage(completion),
+                summary,
+                cleanup,
             });
         }
 
-        Ok(CaptureRunSummary {
-            completion,
-            summary,
-            cleanup_succeeded,
-        })
+        match completion {
+            CaptureCompletion::CleanSuccess => Ok(CaptureRunSummary {
+                completion,
+                summary,
+                cleanup,
+            }),
+            CaptureCompletion::StartFailure => Err(CaptureRunError::StartFailed {
+                code: NativeErrorCode::from_raw(summary.start_status),
+                last_error: summary.last_error,
+                cleanup,
+            }),
+            CaptureCompletion::Timeout => Err(CaptureRunError::Timeout { summary, cleanup }),
+            CaptureCompletion::Detached => Err(CaptureRunError::Detached { summary, cleanup }),
+            CaptureCompletion::RunFailure => Err(CaptureRunError::RunFailed { summary, cleanup }),
+            CaptureCompletion::Incomplete => Err(CaptureRunError::Incomplete { summary, cleanup }),
+            CaptureCompletion::CleanupFailure => Err(CaptureRunError::CleanupFailed {
+                during: "capture_completion",
+                summary,
+                cleanup,
+            }),
+        }
     }
 }
 
@@ -618,19 +714,16 @@ pub fn workspace_status() -> &'static str {
     "dsview-core ready"
 }
 
-fn classify_capture_completion(
-    summary: &AcquisitionSummary,
-    cleanup_succeeded: bool,
-) -> CaptureCompletion {
+fn classify_capture_completion(summary: &AcquisitionSummary) -> CaptureCompletion {
     if !NativeErrorCode::from_raw(summary.start_status).is_ok() {
         return CaptureCompletion::StartFailure;
     }
-    if !cleanup_succeeded || summary.is_collecting {
+    if summary.is_collecting {
         return CaptureCompletion::CleanupFailure;
     }
     match summary.terminal_event {
         AcquisitionTerminalEvent::EndByDetached => return CaptureCompletion::Detached,
-        AcquisitionTerminalEvent::EndByError => return CaptureCompletion::ErrorTerminal,
+        AcquisitionTerminalEvent::EndByError => return CaptureCompletion::RunFailure,
         AcquisitionTerminalEvent::NormalEnd => {}
         AcquisitionTerminalEvent::None | AcquisitionTerminalEvent::Unknown(_) => {
             return CaptureCompletion::Incomplete;
@@ -651,8 +744,20 @@ fn classify_capture_completion(
     }
 
     match summary.end_packet_status {
-        Some(AcquisitionPacketStatus::Ok) | None => CaptureCompletion::CleanSuccess,
-        _ => CaptureCompletion::Incomplete,
+        Some(AcquisitionPacketStatus::Ok) => CaptureCompletion::CleanSuccess,
+        None | Some(_) => CaptureCompletion::Incomplete,
+    }
+}
+
+fn capture_completion_stage(completion: CaptureCompletion) -> &'static str {
+    match completion {
+        CaptureCompletion::CleanSuccess => "clean_success",
+        CaptureCompletion::StartFailure => "start_failure",
+        CaptureCompletion::Detached => "detach",
+        CaptureCompletion::RunFailure => "run_failure",
+        CaptureCompletion::Incomplete => "incomplete",
+        CaptureCompletion::CleanupFailure => "cleanup",
+        CaptureCompletion::Timeout => "timeout",
     }
 }
 
@@ -923,7 +1028,7 @@ mod tests {
     fn clean_summary_maps_to_clean_success() {
         let summary = clean_summary();
         assert_eq!(
-            classify_capture_completion(&summary, true),
+            classify_capture_completion(&summary),
             CaptureCompletion::CleanSuccess
         );
     }
@@ -933,7 +1038,27 @@ mod tests {
         let mut summary = clean_summary();
         summary.saw_logic_packet = false;
         assert_eq!(
-            classify_capture_completion(&summary, true),
+            classify_capture_completion(&summary),
+            CaptureCompletion::Incomplete
+        );
+    }
+
+    #[test]
+    fn missing_normal_terminal_event_maps_to_incomplete() {
+        let mut summary = clean_summary();
+        summary.saw_terminal_normal_end = false;
+        assert_eq!(
+            classify_capture_completion(&summary),
+            CaptureCompletion::Incomplete
+        );
+    }
+
+    #[test]
+    fn missing_end_packet_status_maps_to_incomplete() {
+        let mut summary = clean_summary();
+        summary.end_packet_status = None;
+        assert_eq!(
+            classify_capture_completion(&summary),
             CaptureCompletion::Incomplete
         );
     }
@@ -944,18 +1069,39 @@ mod tests {
         summary.terminal_event = AcquisitionTerminalEvent::EndByDetached;
         summary.saw_terminal_normal_end = false;
         summary.saw_terminal_end_by_detached = true;
+        assert_eq!(classify_capture_completion(&summary), CaptureCompletion::Detached);
+    }
+
+    #[test]
+    fn error_terminal_event_maps_to_run_failure() {
+        let mut summary = clean_summary();
+        summary.terminal_event = AcquisitionTerminalEvent::EndByError;
+        summary.saw_terminal_normal_end = false;
+        summary.saw_terminal_end_by_error = true;
         assert_eq!(
-            classify_capture_completion(&summary, true),
-            CaptureCompletion::Detached
+            classify_capture_completion(&summary),
+            CaptureCompletion::RunFailure
+        );
+    }
+
+    #[test]
+    fn collecting_summary_maps_to_cleanup_failure() {
+        let mut summary = clean_summary();
+        summary.is_collecting = true;
+        assert_eq!(
+            classify_capture_completion(&summary),
+            CaptureCompletion::CleanupFailure
         );
     }
 
     #[test]
     fn failed_cleanup_maps_to_cleanup_failure() {
-        let summary = clean_summary();
-        assert_eq!(
-            classify_capture_completion(&summary, false),
-            CaptureCompletion::CleanupFailure
-        );
+        let cleanup = CaptureCleanup {
+            callbacks_cleared: true,
+            release_succeeded: false,
+            release_error: Some("release failed".to_string()),
+            ..CaptureCleanup::default()
+        };
+        assert!(!cleanup.succeeded());
     }
 }
