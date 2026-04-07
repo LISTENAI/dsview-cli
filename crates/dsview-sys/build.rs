@@ -50,7 +50,9 @@ fn main() {
     println!("cargo:include={}", common_root.display());
     println!("cargo:rustc-env=DSVIEW_LIBSIGROK_HEADER={}", libsigrok_root.join("libsigrok.h").display());
 
-    build_static_object_archive(&runtime_bridge, "bridge_runtime", &[format!("-I{}", manifest_dir.display())]);
+    let bridge_include_flags = glib_include_flags();
+    build_static_object_archive(&runtime_bridge, "bridge_runtime", &bridge_include_flags);
+    emit_glib_link_flags();
     println!("cargo:rustc-link-lib=dl");
     println!("cargo:warning=Built dsview-sys runtime bridge shim for dynamic ds_* loading.");
 
@@ -138,6 +140,39 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path) -> Result<PathBuf,
     }
 
     Ok(library_path)
+}
+
+fn pkg_config_output(package: &str, flag: &str) -> Vec<String> {
+    let output = Command::new("pkg-config")
+        .arg(flag)
+        .arg(package)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run pkg-config {flag} {package}: {error}"));
+    if !output.status.success() {
+        panic!("pkg-config {flag} {package} failed");
+    }
+
+    String::from_utf8(output.stdout)
+        .expect("pkg-config output should be utf-8")
+        .split_whitespace()
+        .map(|value| value.to_string())
+        .collect()
+}
+
+fn glib_include_flags() -> Vec<String> {
+    pkg_config_output("glib-2.0", "--cflags")
+}
+
+fn emit_glib_link_flags() {
+    for flag in pkg_config_output("glib-2.0", "--libs") {
+        if let Some(path) = flag.strip_prefix("-L") {
+            println!("cargo:rustc-link-search=native={path}");
+        } else if let Some(lib) = flag.strip_prefix("-l") {
+            println!("cargo:rustc-link-lib={lib}");
+        } else {
+            println!("cargo:warning=Ignoring unsupported glib link flag `{flag}` for dsview-sys bridge build.");
+        }
+    }
 }
 
 fn build_static_object_archive(source: &Path, archive_stem: &str, include_flags: &[String]) {

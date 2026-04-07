@@ -30,6 +30,18 @@ unsafe extern "C" {
     fn dsview_bridge_ds_release_actived_device() -> c_int;
     fn dsview_bridge_ds_get_last_error() -> c_int;
     fn dsview_bridge_ds_get_actived_device_init_status(status: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_get_current_samplerate(value: *mut u64) -> c_int;
+    fn dsview_bridge_ds_get_current_sample_limit(value: *mut u64) -> c_int;
+    fn dsview_bridge_ds_get_total_channel_count(value: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_get_valid_channel_count(value: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_get_current_channel_mode(value: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_get_hw_depth(value: *mut u64) -> c_int;
+    fn dsview_bridge_ds_get_vth(value: *mut f64) -> c_int;
+    fn dsview_bridge_ds_get_samplerates(out_list: *mut RawSamplerateList) -> c_int;
+    fn dsview_bridge_ds_get_channel_modes(out_modes: *mut RawChannelMode, max_modes: c_int, out_count: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_set_samplerate(value: u64) -> c_int;
+    fn dsview_bridge_ds_set_sample_limit(value: u64) -> c_int;
+    fn dsview_bridge_ds_enable_channel(channel_index: c_int, enable: c_int) -> c_int;
 }
 
 const SR_OK: i32 = 0;
@@ -55,9 +67,25 @@ const DSVIEW_BRIDGE_ERR_DLSYM: i32 = -4;
 const DEVICE_NAME_CAPACITY: usize = 150;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct RawDeviceBaseInfo {
     handle: u64,
     name: [u8; DEVICE_NAME_CAPACITY],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawChannelMode {
+    id: i32,
+    name: [u8; 64],
+    max_enabled_channels: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawSamplerateList {
+    count: u32,
+    values: [u64; 64],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +115,26 @@ impl fmt::Display for DeviceHandle {
 pub struct DeviceSummary {
     pub handle: DeviceHandle,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureCapabilities {
+    pub current_samplerate_hz: u64,
+    pub current_sample_limit: u64,
+    pub total_channel_count: u16,
+    pub valid_channel_count: u16,
+    pub active_channel_mode: i16,
+    pub hardware_depth: u64,
+    pub threshold_volts: Option<f64>,
+    pub samplerates_hz: Vec<u64>,
+    pub channel_modes: Vec<ChannelMode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelMode {
+    pub id: i16,
+    pub name: String,
+    pub max_enabled_channels: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,6 +351,95 @@ impl RuntimeBridge {
         )?;
         Ok(status)
     }
+
+    pub fn capture_capabilities(&self) -> Result<CaptureCapabilities, RuntimeError> {
+        let current_samplerate_hz = get_u64_config("ds_get_current_samplerate", dsview_bridge_ds_get_current_samplerate)?;
+        let current_sample_limit = get_u64_config("ds_get_current_sample_limit", dsview_bridge_ds_get_current_sample_limit)?;
+        let total_channel_count = get_i32_config("ds_get_total_channel_count", dsview_bridge_ds_get_total_channel_count)? as u16;
+        let valid_channel_count = get_i32_config("ds_get_valid_channel_count", dsview_bridge_ds_get_valid_channel_count)? as u16;
+        let active_channel_mode = get_i32_config("ds_get_current_channel_mode", dsview_bridge_ds_get_current_channel_mode)? as i16;
+        let hardware_depth = get_u64_config("ds_get_hw_depth", dsview_bridge_ds_get_hw_depth)?;
+
+        let threshold_volts = match get_f64_config("ds_get_vth", dsview_bridge_ds_get_vth) {
+            Ok(value) => Some(value),
+            Err(RuntimeError::NativeCall {
+                operation: _,
+                code: NativeErrorCode::NotApplicable,
+            }) => None,
+            Err(error) => return Err(error),
+        };
+
+        let samplerates_hz = self.samplerates()?;
+        let channel_modes = self.channel_modes()?;
+
+        Ok(CaptureCapabilities {
+            current_samplerate_hz,
+            current_sample_limit,
+            total_channel_count,
+            valid_channel_count,
+            active_channel_mode,
+            hardware_depth,
+            threshold_volts,
+            samplerates_hz,
+            channel_modes,
+        })
+    }
+
+    pub fn set_samplerate(&self, value: u64) -> Result<(), RuntimeError> {
+        native_call_status("ds_set_samplerate", unsafe { dsview_bridge_ds_set_samplerate(value) })
+    }
+
+    pub fn set_sample_limit(&self, value: u64) -> Result<(), RuntimeError> {
+        native_call_status("ds_set_sample_limit", unsafe { dsview_bridge_ds_set_sample_limit(value) })
+    }
+
+    pub fn set_enabled_channels(&self, enabled_channels: &[u16], total_channel_count: u16) -> Result<(), RuntimeError> {
+        for channel in 0..total_channel_count {
+            let enable = enabled_channels.contains(&channel);
+            native_call_status(
+                "ds_enable_channel",
+                unsafe { dsview_bridge_ds_enable_channel(channel as c_int, if enable { 1 } else { 0 }) },
+            )?;
+        }
+        Ok(())
+    }
+
+    fn samplerates(&self) -> Result<Vec<u64>, RuntimeError> {
+        let mut raw = RawSamplerateList {
+            count: 0,
+            values: [0; 64],
+        };
+        native_call_status("ds_get_samplerates", unsafe { dsview_bridge_ds_get_samplerates(&mut raw) })?;
+        Ok(raw.values[..raw.count as usize].to_vec())
+    }
+
+    fn channel_modes(&self) -> Result<Vec<ChannelMode>, RuntimeError> {
+        let mut raw_modes = [RawChannelMode {
+            id: 0,
+            name: [0; 64],
+            max_enabled_channels: 0,
+        }; 16];
+        let mut count = 0;
+        native_call_status(
+            "ds_get_channel_modes",
+            unsafe { dsview_bridge_ds_get_channel_modes(raw_modes.as_mut_ptr(), raw_modes.len() as c_int, &mut count) },
+        )?;
+
+        raw_modes[..count as usize]
+            .iter()
+            .map(|raw| {
+                let nul = raw.name.iter().position(|byte| *byte == 0).unwrap_or(raw.name.len());
+                let name = std::str::from_utf8(&raw.name[..nul])
+                    .map_err(|_| RuntimeError::InvalidDeviceName)?
+                    .to_string();
+                Ok(ChannelMode {
+                    id: raw.id as i16,
+                    name,
+                    max_enabled_channels: raw.max_enabled_channels,
+                })
+            })
+            .collect()
+    }
 }
 
 impl Drop for RuntimeBridge {
@@ -369,6 +506,24 @@ fn bridge_last_error() -> String {
             CStr::from_ptr(raw).to_string_lossy().into_owned()
         }
     }
+}
+
+fn get_u64_config(operation: &'static str, getter: unsafe extern "C" fn(*mut u64) -> c_int) -> Result<u64, RuntimeError> {
+    let mut value = 0;
+    native_call_status(operation, unsafe { getter(&mut value) })?;
+    Ok(value)
+}
+
+fn get_i32_config(operation: &'static str, getter: unsafe extern "C" fn(*mut c_int) -> c_int) -> Result<i32, RuntimeError> {
+    let mut value = 0;
+    native_call_status(operation, unsafe { getter(&mut value) })?;
+    Ok(value)
+}
+
+fn get_f64_config(operation: &'static str, getter: unsafe extern "C" fn(*mut f64) -> c_int) -> Result<f64, RuntimeError> {
+    let mut value = 0.0;
+    native_call_status(operation, unsafe { getter(&mut value) })?;
+    Ok(value)
 }
 
 fn path_to_cstring(path: &Path) -> Result<CString, RuntimeError> {

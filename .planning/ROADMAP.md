@@ -8,7 +8,7 @@ This roadmap takes DSView CLI from project setup to a first usable Rust-based ca
 
 - [x] **Phase 1: Native Integration Foundation** - Prove and stabilize the Rust-to-DSView native boundary.
 - [x] **Phase 2: Device Discovery and Session Bring-Up** - Enumerate `DSLogic Plus` devices and open sessions safely.
-- [ ] **Phase 3: Capture Configuration Surface** - Expose and validate the minimum useful capture parameters.
+- [x] **Phase 3: Capture Configuration Surface** - Expose and validate the minimum useful capture parameters.
 - [ ] **Phase 4: Acquisition Execution** - Run reliable logic captures and handle session lifecycle cleanly.
 - [ ] **Phase 5: Export Artifacts** - Produce VCD waveform files and machine-readable capture metadata.
 - [ ] **Phase 6: CLI Productization** - Deliver a scriptable end-to-end CLI command with usable diagnostics and output UX.
@@ -56,9 +56,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: Define Rust domain types and validation rules for capture configuration.
-- [ ] 03-02: Wire validated capture settings into the native session layer.
-- [ ] 03-03: Add tests for valid, invalid, and device-specific capture configuration cases.
+- [x] 03-01: Define Rust domain types and validation rules for capture configuration.
+- [x] 03-02: Wire validated capture settings into the native session layer.
+- [x] 03-03: Add tests for valid, invalid, and device-specific capture configuration cases.
 
 ### Phase 4: Acquisition Execution
 **Goal**: Execute logic captures reliably from the CLI while managing device/session lifecycle correctly.
@@ -114,7 +114,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 |-------|----------------|--------|-----------|
 | 1. Native Integration Foundation | 3/3 | Complete | 2026-04-03 |
 | 2. Device Discovery and Session Bring-Up | 3/3 | Complete | 2026-04-03 |
-| 3. Capture Configuration Surface | 0/3 | Not started | - |
+| 3. Capture Configuration Surface | 3/3 | Complete | 2026-04-03 |
 | 4. Acquisition Execution | 0/3 | Not started | - |
 | 5. Export Artifacts | 0/3 | Not started | - |
 | 6. CLI Productization | 0/3 | Not started | - |

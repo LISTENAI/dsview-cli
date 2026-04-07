@@ -1,8 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod capture_config;
+
+pub use capture_config::{
+    CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
+    ValidatedCaptureConfig,
+};
 pub use dsview_sys::{
-    source_runtime_library_path, DeviceHandle, DeviceSummary, NativeErrorCode, RuntimeError,
+    source_runtime_library_path, CaptureCapabilities as NativeCaptureCapabilities,
+    DeviceHandle, DeviceSummary, NativeErrorCode, RuntimeError,
 };
 use dsview_sys::RuntimeBridge;
 use thiserror::Error;
@@ -122,6 +129,53 @@ pub struct OpenedDevice<'a> {
     init_status: Option<i32>,
     last_error: NativeErrorCode,
     released: bool,
+}
+
+impl Discovery {
+    pub fn dslogic_plus_capabilities(&self) -> Result<CaptureCapabilities, CaptureConfigError> {
+        let native = self.runtime.capture_capabilities().map_err(CaptureConfigError::from_runtime_error)?;
+        Ok(CaptureCapabilities {
+            total_channel_count: native.total_channel_count,
+            active_channel_mode: native.active_channel_mode,
+            channel_modes: native
+                .channel_modes
+                .into_iter()
+                .map(|mode| ChannelModeCapability {
+                    id: mode.id,
+                    name: mode.name,
+                    max_enabled_channels: mode.max_enabled_channels,
+                    supported_sample_rates: native.samplerates_hz.clone(),
+                })
+                .collect(),
+            hardware_sample_capacity: native.hardware_depth,
+            sample_limit_alignment: 1024,
+            threshold_volts: native.threshold_volts,
+        })
+    }
+
+    pub fn validate_capture_config(
+        &self,
+        request: &CaptureConfigRequest,
+    ) -> Result<ValidatedCaptureConfig, CaptureConfigError> {
+        self.dslogic_plus_capabilities()?.validate_request(request)
+    }
+
+    pub fn apply_capture_config(
+        &self,
+        config: &ValidatedCaptureConfig,
+        total_channel_count: u16,
+    ) -> Result<(), BringUpError> {
+        self.runtime
+            .set_enabled_channels(&config.enabled_channels, total_channel_count)
+            .map_err(BringUpError::Runtime)?;
+        self.runtime
+            .set_sample_limit(config.effective_sample_limit)
+            .map_err(BringUpError::Runtime)?;
+        self.runtime
+            .set_samplerate(config.sample_rate_hz)
+            .map_err(BringUpError::Runtime)?;
+        Ok(())
+    }
 }
 
 impl<'a> OpenedDevice<'a> {
@@ -261,6 +315,37 @@ fn has_any_file(path: &Path, candidates: &[&str]) -> bool {
 }
 
 #[cfg(test)]
+fn dslogic_plus_capabilities() -> CaptureCapabilities {
+    CaptureCapabilities {
+        total_channel_count: 16,
+        active_channel_mode: 20,
+        channel_modes: vec![
+            ChannelModeCapability {
+                id: 20,
+                name: "Buffer 100x16".to_string(),
+                max_enabled_channels: 16,
+                supported_sample_rates: vec![20_000_000, 25_000_000, 50_000_000, 100_000_000],
+            },
+            ChannelModeCapability {
+                id: 21,
+                name: "Buffer 200x8".to_string(),
+                max_enabled_channels: 8,
+                supported_sample_rates: vec![20_000_000, 25_000_000, 50_000_000, 100_000_000, 200_000_000],
+            },
+            ChannelModeCapability {
+                id: 22,
+                name: "Buffer 400x4".to_string(),
+                max_enabled_channels: 4,
+                supported_sample_rates: vec![20_000_000, 25_000_000, 50_000_000, 100_000_000, 200_000_000, 400_000_000],
+            },
+        ],
+        hardware_sample_capacity: 268_435_456,
+        sample_limit_alignment: 1024,
+        threshold_volts: Some(3.3),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -361,5 +446,13 @@ mod tests {
         assert_eq!(describe_native_error(NativeErrorCode::FirmwareMissing), "Firmware not exist!");
         assert_eq!(describe_native_error(NativeErrorCode::DeviceUsbIo), "USB io error!");
         assert_eq!(describe_native_error(NativeErrorCode::DeviceExclusive), "Device is busy!");
+    }
+
+    #[test]
+    fn dslogic_plus_capabilities_expose_expected_defaults() {
+        let capabilities = super::dslogic_plus_capabilities();
+        assert_eq!(capabilities.total_channel_count, 16);
+        assert_eq!(capabilities.active_channel_mode, 20);
+        assert_eq!(capabilities.channel_modes.len(), 3);
     }
 }

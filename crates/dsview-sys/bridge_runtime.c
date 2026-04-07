@@ -1,6 +1,7 @@
 #include "wrapper.h"
 
 #include <dlfcn.h>
+#include <glib.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,6 +13,26 @@ typedef int (*ds_active_device_fn)(ds_device_handle handle);
 typedef int (*ds_release_actived_device_fn)(void);
 typedef int (*ds_get_last_error_fn)(void);
 typedef int (*ds_get_actived_device_init_status_fn)(int *status);
+typedef int (*ds_get_actived_device_config_fn)(const void *ch, const void *cg, int key, GVariant **data);
+typedef int (*ds_get_actived_device_config_list_fn)(const void *cg, int key, GVariant **data);
+typedef int (*ds_set_actived_device_config_fn)(const void *ch, const void *cg, int key, GVariant *data);
+typedef int (*ds_enable_device_channel_index_fn)(int ch_index, gboolean enable);
+
+enum {
+    SR_OK = 0,
+    SR_CONF_SAMPLERATE = 30000,
+    SR_CONF_VLD_CH_NUM = 30027,
+    SR_CONF_TOTAL_CH_NUM = 30026,
+    SR_CONF_CHANNEL_MODE = 30067,
+    SR_CONF_VTH = 30072,
+    SR_CONF_HW_DEPTH = 30075,
+    SR_CONF_LIMIT_SAMPLES = 50001,
+};
+
+struct sr_list_item {
+    int id;
+    const char *name;
+};
 
 struct dsview_bridge_api {
     void *library_handle;
@@ -23,6 +44,10 @@ struct dsview_bridge_api {
     ds_release_actived_device_fn ds_release_actived_device;
     ds_get_last_error_fn ds_get_last_error;
     ds_get_actived_device_init_status_fn ds_get_actived_device_init_status;
+    ds_get_actived_device_config_fn ds_get_actived_device_config;
+    ds_get_actived_device_config_list_fn ds_get_actived_device_config_list;
+    ds_set_actived_device_config_fn ds_set_actived_device_config;
+    ds_enable_device_channel_index_fn ds_enable_device_channel_index;
     char last_error[512];
 };
 
@@ -59,6 +84,81 @@ static void *dsview_bridge_load_symbol(const char *name, int *status_out)
     }
 
     return symbol;
+}
+
+static int dsview_bridge_get_uint64_config(int key, unsigned long long *value)
+{
+    GVariant *data = NULL;
+    int status;
+
+    if (value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    status = g_bridge_api.ds_get_actived_device_config(NULL, NULL, key, &data);
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *value = g_variant_get_uint64(data);
+    g_variant_unref(data);
+    return SR_OK;
+}
+
+static int dsview_bridge_get_int16_config(int key, int *value)
+{
+    GVariant *data = NULL;
+    int status;
+
+    if (value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    status = g_bridge_api.ds_get_actived_device_config(NULL, NULL, key, &data);
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *value = g_variant_get_int16(data);
+    g_variant_unref(data);
+    return SR_OK;
+}
+
+static int dsview_bridge_get_double_config(int key, double *value)
+{
+    GVariant *data = NULL;
+    int status;
+
+    if (value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    status = g_bridge_api.ds_get_actived_device_config(NULL, NULL, key, &data);
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *value = g_variant_get_double(data);
+    g_variant_unref(data);
+    return SR_OK;
 }
 
 int dsview_bridge_load_library(const char *path)
@@ -128,6 +228,34 @@ int dsview_bridge_load_library(const char *path)
 
     g_bridge_api.ds_get_actived_device_init_status =
         (ds_get_actived_device_init_status_fn)dsview_bridge_load_symbol("ds_get_actived_device_init_status", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_get_actived_device_config =
+        (ds_get_actived_device_config_fn)dsview_bridge_load_symbol("ds_get_actived_device_config", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_get_actived_device_config_list =
+        (ds_get_actived_device_config_list_fn)dsview_bridge_load_symbol("ds_get_actived_device_config_list", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_set_actived_device_config =
+        (ds_set_actived_device_config_fn)dsview_bridge_load_symbol("ds_set_actived_device_config", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_enable_device_channel_index =
+        (ds_enable_device_channel_index_fn)dsview_bridge_load_symbol("ds_enable_device_channel_index", &status);
     if (status != DSVIEW_BRIDGE_OK) {
         dsview_bridge_unload_library();
         return status;
@@ -229,4 +357,158 @@ int dsview_bridge_ds_get_actived_device_init_status(int *status)
     }
 
     return g_bridge_api.ds_get_actived_device_init_status(status);
+}
+
+int dsview_bridge_ds_get_current_samplerate(unsigned long long *value)
+{
+    return dsview_bridge_get_uint64_config(SR_CONF_SAMPLERATE, value);
+}
+
+int dsview_bridge_ds_get_current_sample_limit(unsigned long long *value)
+{
+    return dsview_bridge_get_uint64_config(SR_CONF_LIMIT_SAMPLES, value);
+}
+
+int dsview_bridge_ds_get_total_channel_count(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_TOTAL_CH_NUM, value);
+}
+
+int dsview_bridge_ds_get_valid_channel_count(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_VLD_CH_NUM, value);
+}
+
+int dsview_bridge_ds_get_current_channel_mode(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_CHANNEL_MODE, value);
+}
+
+int dsview_bridge_ds_get_hw_depth(unsigned long long *value)
+{
+    return dsview_bridge_get_uint64_config(SR_CONF_HW_DEPTH, value);
+}
+
+int dsview_bridge_ds_get_vth(double *value)
+{
+    return dsview_bridge_get_double_config(SR_CONF_VTH, value);
+}
+
+int dsview_bridge_ds_get_samplerates(struct dsview_samplerate_list *out_list)
+{
+    GVariant *data = NULL;
+    GVariant *samplerates = NULL;
+    gsize count = 0;
+    const guint64 *values = NULL;
+    int status;
+    unsigned int i;
+
+    if (out_list == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config_list == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    memset(out_list, 0, sizeof(*out_list));
+    status = g_bridge_api.ds_get_actived_device_config_list(NULL, SR_CONF_SAMPLERATE, &data);
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    samplerates = g_variant_lookup_value(data, "samplerates", G_VARIANT_TYPE("at"));
+    if (samplerates == NULL) {
+        g_variant_unref(data);
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    values = g_variant_get_fixed_array(samplerates, &count, sizeof(guint64));
+    if (count > 64) {
+        count = 64;
+    }
+    out_list->count = (unsigned int)count;
+    for (i = 0; i < out_list->count; i++) {
+        out_list->values[i] = values[i];
+    }
+
+    g_variant_unref(samplerates);
+    g_variant_unref(data);
+    return SR_OK;
+}
+
+int dsview_bridge_ds_get_channel_modes(struct dsview_channel_mode *out_modes, int max_modes, int *out_count)
+{
+    GVariant *data = NULL;
+    struct sr_list_item *items = NULL;
+    int index = 0;
+    int status;
+
+    if (out_count == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config_list == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    *out_count = 0;
+    status = g_bridge_api.ds_get_actived_device_config_list(NULL, SR_CONF_CHANNEL_MODE, &data);
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    items = (struct sr_list_item *)(uintptr_t)g_variant_get_uint64(data);
+    while (items != NULL && items[index].id >= 0) {
+        if (out_modes != NULL && index < max_modes) {
+            out_modes[index].id = items[index].id;
+            out_modes[index].max_enabled_channels = 0;
+            memset(out_modes[index].name, 0, sizeof(out_modes[index].name));
+            if (items[index].name != NULL) {
+                strncpy(out_modes[index].name, items[index].name, sizeof(out_modes[index].name) - 1);
+            }
+        }
+        index++;
+    }
+
+    g_variant_unref(data);
+    *out_count = index;
+    return SR_OK;
+}
+
+int dsview_bridge_ds_set_samplerate(unsigned long long value)
+{
+    GVariant *data;
+
+    if (g_bridge_api.ds_set_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    data = g_variant_new_uint64(value);
+    return g_bridge_api.ds_set_actived_device_config(NULL, NULL, SR_CONF_SAMPLERATE, data);
+}
+
+int dsview_bridge_ds_set_sample_limit(unsigned long long value)
+{
+    GVariant *data;
+
+    if (g_bridge_api.ds_set_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    data = g_variant_new_uint64(value);
+    return g_bridge_api.ds_set_actived_device_config(NULL, NULL, SR_CONF_LIMIT_SAMPLES, data);
+}
+
+int dsview_bridge_ds_enable_channel(int channel_index, int enable)
+{
+    if (g_bridge_api.ds_enable_device_channel_index == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    return g_bridge_api.ds_enable_device_channel_index(channel_index, enable ? TRUE : FALSE);
 }
