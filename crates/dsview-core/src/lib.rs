@@ -12,8 +12,8 @@ pub use capture_config::{
     ValidatedCaptureConfig,
 };
 pub use dsview_sys::{
-    AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, NativeErrorCode,
-    RuntimeError, source_runtime_library_path,
+    AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, ExportErrorCode,
+    NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest, source_runtime_library_path,
 };
 use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
 use thiserror::Error;
@@ -150,6 +150,37 @@ pub struct CaptureRunSummary {
     pub completion: CaptureCompletion,
     pub summary: AcquisitionSummary,
     pub cleanup: CaptureCleanup,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureExportRequest {
+    pub capture: CaptureRunSummary,
+    pub validated_config: ValidatedCaptureConfig,
+    pub vcd_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureExportSuccess {
+    pub vcd_path: PathBuf,
+    pub export: VcdExportFacts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureExportFailureKind {
+    Precondition { code: ExportErrorCode },
+    Runtime,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum CaptureExportError {
+    #[error("capture completion `{completion:?}` is not export-eligible")]
+    CaptureNotExportable { completion: CaptureCompletion },
+    #[error("export failed for `{path}` with {kind:?}: {detail}")]
+    ExportFailed {
+        path: PathBuf,
+        kind: CaptureExportFailureKind,
+        detail: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -758,6 +789,61 @@ fn capture_completion_stage(completion: CaptureCompletion) -> &'static str {
         CaptureCompletion::Incomplete => "incomplete",
         CaptureCompletion::CleanupFailure => "cleanup",
         CaptureCompletion::Timeout => "timeout",
+    }
+}
+
+fn export_failure_kind(error: &RuntimeError) -> CaptureExportFailureKind {
+    match error {
+        RuntimeError::ExportCall { code, .. } => match code {
+            ExportErrorCode::NoStream
+            | ExportErrorCode::Overflow
+            | ExportErrorCode::BadEndStatus
+            | ExportErrorCode::MissingSamplerate
+            | ExportErrorCode::NoEnabledChannels => {
+                CaptureExportFailureKind::Precondition { code: *code }
+            }
+            ExportErrorCode::Generic
+            | ExportErrorCode::OutputModuleUnavailable
+            | ExportErrorCode::Runtime
+            | ExportErrorCode::Unknown(_) => CaptureExportFailureKind::Runtime,
+        },
+        RuntimeError::TempWrite { .. } | RuntimeError::TempPromote { .. } => {
+            CaptureExportFailureKind::Runtime
+        }
+        _ => CaptureExportFailureKind::Runtime,
+    }
+}
+
+fn build_vcd_export_request(config: &ValidatedCaptureConfig) -> VcdExportRequest {
+    VcdExportRequest {
+        samplerate_hz: config.sample_rate_hz,
+        enabled_channels: config.enabled_channels.clone(),
+    }
+}
+
+impl Discovery {
+    pub fn export_clean_capture_vcd(
+        &self,
+        request: &CaptureExportRequest,
+    ) -> Result<CaptureExportSuccess, CaptureExportError> {
+        if request.capture.completion != CaptureCompletion::CleanSuccess {
+            return Err(CaptureExportError::CaptureNotExportable {
+                completion: request.capture.completion,
+            });
+        }
+
+        let export_request = build_vcd_export_request(&request.validated_config);
+        let vcd_path = request.vcd_path.clone();
+        let export = self
+            .runtime
+            .export_recorded_vcd_to_path(&export_request, &vcd_path)
+            .map_err(|error| CaptureExportError::ExportFailed {
+                path: vcd_path.clone(),
+                kind: export_failure_kind(&error),
+                detail: error.to_string(),
+            })?;
+
+        Ok(CaptureExportSuccess { vcd_path, export })
     }
 }
 
