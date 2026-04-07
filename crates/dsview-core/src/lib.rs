@@ -3,7 +3,7 @@ use std::fs;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 mod capture_config;
 
@@ -16,7 +16,10 @@ pub use dsview_sys::{
     NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest, source_runtime_library_path,
 };
 use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
+use serde::Serialize;
 use thiserror::Error;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 const DSLOGIC_PLUS_MODELS: &[&str] = &["DSLogic PLus"];
 const DSLOGIC_PLUS_PRIMARY_FIRMWARES: &[&str] = &["DSLogicPlus.fw"];
@@ -157,12 +160,62 @@ pub struct CaptureExportRequest {
     pub capture: CaptureRunSummary,
     pub validated_config: ValidatedCaptureConfig,
     pub vcd_path: PathBuf,
+    pub tool_name: String,
+    pub tool_version: String,
+    pub capture_started_at: SystemTime,
+    pub device_model: String,
+    pub device_stable_id: String,
+    pub selected_handle: SelectionHandle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MetadataToolInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MetadataCaptureInfo {
+    pub timestamp_utc: String,
+    pub device_model: String,
+    pub device_stable_id: String,
+    pub selected_handle: u64,
+    pub sample_rate_hz: u64,
+    pub requested_sample_limit: u64,
+    pub actual_sample_count: u64,
+    pub enabled_channels: Vec<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MetadataAcquisitionInfo {
+    pub completion: String,
+    pub terminal_event: String,
+    pub saw_logic_packet: bool,
+    pub saw_end_packet: bool,
+    pub end_packet_status: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MetadataArtifactInfo {
+    pub vcd_path: String,
+    pub metadata_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CaptureMetadata {
+    pub schema_version: u32,
+    pub tool: MetadataToolInfo,
+    pub capture: MetadataCaptureInfo,
+    pub acquisition: MetadataAcquisitionInfo,
+    pub artifacts: MetadataArtifactInfo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureExportSuccess {
     pub vcd_path: PathBuf,
+    pub metadata_path: PathBuf,
     pub export: VcdExportFacts,
+    pub metadata: CaptureMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +234,10 @@ pub enum CaptureExportError {
         kind: CaptureExportFailureKind,
         detail: String,
     },
+    #[error("metadata serialization failed for `{path}`: {detail}")]
+    MetadataSerializationFailed { path: PathBuf, detail: String },
+    #[error("metadata write failed for `{path}`: {detail}")]
+    MetadataWriteFailed { path: PathBuf, detail: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -745,6 +802,12 @@ pub fn workspace_status() -> &'static str {
     "dsview-core ready"
 }
 
+pub fn metadata_path_for_vcd(vcd_path: &Path) -> PathBuf {
+    let mut metadata_path = vcd_path.to_path_buf();
+    metadata_path.set_extension("json");
+    metadata_path
+}
+
 fn classify_capture_completion(summary: &AcquisitionSummary) -> CaptureCompletion {
     if !NativeErrorCode::from_raw(summary.start_status).is_ok() {
         return CaptureCompletion::StartFailure;
@@ -821,6 +884,100 @@ fn build_vcd_export_request(config: &ValidatedCaptureConfig) -> VcdExportRequest
     }
 }
 
+fn capture_timestamp_utc(started_at: SystemTime) -> Result<String, String> {
+    let timestamp = OffsetDateTime::from(started_at)
+        .format(&Rfc3339)
+        .map_err(|error| error.to_string())?;
+    Ok(timestamp)
+}
+
+fn end_packet_status_name(status: Option<AcquisitionPacketStatus>) -> Option<String> {
+    status.map(|value| match value {
+        AcquisitionPacketStatus::Ok => "ok".to_string(),
+        AcquisitionPacketStatus::SourceError => "source_error".to_string(),
+        AcquisitionPacketStatus::DataError => "data_error".to_string(),
+        AcquisitionPacketStatus::Unknown(raw) => format!("unknown_{raw}"),
+    })
+}
+
+fn terminal_event_name(event: AcquisitionTerminalEvent) -> String {
+    match event {
+        AcquisitionTerminalEvent::None => "none".to_string(),
+        AcquisitionTerminalEvent::NormalEnd => "normal_end".to_string(),
+        AcquisitionTerminalEvent::EndByDetached => "end_by_detached".to_string(),
+        AcquisitionTerminalEvent::EndByError => "end_by_error".to_string(),
+        AcquisitionTerminalEvent::Unknown(raw) => format!("unknown_{raw}"),
+    }
+}
+
+fn completion_name(completion: CaptureCompletion) -> String {
+    match completion {
+        CaptureCompletion::CleanSuccess => "clean_success".to_string(),
+        CaptureCompletion::StartFailure => "start_failure".to_string(),
+        CaptureCompletion::Detached => "detach".to_string(),
+        CaptureCompletion::RunFailure => "run_failure".to_string(),
+        CaptureCompletion::Incomplete => "incomplete".to_string(),
+        CaptureCompletion::CleanupFailure => "cleanup_failure".to_string(),
+        CaptureCompletion::Timeout => "timeout".to_string(),
+    }
+}
+
+fn build_capture_metadata(
+    request: &CaptureExportRequest,
+    metadata_path: &Path,
+    export: &VcdExportFacts,
+) -> Result<CaptureMetadata, String> {
+    Ok(CaptureMetadata {
+        schema_version: 1,
+        tool: MetadataToolInfo {
+            name: request.tool_name.clone(),
+            version: request.tool_version.clone(),
+        },
+        capture: MetadataCaptureInfo {
+            timestamp_utc: capture_timestamp_utc(request.capture_started_at)?,
+            device_model: request.device_model.clone(),
+            device_stable_id: request.device_stable_id.clone(),
+            selected_handle: request.selected_handle.raw(),
+            sample_rate_hz: request.validated_config.sample_rate_hz,
+            requested_sample_limit: request.validated_config.requested_sample_limit,
+            actual_sample_count: export.sample_count,
+            enabled_channels: request.validated_config.enabled_channels.clone(),
+        },
+        acquisition: MetadataAcquisitionInfo {
+            completion: completion_name(request.capture.completion),
+            terminal_event: terminal_event_name(request.capture.summary.terminal_event),
+            saw_logic_packet: request.capture.summary.saw_logic_packet,
+            saw_end_packet: request.capture.summary.saw_end_packet,
+            end_packet_status: end_packet_status_name(request.capture.summary.end_packet_status),
+        },
+        artifacts: MetadataArtifactInfo {
+            vcd_path: request.vcd_path.display().to_string(),
+            metadata_path: metadata_path.display().to_string(),
+        },
+    })
+}
+
+fn write_metadata_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("metadata path `{}` has no parent directory", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("metadata path `{}` has no valid file name", path.display()))?;
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
+
+    fs::write(&temp_path, bytes).map_err(|error| error.to_string())?;
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error.to_string());
+    }
+
+    Ok(())
+}
+
 impl Discovery {
     pub fn export_clean_capture_vcd(
         &self,
@@ -834,6 +991,7 @@ impl Discovery {
 
         let export_request = build_vcd_export_request(&request.validated_config);
         let vcd_path = request.vcd_path.clone();
+        let metadata_path = metadata_path_for_vcd(&vcd_path);
         let export = self
             .runtime
             .export_recorded_vcd_to_path(&export_request, &vcd_path)
@@ -842,8 +1000,32 @@ impl Discovery {
                 kind: export_failure_kind(&error),
                 detail: error.to_string(),
             })?;
+        let metadata = build_capture_metadata(request, &metadata_path, &export).map_err(|detail| {
+            CaptureExportError::MetadataSerializationFailed {
+                path: metadata_path.clone(),
+                detail,
+            }
+        })?;
+        let metadata_bytes =
+            serde_json::to_vec_pretty(&metadata).map_err(|error| {
+                CaptureExportError::MetadataSerializationFailed {
+                    path: metadata_path.clone(),
+                    detail: error.to_string(),
+                }
+            })?;
+        write_metadata_atomically(&metadata_path, &metadata_bytes).map_err(|detail| {
+            CaptureExportError::MetadataWriteFailed {
+                path: metadata_path.clone(),
+                detail,
+            }
+        })?;
 
-        Ok(CaptureExportSuccess { vcd_path, export })
+        Ok(CaptureExportSuccess {
+            vcd_path,
+            metadata_path,
+            export,
+            metadata,
+        })
     }
 }
 

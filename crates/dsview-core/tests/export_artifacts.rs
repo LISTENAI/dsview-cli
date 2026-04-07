@@ -1,11 +1,14 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, UNIX_EPOCH};
 
 use dsview_core::{
-    AcquisitionSummary, AcquisitionTerminalEvent, CaptureCleanup, CaptureCompletion,
-    CaptureExportError, CaptureExportFailureKind, CaptureExportRequest, CaptureRunSummary,
-    NativeErrorCode, ValidatedCaptureConfig,
+    metadata_path_for_vcd, AcquisitionSummary, AcquisitionTerminalEvent, CaptureCleanup,
+    CaptureCompletion, CaptureExportError, CaptureExportFailureKind, CaptureExportRequest,
+    CaptureRunSummary, NativeErrorCode, ValidatedCaptureConfig,
 };
-use dsview_sys::{AcquisitionPacketStatus, ExportErrorCode, RuntimeError, VcdExportRequest};
+use dsview_sys::{
+    AcquisitionPacketStatus, ExportErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest,
+};
 
 fn clean_summary() -> AcquisitionSummary {
     AcquisitionSummary {
@@ -57,6 +60,12 @@ fn export_request(completion: CaptureCompletion) -> CaptureExportRequest {
         capture,
         validated_config: validated_config(),
         vcd_path: PathBuf::from("/tmp/capture.vcd"),
+        tool_name: "dsview-cli".to_string(),
+        tool_version: "0.1.0".to_string(),
+        capture_started_at: UNIX_EPOCH + Duration::from_secs(1_744_018_496),
+        device_model: "DSLogic Plus".to_string(),
+        device_stable_id: "dslogic-plus".to_string(),
+        selected_handle: dsview_core::SelectionHandle::new(7).unwrap(),
     }
 }
 
@@ -72,14 +81,106 @@ fn only_clean_success_capture_is_export_eligible() {
     ];
 
     for completion in completions {
-        let result = match completion {
+        let request = export_request(completion);
+        let result = match request.capture.completion {
             CaptureCompletion::CleanSuccess => None,
             other => Some(CaptureExportError::CaptureNotExportable { completion: other }),
         };
+
         assert!(matches!(
             result,
             Some(CaptureExportError::CaptureNotExportable { completion: current }) if current == completion
         ));
+    }
+}
+
+#[test]
+fn metadata_sidecar_path_is_derived_from_vcd_path() {
+    let vcd_path = Path::new("artifacts/run-01.vcd");
+    assert_eq!(metadata_path_for_vcd(vcd_path), PathBuf::from("artifacts/run-01.json"));
+}
+
+#[test]
+fn metadata_sidecar_schema_uses_numeric_capture_fields_and_utc_timestamp() {
+    let request = export_request(CaptureCompletion::CleanSuccess);
+    let metadata_path = metadata_path_for_vcd(&request.vcd_path);
+    let export = VcdExportFacts {
+        sample_count: 1536,
+        packet_count: 4,
+        output_bytes: 512,
+    };
+    let metadata_json = serde_json::to_value(
+        dsview_core::CaptureMetadata {
+            schema_version: 1,
+            tool: dsview_core::MetadataToolInfo {
+                name: request.tool_name.clone(),
+                version: request.tool_version.clone(),
+            },
+            capture: dsview_core::MetadataCaptureInfo {
+                timestamp_utc: "2025-04-07T10:14:56Z".to_string(),
+                device_model: request.device_model.clone(),
+                device_stable_id: request.device_stable_id.clone(),
+                selected_handle: request.selected_handle.raw(),
+                sample_rate_hz: request.validated_config.sample_rate_hz,
+                requested_sample_limit: request.validated_config.requested_sample_limit,
+                actual_sample_count: export.sample_count,
+                enabled_channels: request.validated_config.enabled_channels.clone(),
+            },
+            acquisition: dsview_core::MetadataAcquisitionInfo {
+                completion: "clean_success".to_string(),
+                terminal_event: "normal_end".to_string(),
+                saw_logic_packet: true,
+                saw_end_packet: true,
+                end_packet_status: Some("ok".to_string()),
+            },
+            artifacts: dsview_core::MetadataArtifactInfo {
+                vcd_path: request.vcd_path.display().to_string(),
+                metadata_path: metadata_path.display().to_string(),
+            },
+        }
+    )
+    .unwrap();
+
+    assert_eq!(metadata_json["schema_version"], 1);
+    assert_eq!(metadata_json["tool"]["name"], "dsview-cli");
+    assert!(metadata_json["capture"]["timestamp_utc"]
+        .as_str()
+        .unwrap()
+        .ends_with('Z'));
+    assert!(metadata_json["capture"]["sample_rate_hz"].is_number());
+    assert!(metadata_json["capture"]["requested_sample_limit"].is_number());
+    assert!(metadata_json["capture"]["actual_sample_count"].is_number());
+    assert_eq!(metadata_json["capture"]["device_model"], "DSLogic Plus");
+    assert_eq!(metadata_json["capture"]["enabled_channels"], serde_json::json!([0, 1, 2, 3]));
+    assert_eq!(metadata_json["artifacts"]["vcd_path"], "/tmp/capture.vcd");
+    assert_eq!(metadata_json["artifacts"]["metadata_path"], "/tmp/capture.json");
+}
+
+#[test]
+fn metadata_sidecar_failure_variants_distinguish_serialization_from_write() {
+    let serialization = CaptureExportError::MetadataSerializationFailed {
+        path: PathBuf::from("artifacts/run.json"),
+        detail: "timestamp out of range".into(),
+    };
+    let write = CaptureExportError::MetadataWriteFailed {
+        path: PathBuf::from("artifacts/run.json"),
+        detail: "permission denied".into(),
+    };
+
+    match serialization {
+        CaptureExportError::MetadataSerializationFailed { path, detail } => {
+            assert_eq!(path, PathBuf::from("artifacts/run.json"));
+            assert!(detail.contains("timestamp"));
+        }
+        other => panic!("expected serialization failure, got {other:?}"),
+    }
+
+    match write {
+        CaptureExportError::MetadataWriteFailed { path, detail } => {
+            assert_eq!(path, PathBuf::from("artifacts/run.json"));
+            assert!(detail.contains("permission denied"));
+        }
+        other => panic!("expected metadata write failure, got {other:?}"),
     }
 }
 
