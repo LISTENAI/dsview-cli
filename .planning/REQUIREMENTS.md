@@ -20,9 +20,9 @@
 
 ### Capture Execution
 
-- [ ] **RUN-01**: User can start a logic capture for `DSLogic Plus` from the CLI.
-- [ ] **RUN-02**: CLI completes capture and closes the device session cleanly on success.
-- [ ] **RUN-03**: CLI exits with a non-zero status and actionable diagnostics when capture fails.
+- [x] **RUN-01**: User can start a logic capture for `DSLogic Plus` from the CLI.
+- [x] **RUN-02**: CLI completes capture and closes the device session cleanly on success.
+- [x] **RUN-03**: CLI exits with a non-zero status and actionable diagnostics when capture fails.
 
 ### Export and Analysis Readiness
 
@@ -72,9 +72,9 @@
 | CAP-02 | Phase 3 | Pending |
 | CAP-03 | Phase 3 | Pending |
 | CAP-04 | Phase 3 | Pending |
-| RUN-01 | Phase 4 | Pending |
-| RUN-02 | Phase 4 | Pending |
-| RUN-03 | Phase 4 | Pending |
+| RUN-01 | Phase 4 | Complete |
+| RUN-02 | Phase 4 | Complete |
+| RUN-03 | Phase 4 | Complete |
 | EXP-01 | Phase 5 | Pending |
 | EXP-02 | Phase 5 | Pending |
 | EXP-03 | Phase 5 | Pending |

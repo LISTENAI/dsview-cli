@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready_for_next_phase
-stopped_at: Phase 03 complete; ready to plan Phase 04
-last_updated: "2026-04-07T12:50:00Z"
-last_activity: 2026-04-07 -- Phase 4 research tightened after stable selector fix and successful manual open/release verification on hardware
+status: executing
+stopped_at: Phase 4 research refinement after updating planning assumptions to reflect successful manual open/release verification and remaining acquisition-validation gates
+last_updated: "2026-04-07T07:29:44.333Z"
+last_activity: 2026-04-07
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 18
-  completed_plans: 9
-  percent: 50
+  completed_phases: 4
+  total_plans: 12
+  completed_plans: 12
+  percent: 56
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 04 — acquisition-execution
+**Current focus:** Phase 05 — export-artifacts
 
 ## Current Position
 
-Phase: 04 (acquisition-execution) — READY
-Plan: 0 of 3
-Status: Ready to plan Phase 04
-Last activity: 2026-04-07 -- Phase 4 research tightened after hardware open/release verification and selector-fix validation context
+Phase: 5
+Plan: Not started
+Status: Ready to begin Phase 05
+Last activity: 2026-04-07 -- Phase 04 completed after verified DSLogic Plus hardware UAT
 
-Progress: [#####-----] 50%
+Progress: [######----] 56%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [#####-----] 50%
 | Phase 03 P01 | 35 min | 3 tasks | 2 files |
 | Phase 03 P02 | 55 min | 3 tasks | 5 files |
 | Phase 03 P03 | 30 min | 3 tasks | 3 files |
+| Phase 04 P01 | 59 min | 5 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -78,19 +79,15 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Manual DSLogic Plus acquisition validation with one known-valid finite capture
-- Hardware-backed proof that post-error cleanup leaves the device reusable after at least one representative failure path
+- Phase 5 planning and execution for VCD export plus metadata sidecar
 
 ### Blockers/Concerns
 
-- Manual source-runtime `devices list` -> `devices open --handle 1` -> release has passed on this machine after the udev/USB permission fix, so open/release is no longer the active blocker.
-- Phase 3 manual UAT remained partial because the CLI does not expose standalone capability/config inspection or apply commands, not because the device cannot now be opened and released.
-- Phase 4 still needs hardware-backed validation that a finite configured capture ends naturally, yields the required logic/end signals, and leaves the device reusable after both success and one representative failure.
-- The current Phase 3 channel-mode capability shaping is sufficient for validation and apply ordering, but Phase 4 acquisition work may require tighter alignment with upstream per-mode behavior once real hardware capture runs are exercised.
+- Phase 5 now depends on preserving the validated Phase 4 capture lifecycle while integrating export artifacts.
 - The source-built runtime path currently depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
 
 ## Session Continuity
 
 Last session: 2026-04-07T12:50:00Z
-Stopped at: Phase 4 research refinement after updating planning assumptions to reflect successful manual open/release verification and remaining acquisition-validation gates
-Resume file: .planning/phases/04-acquisition-execution/04-RESEARCH.md
+Stopped at: Phase 04 completed after real hardware capture, timeout-failure cleanup validation, and post-failure device reuse proof
+Resume file: .planning/ROADMAP.md
