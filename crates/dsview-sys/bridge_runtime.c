@@ -1402,6 +1402,93 @@ int dsview_bridge_render_vcd_from_samples(
     return status;
 }
 
+int dsview_bridge_render_vcd_from_logic_packets(
+    const struct dsview_vcd_export_request *request,
+    const uint8_t *sample_bytes,
+    size_t sample_bytes_len,
+    const size_t *logic_packet_lengths,
+    size_t logic_packet_count,
+    uint16_t unitsize,
+    struct dsview_export_buffer *out_buffer)
+{
+    struct dsview_recorded_stream stream;
+    struct dsview_retained_packet *packets = NULL;
+    size_t packet_index;
+    size_t offset = 0;
+    int status;
+
+    if (request == NULL || sample_bytes == NULL || sample_bytes_len == 0 || logic_packet_lengths == NULL
+        || logic_packet_count == 0 || unitsize == 0 || out_buffer == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if ((sample_bytes_len % unitsize) != 0) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    memset(&stream, 0, sizeof(stream));
+    memset(out_buffer, 0, sizeof(*out_buffer));
+
+    packets = calloc(logic_packet_count + 2, sizeof(*packets));
+    if (packets == NULL) {
+        return SR_ERR_MALLOC;
+    }
+
+    packets[0].type = DSVIEW_EXPORT_PACKET_META;
+    packets[0].status = SR_PKT_OK;
+    packets[0].samplerate_hz = request->samplerate_hz;
+
+    for (packet_index = 0; packet_index < logic_packet_count; packet_index++) {
+        size_t packet_length = logic_packet_lengths[packet_index];
+        struct dsview_retained_packet *logic_packet = &packets[packet_index + 1];
+
+        if (packet_length == 0 || (packet_length % unitsize) != 0 || offset > sample_bytes_len
+            || packet_length > sample_bytes_len - offset) {
+            status = DSVIEW_BRIDGE_ERR_ARG;
+            goto cleanup;
+        }
+
+        logic_packet->type = DSVIEW_EXPORT_PACKET_LOGIC;
+        logic_packet->status = SR_PKT_OK;
+        logic_packet->length = packet_length;
+        logic_packet->unitsize = unitsize;
+        logic_packet->data = malloc(packet_length);
+        if (logic_packet->data == NULL) {
+            status = SR_ERR_MALLOC;
+            goto cleanup;
+        }
+        memcpy(logic_packet->data, sample_bytes + offset, packet_length);
+        offset += packet_length;
+    }
+
+    if (offset != sample_bytes_len) {
+        status = DSVIEW_BRIDGE_ERR_ARG;
+        goto cleanup;
+    }
+
+    packets[logic_packet_count + 1].type = DSVIEW_EXPORT_PACKET_END;
+    packets[logic_packet_count + 1].status = SR_PKT_OK;
+
+    stream.packets = packets;
+    stream.packet_count = logic_packet_count + 2;
+    stream.saw_logic_packet = 1;
+    stream.saw_end_packet = 1;
+    stream.end_packet_status = SR_PKT_OK;
+    stream.samplerate_hz = request->samplerate_hz;
+    stream.has_samplerate = 1;
+    stream.sample_count = sample_bytes_len / unitsize;
+
+    status = dsview_bridge_export_stream(request, &stream, out_buffer);
+
+cleanup:
+    if (packets != NULL) {
+        for (packet_index = 0; packet_index < logic_packet_count; packet_index++) {
+            free(packets[packet_index + 1].data);
+        }
+        free(packets);
+    }
+    return status;
+}
+
 void dsview_bridge_free_export_buffer(struct dsview_export_buffer *buffer)
 {
     if (buffer == NULL) {

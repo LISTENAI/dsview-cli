@@ -68,6 +68,15 @@ unsafe extern "C" {
         unitsize: u16,
         out_buffer: *mut RawExportBuffer,
     ) -> c_int;
+    fn dsview_bridge_render_vcd_from_logic_packets(
+        request: *const RawVcdExportRequest,
+        sample_bytes: *const u8,
+        sample_bytes_len: usize,
+        logic_packet_lengths: *const usize,
+        logic_packet_count: usize,
+        unitsize: u16,
+        out_buffer: *mut RawExportBuffer,
+    ) -> c_int;
     fn dsview_bridge_free_export_buffer(buffer: *mut RawExportBuffer);
 }
 
@@ -853,6 +862,92 @@ impl RuntimeBridge {
         final_path: impl AsRef<Path>,
     ) -> Result<VcdExportFacts, RuntimeError> {
         let export = self.render_vcd_from_samples(request, sample_bytes, unitsize)?;
+        write_vcd_atomically(final_path.as_ref(), &export.bytes)?;
+        Ok(VcdExportFacts {
+            sample_count: export.sample_count,
+            packet_count: export.packet_count,
+            output_bytes: export.bytes.len() as u64,
+        })
+    }
+
+    pub fn render_vcd_from_logic_packets(
+        &self,
+        request: &VcdExportRequest,
+        sample_bytes: &[u8],
+        logic_packet_lengths: &[usize],
+        unitsize: u16,
+    ) -> Result<VcdExport, RuntimeError> {
+        if sample_bytes.is_empty() {
+            return Err(RuntimeError::InvalidArgument(
+                "sample bytes must not be empty".to_string(),
+            ));
+        }
+        if logic_packet_lengths.is_empty() {
+            return Err(RuntimeError::InvalidArgument(
+                "at least one logic packet is required".to_string(),
+            ));
+        }
+        if unitsize == 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "logic packet unitsize must be greater than zero".to_string(),
+            ));
+        }
+        if (sample_bytes.len() % unitsize as usize) != 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "sample bytes length must divide evenly by unitsize".to_string(),
+            ));
+        }
+        let expected_total: usize = logic_packet_lengths.iter().sum();
+        if expected_total != sample_bytes.len() {
+            return Err(RuntimeError::InvalidArgument(
+                "logic packet lengths must sum to the sample byte length".to_string(),
+            ));
+        }
+        if logic_packet_lengths
+            .iter()
+            .any(|length| *length == 0 || (length % unitsize as usize) != 0)
+        {
+            return Err(RuntimeError::InvalidArgument(
+                "each logic packet length must be non-zero and aligned to unitsize"
+                    .to_string(),
+            ));
+        }
+
+        let raw_request = raw_vcd_export_request(request)?;
+        let mut raw = RawExportBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+            sample_count: 0,
+            packet_count: 0,
+        };
+        export_call_status("render_vcd_from_logic_packets", unsafe {
+            dsview_bridge_render_vcd_from_logic_packets(
+                &raw_request,
+                sample_bytes.as_ptr(),
+                sample_bytes.len(),
+                logic_packet_lengths.as_ptr(),
+                logic_packet_lengths.len(),
+                unitsize,
+                &mut raw,
+            )
+        })?;
+        export_from_raw(raw)
+    }
+
+    pub fn render_vcd_from_logic_packets_to_path(
+        &self,
+        request: &VcdExportRequest,
+        sample_bytes: &[u8],
+        logic_packet_lengths: &[usize],
+        unitsize: u16,
+        final_path: impl AsRef<Path>,
+    ) -> Result<VcdExportFacts, RuntimeError> {
+        let export = self.render_vcd_from_logic_packets(
+            request,
+            sample_bytes,
+            logic_packet_lengths,
+            unitsize,
+        )?;
         write_vcd_atomically(final_path.as_ref(), &export.bytes)?;
         Ok(VcdExportFacts {
             sample_count: export.sample_count,

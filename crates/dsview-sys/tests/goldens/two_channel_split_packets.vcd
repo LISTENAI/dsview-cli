@@ -1,0 +1,16 @@
+$date <normalized> $end
+$version <normalized> $end
+$comment
+<normalized>
+$end
+$timescale 1 ns $end
+$scope module libsigrok4DSL $end
+$var wire 1 ! D0 $end
+$var wire 1 " D1 $end
+$upscope $end
+$enddefinitions $end
+#0 0! 0"
+#10 1!
+#20 0! 1"
+#30 0"
+#40
