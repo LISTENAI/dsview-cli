@@ -38,10 +38,10 @@ created: 2026-04-07
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 05-01-01 | 01 | 1 | EXP-01, EXP-02 | unit/integration | `cargo test -p dsview-sys --test boundary export` | ❌ W0 | ⬜ pending |
-| 05-01-02 | 01 | 1 | EXP-01, EXP-02 | integration | `cargo test -p dsview-core export_capture` | ❌ W0 | ⬜ pending |
-| 05-02-01 | 02 | 1 | EXP-03, EXP-04 | unit | `cargo test -p dsview-core metadata_sidecar` | ❌ W0 | ⬜ pending |
-| 05-02-02 | 02 | 1 | EXP-03, EXP-04 | integration | `cargo test -p dsview-cli capture_cli -- --exact capture_success_reports_artifacts_json` | ❌ W0 | ⬜ pending |
+| 05-01-01 | 01 | 1 | EXP-01, EXP-02 | unit/integration | `cargo test -p dsview-sys --test boundary export` | ✅ | ✅ green |
+| 05-01-02 | 01 | 1 | EXP-01, EXP-02 | integration | `cargo test -p dsview-core export_capture` | ✅ | ✅ green |
+| 05-02-01 | 02 | 1 | EXP-03, EXP-04 | unit | `cargo test -p dsview-core metadata_sidecar` | ✅ | ✅ green |
+| 05-02-02 | 02 | 1 | EXP-03, EXP-04 | integration | `cargo test -p dsview-cli capture_cli -- --exact capture_success_reports_artifacts_json` | ✅ | ✅ green |
 | 05-03-01 | 03 | 2 | EXP-01, EXP-02, EXP-03, EXP-04 | golden/integration | `cargo test -p dsview-sys --test boundary synthetic_vcd_goldens` | ❌ W0 | ⬜ pending |
 | 05-03-02 | 03 | 2 | EXP-01, EXP-02, EXP-03, EXP-04 | manual | `cargo test --workspace` | ✅ | ⬜ pending |
 
@@ -51,9 +51,9 @@ created: 2026-04-07
 
 ## Wave 0 Requirements
 
-- [ ] `crates/dsview-sys/tests/boundary.rs` — export retention/replay and synthetic VCD golden scaffolding for EXP-01/EXP-02
-- [ ] `crates/dsview-core/tests/export_artifacts.rs` or in-file equivalents — metadata sidecar and orchestration checks for EXP-03/EXP-04
-- [ ] `crates/dsview-cli/tests/capture_cli.rs` additions — artifact path and error contract assertions
+- [x] `crates/dsview-sys/tests/boundary.rs` — export retention/replay and synthetic VCD golden scaffolding for EXP-01/EXP-02
+- [x] `crates/dsview-core/tests/export_artifacts.rs` or in-file equivalents — metadata sidecar and orchestration checks for EXP-03/EXP-04
+- [x] `crates/dsview-cli/tests/capture_cli.rs` additions — artifact path and error contract assertions
 
 *If none: "Existing infrastructure covers all phase requirements."*
 
@@ -79,4 +79,4 @@ created: 2026-04-07
 - [ ] Feedback latency < 60s
 - [ ] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** phase 05-02 validated; phase remains in progress pending 05-03

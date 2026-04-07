@@ -89,7 +89,7 @@ Plans:
 
 Plans:
 - [x] 05-01: Integrate or wrap the DSView-side VCD export path for CLI usage.
-- [ ] 05-02: Generate and validate JSON metadata sidecar output.
+- [x] 05-02: Generate and validate JSON metadata sidecar output.
 - [ ] 05-03: Add artifact validation and golden-file checks for export correctness.
 
 ### Phase 6: CLI Productization
@@ -118,5 +118,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 2. Device Discovery and Session Bring-Up | 3/3 | Complete | 2026-04-03 |
 | 3. Capture Configuration Surface | 3/3 | Complete | 2026-04-03 |
 | 4. Acquisition Execution | 3/3 | Complete | 2026-04-07 |
-| 5. Export Artifacts | 1/3 | In Progress | - |
+| 5. Export Artifacts | 2/3 | In Progress | - |
 | 6. CLI Productization | 0/3 | Not started | - |

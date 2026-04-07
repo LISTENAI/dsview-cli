@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 05-01 plan closeout after upstream-backed VCD replay integration, Wave 0 export coverage, and green workspace verification
-last_updated: "2026-04-07T14:16:40Z"
-last_activity: 2026-04-07 -- Completed Phase 05 Plan 01
+stopped_at: Phase 05 plan 02 completed after shipping metadata sidecar generation, CLI artifact reporting, and targeted metadata validation on top of the VCD export seam
+last_updated: "2026-04-07T10:40:00Z"
+last_activity: 2026-04-07 -- Completed Phase 05 Plan 02
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 15
-  completed_plans: 13
-  percent: 61
+  completed_plans: 14
+  percent: 67
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 ## Current Position
 
 Phase: 05 (export-artifacts) — EXECUTING
-Plan: 2 of 3
-Status: Phase 05 plan 01 complete; ready for metadata sidecar work
-Last activity: 2026-04-07 -- Completed 05-01 upstream VCD replay integration and export verification
+Plan: 3 of 3
+Status: 05-02 complete; metadata sidecar contract and CLI artifact reporting are validated, with golden export checks and hardware sign-off pending
+Last activity: 2026-04-07 -- Completed 05-02 metadata sidecar and CLI artifact reporting validation
 
-Progress: [######----] 61%
+Progress: [#######---] 67%
 
 ## Performance Metrics
 
@@ -84,12 +84,11 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Phase 05 plan 02: generate and validate JSON metadata sidecar output
 - Phase 05 plan 03: add artifact goldens, validation matrix updates, and hardware sign-off
 
 ### Blockers/Concerns
 
-- Phase 05 metadata work must preserve the new “VCD first, metadata last” artifact ordering from 05-01.
+- Phase 05 metadata work is now in place and 05-03 must preserve the “VCD first, metadata last” artifact ordering from 05-01/05-02.
 - Manual DSLogic Plus artifact plausibility and post-export reuse remain a phase-completion gate in 05-03.
 - The source-built runtime path still depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
 
