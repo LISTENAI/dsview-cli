@@ -1292,6 +1292,34 @@ mod tests {
         }
     }
 
+    fn export_request(vcd_path: PathBuf) -> CaptureExportRequest {
+        CaptureExportRequest {
+            capture: CaptureRunSummary {
+                completion: CaptureCompletion::CleanSuccess,
+                summary: clean_summary(),
+                cleanup: CaptureCleanup {
+                    callbacks_cleared: true,
+                    release_succeeded: true,
+                    ..CaptureCleanup::default()
+                },
+            },
+            validated_config: ValidatedCaptureConfig {
+                sample_rate_hz: 100_000_000,
+                requested_sample_limit: 2048,
+                effective_sample_limit: 2048,
+                enabled_channels: vec![0, 1, 2, 3],
+                channel_mode_id: 20,
+            },
+            vcd_path,
+            tool_name: "dsview-cli".to_string(),
+            tool_version: "0.1.0".to_string(),
+            capture_started_at: UNIX_EPOCH + Duration::from_secs(1_744_018_496),
+            device_model: "DSLogic Plus".to_string(),
+            device_stable_id: "dslogic-plus".to_string(),
+            selected_handle: SelectionHandle::new(7).unwrap(),
+        }
+    }
+
     #[test]
     fn clean_summary_maps_to_clean_success() {
         let summary = clean_summary();
@@ -1360,6 +1388,73 @@ mod tests {
             classify_capture_completion(&summary),
             CaptureCompletion::CleanupFailure
         );
+    }
+
+    #[test]
+    fn export_clean_capture_writes_vcd_before_metadata_and_keeps_paths_in_sync() {
+        let dir = temp_dir("export-artifacts-order");
+        let vcd_path = dir.join("capture.vcd");
+        let metadata_path = metadata_path_for_vcd(&vcd_path);
+        let vcd_bytes = b"$date <normalized> $end\n#0 0!\n";
+
+        fs::write(&vcd_path, vcd_bytes).unwrap();
+
+        let request = export_request(vcd_path.clone());
+        let export = VcdExportFacts {
+            sample_count: 2048,
+            packet_count: 3,
+            output_bytes: vcd_bytes.len() as u64,
+        };
+        let metadata = build_capture_metadata(&request, &metadata_path, &export).unwrap();
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata).unwrap();
+        write_metadata_atomically(&metadata_path, &metadata_bytes).unwrap();
+
+        let vcd_meta = fs::metadata(&vcd_path).unwrap();
+        let metadata_meta = fs::metadata(&metadata_path).unwrap();
+        let metadata_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+
+        assert_eq!(fs::read(&vcd_path).unwrap(), vcd_bytes);
+        assert_eq!(metadata_path_for_vcd(&vcd_path), metadata_path);
+        assert_eq!(metadata_json["artifacts"]["vcd_path"], vcd_path.display().to_string());
+        assert_eq!(metadata_json["artifacts"]["metadata_path"], metadata_path.display().to_string());
+        assert_eq!(metadata_json["capture"]["actual_sample_count"], export.sample_count);
+        assert!(metadata_meta.modified().unwrap() >= vcd_meta.modified().unwrap());
+    }
+
+    #[test]
+    fn write_metadata_atomically_cleans_up_temp_file_after_success() {
+        let dir = temp_dir("metadata-atomic-write");
+        let metadata_path = dir.join("capture.json");
+        let temp_path = dir.join(".capture.json.tmp");
+
+        write_metadata_atomically(&metadata_path, br#"{"ok":true}"#).unwrap();
+
+        assert!(metadata_path.exists());
+        assert!(!temp_path.exists());
+    }
+
+    #[test]
+    fn build_capture_metadata_uses_export_sample_count_and_normal_end_shape() {
+        let request = export_request(PathBuf::from("/tmp/capture.vcd"));
+        let metadata_path = metadata_path_for_vcd(&request.vcd_path);
+        let export = VcdExportFacts {
+            sample_count: 1536,
+            packet_count: 4,
+            output_bytes: 512,
+        };
+
+        let metadata = build_capture_metadata(&request, &metadata_path, &export).unwrap();
+
+        assert_eq!(metadata.capture.actual_sample_count, 1536);
+        assert_eq!(metadata.capture.sample_rate_hz, 100_000_000);
+        assert_eq!(metadata.capture.requested_sample_limit, 2048);
+        assert_eq!(metadata.capture.enabled_channels, vec![0, 1, 2, 3]);
+        assert_eq!(metadata.acquisition.completion, "clean_success");
+        assert_eq!(metadata.acquisition.terminal_event, "normal_end");
+        assert_eq!(metadata.acquisition.end_packet_status.as_deref(), Some("ok"));
+        assert_eq!(metadata.artifacts.vcd_path, "/tmp/capture.vcd");
+        assert_eq!(metadata.artifacts.metadata_path, "/tmp/capture.json");
     }
 
     #[test]
