@@ -59,7 +59,7 @@ completed: 2026-04-08
 ## Accomplishments
 - Created `.planning/phases/05-export-artifacts/05-VERIFICATION.md` to close `EXP-01` through `EXP-04` from durable requirement-level evidence.
 - Updated only the `EXP-*` traceability rows in `.planning/REQUIREMENTS.md` to point at the new Phase 5 verification artifact and require a fresh `/gsd:audit-milestone` rerun.
-- Updated `.planning/STATE.md` and `.planning/ROADMAP.md` so Phase 8 bookkeeping reflects that `08-02` is complete and the next step is milestone re-audit plus Phase 9 closeout.
+- Updated `.planning/STATE.md` and `.planning/ROADMAP.md` so Phase 8 bookkeeping reflects that `08-02` is complete while the phase still remains in progress until all Phase 8 plan records exist and verification handoff is performed.
 
 ## Task Commits
 
