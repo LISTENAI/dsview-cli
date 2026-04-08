@@ -126,7 +126,7 @@ _Status note: Phase 6 is complete. The final `capture` command now supports non-
 **Plans**: 2 plans
 
 Plans:
-- [ ] 07-01: Backfill verification evidence for Phase 2 device discovery and session bring-up.
+- [x] 07-01: Backfill verification evidence for Phase 2 device discovery and session bring-up.
 - [ ] 07-02: Backfill verification evidence for Phase 3 capture configuration surface.
 
 ### Phase 8: Verification Backfill for Acquisition and Export
@@ -172,6 +172,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 4. Acquisition Execution | 3/3 | Complete | 2026-04-07 |
 | 5. Export Artifacts | 3/3 | Complete | 2026-04-08 |
 | 6. CLI Productization | 3/3 | Complete | 2026-04-08 |
-| 7. Verification Backfill for Bring-Up and Configuration | 0/2 | Not started | - |
+| 7. Verification Backfill for Bring-Up and Configuration | 1/2 | In Progress | - |
 | 8. Verification Backfill for Acquisition and Export | 0/2 | Not started | - |
 | 9. Audit Closeout Reconciliation | 0/2 | Not started | - |
