@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-04-08T15:44:21Z"
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-04-08T23:59:00Z"
 last_activity: 2026-04-08
 progress:
   total_phases: 9
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 
 Phase: 9
 Plan: 02
-Status: Completed 09-01-PLAN.md
+Status: Completed 09-02-PLAN.md
 Last activity: 2026-04-08
 
 Progress: [##########] 100%
@@ -94,21 +94,24 @@ Recent decisions affecting current work:
 - Phase 08 plan 02: reconcile only the `EXP-*` requirement rows and hand off to a fresh `/gsd:audit-milestone` rerun without editing the milestone audit by hand.
 - Phase 09 plan 01: close Phase 1 at verifier grade as native-foundation readiness only, while leaving actual user-facing workflow proof to later phase verification artifacts.
 - Phase 09 plan 01: leave `.planning/v1.0-MILESTONE-AUDIT.md` untouched and rerun `/gsd:audit-milestone` only after `09-02` completes.
+- Phase 09 plan 02: use `.planning/phases/06-cli-productization/06-VERIFICATION.md` and the passed body of `06-VALIDATION.md` as the final closeout truth for `CLI-01`, `CLI-02`, and `CLI-03`.
+- Phase 09 plan 02: preserve the distinction between 06-03 automated completion and the later 2026-04-08 manual shell-workflow UAT closeout instead of rewriting the historical trail.
+- Phase 09 plan 02: limit roadmap cleanup to the audit-listed Phase 8 checklist and execution-order drift, then hand off to a fresh `/gsd:audit-milestone` rerun.
 
 ### Pending Todos
 
-- Re-run `/gsd:audit-milestone` after both Phase 9 plans are complete
-- Execute Phase 09 plan 02 to close the remaining Phase 6 audit/documentation gaps
+- Re-run `/gsd:audit-milestone` after Phase 9 closeout reconciliation
 - Archive the milestone and prepare the next milestone requirements/roadmap
 
 ### Blockers/Concerns
 
-- Phase 06 acceptance is now green, but milestone closeout bookkeeping still needs to be completed.
+- Phase 06 acceptance is now green, and milestone closeout bookkeeping has been reconciled for re-audit.
 - The source-built runtime path still depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
+- Phase 9 closeout artifacts are now reconciled; the remaining milestone step is a fresh `/gsd:audit-milestone` rerun.
 - The main worktree still contains uncommitted Phase 6 implementation and planning changes that should be reviewed and committed deliberately.
 
 ## Session Continuity
 
-Last session: 2026-04-08T15:35:21Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-04-08T23:59:00Z
+Stopped at: Completed 09-02-PLAN.md
 Resume file: None
