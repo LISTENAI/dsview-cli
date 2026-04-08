@@ -141,8 +141,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 08-01: Reconcile existing Phase 4 acquisition verification for audit closure.
-- [ ] 08-02: Backfill verification evidence for Phase 5 export artifacts.
+- [x] 08-01: Reconcile existing Phase 4 acquisition verification for audit closure.
+- [x] 08-02: Backfill verification evidence for Phase 5 export artifacts.
 
 ### Phase 9: Audit Closeout Reconciliation
 **Goal**: Eliminate the remaining process and documentation drift that still prevents a clean milestone re-audit.
@@ -173,5 +173,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 5. Export Artifacts | 3/3 | Complete | 2026-04-08 |
 | 6. CLI Productization | 3/3 | Complete | 2026-04-08 |
 | 7. Verification Backfill for Bring-Up and Configuration | 2/2 | Complete | 2026-04-08 |
-| 8. Verification Backfill for Acquisition and Export | 1/2 | In Progress | - |
+| 8. Verification Backfill for Acquisition and Export | 2/2 | Complete | 2026-04-08 |
 | 9. Audit Closeout Reconciliation | 0/2 | Not started | - |
