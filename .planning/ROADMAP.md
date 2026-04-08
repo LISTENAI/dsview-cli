@@ -173,5 +173,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 5. Export Artifacts | 3/3 | Complete | 2026-04-08 |
 | 6. CLI Productization | 3/3 | Complete | 2026-04-08 |
 | 7. Verification Backfill for Bring-Up and Configuration | 2/2 | Complete | 2026-04-08 |
-| 8. Verification Backfill for Acquisition and Export | 0/2 | Not started | - |
+| 8. Verification Backfill for Acquisition and Export | 1/2 | In Progress | - |
 | 9. Audit Closeout Reconciliation | 0/2 | Not started | - |

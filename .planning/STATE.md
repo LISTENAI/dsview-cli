@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-04-08T12:21:15.089Z"
-last_activity: 2026-04-08 -- Phase 08 execution started
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-04-08T12:48:51Z"
+last_activity: 2026-04-08 -- Completed 08-02-PLAN.md
 progress:
   total_phases: 9
   completed_phases: 7
   total_plans: 22
-  completed_plans: 20
+  completed_plans: 21
   percent: 100
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-04-03)
 ## Current Position
 
 Phase: 08 (verification-backfill-for-acquisition-and-export) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 08
-Last activity: 2026-04-08 -- Phase 08 execution started
+Plan: 2 of 2
+Status: Completed 08-02-PLAN.md
+Last activity: 2026-04-08 -- Completed 08-02-PLAN.md
 
 Progress: [##########] 100%
 
@@ -89,11 +89,14 @@ Recent decisions affecting current work:
 - Phase 07 plan 02: treat partial Phase 3 UAT as context only, and close CAP-03/CAP-04 with explicit automated supplement paths captured in `03-VALIDATION.md`.
 - Phase 07 plan 02: reconcile DEV-01..03 and CAP-01..04 together in `REQUIREMENTS.md` only after both Phase 2 and Phase 3 verification/validation artifacts exist.
 - Phase 07 plan 02: hand off directly to a fresh `/gsd:audit-milestone` rerun instead of editing `.planning/v1.0-MILESTONE-AUDIT.md`.
+- Phase 08 plan 02: close EXP-01..04 only through a durable `05-VERIFICATION.md` grounded in existing validation, UAT, and summary evidence.
+- Phase 08 plan 02: preserve Nyquist-safe timing caveats for `EXP-02` and observed-fact grounding for `EXP-04` instead of broadening export claims.
+- Phase 08 plan 02: reconcile only the `EXP-*` requirement rows and hand off to a fresh `/gsd:audit-milestone` rerun without editing the milestone audit by hand.
 
 ### Pending Todos
 
-- Re-run `/gsd:audit-milestone` now that both Phase 7 plans are complete
-- Execute Phase 8 to backfill verification and validation artifacts for acquisition and export requirements if the fresh audit still reports reopened RUN/EXP gaps
+- Re-run `/gsd:audit-milestone` now that both Phase 8 plans are complete
+- Execute Phase 9 to close the remaining Phase 1 and Phase 6 audit/documentation gaps
 - Archive the milestone and prepare the next milestone requirements/roadmap
 
 ### Blockers/Concerns
