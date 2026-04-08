@@ -10,7 +10,7 @@ This roadmap takes DSView CLI from project setup to a first usable Rust-based ca
 - [x] **Phase 2: Device Discovery and Session Bring-Up** - Enumerate `DSLogic Plus` devices and open sessions safely.
 - [x] **Phase 3: Capture Configuration Surface** - Expose and validate the minimum useful capture parameters.
 - [x] **Phase 4: Acquisition Execution** - Run reliable logic captures and handle session lifecycle cleanly.
-- [ ] **Phase 5: Export Artifacts** - Produce VCD waveform files and machine-readable capture metadata.
+- [x] **Phase 5: Export Artifacts** - Produce VCD waveform files and machine-readable capture metadata.
 - [ ] **Phase 6: CLI Productization** - Deliver a scriptable end-to-end CLI command with usable diagnostics and output UX.
 
 ## Phase Details
@@ -92,7 +92,7 @@ Plans:
 - [x] 05-02: Generate and validate JSON metadata sidecar output.
 - [x] 05-03: Add artifact validation and golden-file checks for export correctness.
 
-_Status note: automated 05-03 validation is complete, but Phase 5 remains in progress until the manual DSLogic Plus export UAT and reusability sign-off are recorded green._
+_Status note: automated 05-03 validation is complete, and manual DSLogic Plus export UAT has now passed on current hardware after the replay-ordering fix. The export path produces sane finite VCD timestamps, plausible metadata, and reusable post-run device state; the remaining milestone work is bookkeeping and Phase 6 sequencing rather than a Phase 5 export defect blocker._
 
 ### Phase 6: CLI Productization
 **Goal**: Deliver a polished non-interactive capture-and-export command that works well in shell and agent workflows.
@@ -120,5 +120,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 2. Device Discovery and Session Bring-Up | 3/3 | Complete | 2026-04-03 |
 | 3. Capture Configuration Surface | 3/3 | Complete | 2026-04-03 |
 | 4. Acquisition Execution | 3/3 | Complete | 2026-04-07 |
-| 5. Export Artifacts | 3/3 | In Progress | - |
+| 5. Export Artifacts | 3/3 | Complete | 2026-04-08 |
 | 6. CLI Productization | 0/3 | Not started | - |

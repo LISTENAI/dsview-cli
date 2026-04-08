@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 05 plan 03 automated validation and planning closeout completed; manual DSLogic Plus export UAT remains the blocker for Phase 5 completion
-last_updated: "2026-04-07T23:58:00Z"
-last_activity: 2026-04-07 -- Completed Phase 05 Plan 03 automated validation closeout
+stopped_at: Phase 5 marked complete after successful replay-ordering fix validation; next milestone action is Phase 6 planning
+last_updated: "2026-04-08T04:11:30Z"
+last_activity: 2026-04-08 -- Phase 5 marked complete and milestone bookkeeping advanced to Phase 6 readiness
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 15
   completed_plans: 15
-  percent: 83
+  percent: 89
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 05 — export-artifacts
+**Current focus:** Phase 06 — cli-productization
 
 ## Current Position
 
-Phase: 05 (export-artifacts) — EXECUTING
-Plan: 3 of 3
-Status: automated 05-03 validation complete; Phase 5 remains blocked on manual DSLogic Plus export UAT and hardware sign-off
-Last activity: 2026-04-07 -- Completed 05-03 automated validation matrix closeout and summary recording
+Phase: 06 (cli-productization) — READY TO START
+Plan: 0 of 3
+Status: Phase 5 is complete; next step is Phase 6 planning and execution for end-to-end CLI productization
+Last activity: 2026-04-08 -- Marked Phase 5 complete after green post-fix hardware validation and aligned milestone bookkeeping
 
-Progress: [########--] 83%
+Progress: [#########-] 89%
 
 ## Performance Metrics
 
@@ -53,7 +53,7 @@ Progress: [########--] 83%
 **Recent Trend:**
 
 - Last 5 plans: 55 min, 30 min, 59 min, 70 min, 40 min
-- Trend: Stable, with Phase 5 now bottlenecked by hardware-only export plausibility sign-off rather than missing automated coverage
+- Trend: Stable, with Phase 5 export validation now green after the replay-ordering fix and successful hardware rerun
 
 | Phase 01 P01 | 12 min | 3 tasks | 8 files |
 | Phase 01 P02 | 35 min | 3 tasks | 5 files |
@@ -83,22 +83,22 @@ Recent decisions affecting current work:
 - Phase 5 plan 01: reuse the upstream VCD output-module path via `sr_output_*` replay instead of adding a Rust-side serializer.
 - Phase 5 plan 01: export stays gated on `CleanSuccess` and publishes the final VCD path only after temp-file write and promotion succeed.
 - Phase 5 plan 01: keep retained packet details inside `dsview-sys` and surface only stable export facts plus precondition/runtime failure classes to higher layers.
-- Phase 5 plan 03 closeout: treat automated validation as complete and verifier-ready without collapsing the still-pending manual DSLogic Plus UAT into a false phase-complete state.
+- Phase 5 plan 03 closeout: automated validation was recorded complete before manual hardware evidence existed, and the later replay-ordering fix plus successful rerun closed the real-device export timing gap without losing that audit trail.
 
 ### Pending Todos
 
-- Manual DSLogic Plus export UAT: verify real VCD plus JSON artifact plausibility, timing sanity, observed-fact metadata, and post-export device reusability on the current environment
-- Record explicit green hardware sign-off in `.planning/phases/05-export-artifacts/05-VALIDATION.md` before marking Phase 5 complete
-- Close any remaining GSD bookkeeping only after the manual hardware gate is actually executed
+- Record the formal handoff into Phase 6 planning/execution when you are ready to start CLI productization
+- Review `.planning/REQUIREMENTS.md` and related milestone artifacts if you want requirement-level statuses to reflect the completed Phase 5 export work
+- Close any remaining GSD bookkeeping now that Phase 5 is marked complete
 
 ### Blockers/Concerns
 
-- Phase 5 automated validation is complete, but the manual DSLogic Plus artifact plausibility and post-export reuse gate is still open and blocks phase completion.
+- Phase 5 export validation is green and the phase is now complete after the replay-ordering fix eliminated malformed real-hardware VCD timestamps while preserving artifact creation, metadata plausibility, and immediate device reuse.
 - The source-built runtime path still depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
-- This worktree still does not expose a runnable `/gsd:execute-phase` entrypoint, so the checked-in plan and validation artifacts remain the source of truth until the hardware gate is closed.
+- This worktree still does not expose a runnable `/gsd:execute-phase` entrypoint, so the checked-in plan, debug, validation, and UAT artifacts remain the source of truth for formal milestone closeout bookkeeping.
 
 ## Session Continuity
 
-Last session: 2026-04-07T23:58:00Z
-Stopped at: Completed 05-03 automated validation closeout and phase-planning sync; manual DSLogic Plus export UAT still pending
-Resume file: .planning/phases/05-export-artifacts/05-03-SUMMARY.md
+Last session: 2026-04-08T04:11:30Z
+Stopped at: Phase 5 marked complete; next step is Phase 6 planning and execution
+Resume file: .planning/ROADMAP.md

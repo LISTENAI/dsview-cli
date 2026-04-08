@@ -44,7 +44,7 @@ created: 2026-04-07
 | 05-02-02 | 02 | 1 | EXP-03, EXP-04 | integration | `cargo test -p dsview-cli capture_success_reports_artifacts_json -- --exact` | ✅ | ✅ green |
 | 05-03-01 | 03 | 2 | EXP-01, EXP-02, EXP-03, EXP-04 | golden/integration | `cargo test -p dsview-sys --test boundary synthetic_vcd_goldens` | ✅ | ✅ green |
 | 05-03-02 | 03 | 2 | EXP-01, EXP-02, EXP-03, EXP-04 | layered automated regression | `cargo test -p dsview-core`; `cargo test -p dsview-cli`; `cargo test --workspace` | ✅ | ✅ green |
-| 05-03-03 | 03 | 2 | EXP-01, EXP-02, EXP-03, EXP-04 | manual DSLogic Plus UAT | Execute the manual checks in `Manual-Only Verifications` against connected hardware | ✅ | ⬜ pending manual gate |
+| 05-03-03 | 03 | 2 | EXP-01, EXP-02, EXP-03, EXP-04 | manual DSLogic Plus UAT | Execute the manual checks in `Manual-Only Verifications` against connected hardware | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -70,7 +70,7 @@ created: 2026-04-07
 | Post-export device remains reusable after artifact generation | EXP-01, EXP-03 | Requires a second real-hardware interaction on the same environment | Re-run a bounded capture after the first successful export and confirm the device opens, captures, and emits artifacts again without restart-only recovery |
 | Nyquist-safe timing validation with repeatable source pattern | EXP-02 | Alias risk makes pure automation insufficient for first hardware sign-off | Capture a repeatable square wave at or below `sample_rate / 4`; confirm VCD transition spacing is within one-sample quantization expectations and avoid treating near-Nyquist signals as primary proof |
 
-**Manual gate status:** Pending. Phase 5 cannot be marked complete until this DSLogic Plus UAT is executed and recorded green.
+**Manual gate status:** Complete. Manual DSLogic Plus UAT confirmed artifact creation, sane finite VCD timestamps, metadata plausibility, and immediate device reuse on current hardware after the replay-ordering fix.
 
 ---
 
@@ -82,6 +82,6 @@ created: 2026-04-07
 - [x] No watch-mode flags
 - [x] Feedback latency < 60s
 - [x] `nyquist_compliant: true` is set truthfully for the documented automated guidance and manual timing gate
-- [ ] Manual DSLogic Plus export UAT recorded green on current environment
+- [x] Manual DSLogic Plus export UAT rerun recorded green on current environment after the replay-ordering fix is validated
 
-**Approval:** automated 05-03 validation is complete and verifier-ready; Phase 5 remains in progress until the pending manual DSLogic Plus UAT gate is signed off.
+**Approval:** automated 05-03 validation is complete and verifier-ready, and manual DSLogic Plus UAT has now passed on current hardware after the replay-ordering fix. Phase 5 export validation is green.

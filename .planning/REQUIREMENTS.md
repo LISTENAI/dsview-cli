@@ -26,10 +26,10 @@
 
 ### Export and Analysis Readiness
 
-- [ ] **EXP-01**: User can export captured waveform data as a `VCD` file.
-- [ ] **EXP-02**: Exported `VCD` preserves channel names and timing information needed for downstream waveform analysis.
-- [ ] **EXP-03**: CLI writes a machine-readable metadata file describing the capture session.
-- [ ] **EXP-04**: Metadata includes device model, enabled channels, sample rate, sample limit or actual sample count, capture timestamp, and tool version.
+- [x] **EXP-01**: User can export captured waveform data as a `VCD` file.
+- [x] **EXP-02**: Exported `VCD` preserves channel names and timing information needed for downstream waveform analysis.
+- [x] **EXP-03**: CLI writes a machine-readable metadata file describing the capture session.
+- [x] **EXP-04**: Metadata includes device model, enabled channels, sample rate, sample limit or actual sample count, capture timestamp, and tool version.
 
 ### CLI Workflow
 
@@ -75,10 +75,10 @@
 | RUN-01 | Phase 4 | Complete |
 | RUN-02 | Phase 4 | Complete |
 | RUN-03 | Phase 4 | Complete |
-| EXP-01 | Phase 5 | Pending |
-| EXP-02 | Phase 5 | Pending |
-| EXP-03 | Phase 5 | Pending |
-| EXP-04 | Phase 5 | Pending |
+| EXP-01 | Phase 5 | Complete |
+| EXP-02 | Phase 5 | Complete |
+| EXP-03 | Phase 5 | Complete |
+| EXP-04 | Phase 5 | Complete |
 | CLI-01 | Phase 6 | Pending |
 | CLI-02 | Phase 6 | Pending |
 | CLI-03 | Phase 6 | Pending |
@@ -90,4 +90,4 @@
 
 ---
 *Requirements defined: 2026-04-03*
-*Last updated: 2026-04-03 after initial definition*
+*Last updated: 2026-04-08 after Phase 5 export completion and post-fix DSLogic Plus hardware sign-off*
