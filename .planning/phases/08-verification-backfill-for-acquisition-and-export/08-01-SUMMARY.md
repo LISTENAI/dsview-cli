@@ -63,9 +63,9 @@ completed: 2026-04-08
 
 Each task was committed atomically:
 
-1. **Task 1-2: Record 08-01 reconciliation summary and minimal bookkeeping alignment** - `PENDING` (docs)
+1. **Task 1-2: Record 08-01 reconciliation summary and minimal bookkeeping alignment** - `c8ff6e8` (docs)
 
-**Plan metadata:** `PENDING` (docs)
+**Plan metadata:** `c8ff6e8` (docs)
 
 ## Files Created/Modified
 - `.planning/phases/08-verification-backfill-for-acquisition-and-export/08-01-SUMMARY.md` - Records that `RUN-01` through `RUN-03` close through the existing Phase 4 verification artifact and that 08-01 is reconciliation only.
