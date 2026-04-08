@@ -12,7 +12,7 @@ This roadmap takes DSView CLI from project setup to a first usable Rust-based ca
 - [x] **Phase 4: Acquisition Execution** - Run reliable logic captures and handle session lifecycle cleanly.
 - [x] **Phase 5: Export Artifacts** - Produce VCD waveform files and machine-readable capture metadata.
 - [x] **Phase 6: CLI Productization** - Deliver a scriptable end-to-end CLI command with usable diagnostics and output UX.
-- [ ] **Phase 7: Verification Backfill for Bring-Up and Configuration** - Reconstruct verification evidence for the device-discovery and capture-configuration requirements reopened by the milestone audit.
+- [x] **Phase 7: Verification Backfill for Bring-Up and Configuration** - Reconstruct verification evidence for the device-discovery and capture-configuration requirements reopened by the milestone audit.
 - [ ] **Phase 8: Verification Backfill for Acquisition and Export** - Reconstruct verification evidence for the capture execution and export requirements reopened by the milestone audit.
 - [ ] **Phase 9: Audit Closeout Reconciliation** - Close the remaining audit-process gaps so the milestone can pass re-audit cleanly.
 
@@ -127,7 +127,7 @@ _Status note: Phase 6 is complete. The final `capture` command now supports non-
 
 Plans:
 - [x] 07-01: Backfill verification evidence for Phase 2 device discovery and session bring-up.
-- [ ] 07-02: Backfill verification evidence for Phase 3 capture configuration surface.
+- [x] 07-02: Backfill verification evidence for Phase 3 capture configuration surface.
 
 ### Phase 8: Verification Backfill for Acquisition and Export
 **Goal**: Recreate durable verification evidence for the acquisition and export requirements so the milestone audit can prove end-to-end capture/export behavior from persistent verification artifacts.
@@ -172,6 +172,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 4. Acquisition Execution | 3/3 | Complete | 2026-04-07 |
 | 5. Export Artifacts | 3/3 | Complete | 2026-04-08 |
 | 6. CLI Productization | 3/3 | Complete | 2026-04-08 |
-| 7. Verification Backfill for Bring-Up and Configuration | 1/2 | In Progress | - |
+| 7. Verification Backfill for Bring-Up and Configuration | 2/2 | Complete | 2026-04-08 |
 | 8. Verification Backfill for Acquisition and Export | 0/2 | Not started | - |
 | 9. Audit Closeout Reconciliation | 0/2 | Not started | - |
