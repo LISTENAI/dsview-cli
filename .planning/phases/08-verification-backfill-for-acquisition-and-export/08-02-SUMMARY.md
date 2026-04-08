@@ -65,9 +65,9 @@ completed: 2026-04-08
 
 Each task was committed atomically:
 
-1. **Task 1-3: Phase 5 verification artifact and EXP traceability reconciliation** - pending
+1. **Task 1-3: Phase 5 verification artifact and EXP traceability reconciliation** - `12c5278` (docs)
 
-**Plan metadata:** pending
+**Plan metadata:** `568babc` (docs)
 
 ## Files Created/Modified
 - `.planning/phases/05-export-artifacts/05-VERIFICATION.md` - Durable requirement-level verification for `EXP-01` through `EXP-04` using existing validation, UAT, and summary evidence.
