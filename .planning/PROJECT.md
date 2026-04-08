@@ -12,13 +12,15 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] User can connect to a `DSLogic Plus` device from the CLI using the existing DSView/libsigrok4DSL stack. Validated in Phases 02-06.
+- [x] User can configure core capture parameters from the CLI, including the options needed for a basic acquisition workflow. Validated in Phases 03-06.
+- [x] User can start a capture from the CLI and export machine-readable waveform output for downstream analysis. Validated in Phases 04-06.
+- [x] User can run the full capture-and-export workflow non-interactively from a single CLI command. Validated in Phase 06: CLI Productization.
+- [x] User can choose artifact output locations and receive clear artifact path reporting after a successful run. Validated in Phase 06: CLI Productization.
 
 ### Active
 
-- [ ] User can connect to a `DSLogic Plus` device from the CLI using the existing DSView/libsigrok4DSL stack.
-- [ ] User can configure core capture parameters from the CLI, including the options needed for a basic acquisition workflow.
-- [ ] User can start a capture from the CLI and export machine-readable waveform output for downstream analysis.
+- (None — milestone v1.0 scope is fully validated)
 
 ### Out of Scope
 
@@ -29,9 +31,9 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 
 ## Context
 
-The workspace already contains an open-source `DSView/` project, which is a GUI application for DSLogic devices and communicates with hardware through its modified `libsigrok4DSL` stack. The user wants a separate CLI-oriented project that can achieve the same core device workflow without relying on the GUI. The implementation should be in Rust, but it should depend on and reuse the existing DSView-side libraries and behavior rather than reimplementing the device stack from scratch.
+The workspace already contains an open-source `DSView/` project, which is a GUI application for DSLogic devices and communicates with hardware through its modified `libsigrok4DSL` stack. The CLI milestone now proves that a separate Rust command-line workflow can reuse that existing stack without modifying `DSView/`, while still giving shell users and automation a stable non-interactive capture/export path.
 
-The first target device is `DSLogic Plus`. The desired initial user journey is a minimum closed loop: connect to the device, configure sampling parameters, acquire logic data, and save waveform output in a machine-readable format suitable for later AI-agent analysis. Broader device coverage, richer decode flows, and other DSView features may be added incrementally after the capture/export path is proven.
+The validated v1 journey on `DSLogic Plus` is now closed loop: discover the device, open it safely, configure capture parameters, run a bounded capture, and export both `VCD` waveform data plus a machine-readable JSON sidecar. Phase 6 additionally verified the final product surface on real hardware with clear text-mode and JSON-mode artifact reporting, explicit artifact destination control, and immediate rerun reuse.
 
 ## Constraints
 
@@ -45,11 +47,11 @@ The first target device is `DSLogic Plus`. The desired initial user journey is a
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Build the new tool in Rust | User explicitly wants Rust for the CLI implementation | — Pending |
-| Keep `DSView/` unchanged and integrate with its existing libraries | Reuse proven device communication behavior while avoiding upstream modifications | — Pending |
-| Scope v1 to `DSLogic Plus` only | Narrower device scope reduces risk for the first usable release | — Pending |
-| Prioritize capture-and-export over full DSView parity | The immediate goal is a reliable automation workflow, not full feature coverage | — Pending |
-| Do not include AI invocation in v1 | The first version only needs to generate output files for later analysis | — Pending |
+| Build the new tool in Rust | User explicitly wants Rust for the CLI implementation | Adopted — implemented across `dsview-cli`, `dsview-core`, and `dsview-sys` |
+| Keep `DSView/` unchanged and integrate with its existing libraries | Reuse proven device communication behavior while avoiding upstream modifications | Adopted — native integration stays behind the Rust boundary and `DSView/` remains read-only |
+| Scope v1 to `DSLogic Plus` only | Narrower device scope reduces risk for the first usable release | Adopted — milestone v1.0 validates the DSLogic Plus capture/export workflow |
+| Prioritize capture-and-export over full DSView parity | The immediate goal is a reliable automation workflow, not full feature coverage | Adopted — milestone v1.0 closes on non-interactive capture plus VCD/JSON artifacts |
+| Do not include AI invocation in v1 | The first version only needs to generate output files for later analysis | Adopted — CLI stops at producing analyzable artifacts |
 
 ## Evolution
 

@@ -7,35 +7,35 @@
 
 ### Device Access
 
-- [x] **DEV-01**: User can list connected supported devices from the CLI.
-- [x] **DEV-02**: User can select a `DSLogic Plus` device explicitly for a capture run.
-- [x] **DEV-03**: CLI reports clear errors when no supported device is available or the target device cannot be opened.
+- [ ] **DEV-01**: User can list connected supported devices from the CLI.
+- [ ] **DEV-02**: User can select a `DSLogic Plus` device explicitly for a capture run.
+- [ ] **DEV-03**: CLI reports clear errors when no supported device is available or the target device cannot be opened.
 
 ### Capture Configuration
 
-- [x] **CAP-01**: User can set the sample rate for a capture run from the CLI.
-- [x] **CAP-02**: User can set the sample limit or capture depth for a capture run from the CLI.
-- [x] **CAP-03**: User can choose which logic channels are enabled for a capture run.
-- [x] **CAP-04**: CLI validates requested capture settings before starting acquisition.
+- [ ] **CAP-01**: User can set the sample rate for a capture run from the CLI.
+- [ ] **CAP-02**: User can set the sample limit or capture depth for a capture run from the CLI.
+- [ ] **CAP-03**: User can choose which logic channels are enabled for a capture run.
+- [ ] **CAP-04**: CLI validates requested capture settings before starting acquisition.
 
 ### Capture Execution
 
-- [x] **RUN-01**: User can start a logic capture for `DSLogic Plus` from the CLI.
-- [x] **RUN-02**: CLI completes capture and closes the device session cleanly on success.
-- [x] **RUN-03**: CLI exits with a non-zero status and actionable diagnostics when capture fails.
+- [ ] **RUN-01**: User can start a logic capture for `DSLogic Plus` from the CLI.
+- [ ] **RUN-02**: CLI completes capture and closes the device session cleanly on success.
+- [ ] **RUN-03**: CLI exits with a non-zero status and actionable diagnostics when capture fails.
 
 ### Export and Analysis Readiness
 
-- [x] **EXP-01**: User can export captured waveform data as a `VCD` file.
-- [x] **EXP-02**: Exported `VCD` preserves channel names and timing information needed for downstream waveform analysis.
-- [x] **EXP-03**: CLI writes a machine-readable metadata file describing the capture session.
-- [x] **EXP-04**: Metadata includes device model, enabled channels, sample rate, sample limit or actual sample count, capture timestamp, and tool version.
+- [ ] **EXP-01**: User can export captured waveform data as a `VCD` file.
+- [ ] **EXP-02**: Exported `VCD` preserves channel names and timing information needed for downstream waveform analysis.
+- [ ] **EXP-03**: CLI writes a machine-readable metadata file describing the capture session.
+- [ ] **EXP-04**: Metadata includes device model, enabled channels, sample rate, sample limit or actual sample count, capture timestamp, and tool version.
 
 ### CLI Workflow
 
-- [ ] **CLI-01**: User can run the full capture-and-export workflow non-interactively from a single CLI command.
-- [ ] **CLI-02**: User can choose the output path for generated artifacts.
-- [ ] **CLI-03**: CLI prints the locations of generated artifacts after a successful run.
+- [x] **CLI-01**: User can run the full capture-and-export workflow non-interactively from a single CLI command.
+- [x] **CLI-02**: User can choose the output path for generated artifacts.
+- [x] **CLI-03**: CLI prints the locations of generated artifacts after a successful run.
 
 ## v2 Requirements
 
@@ -65,23 +65,23 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEV-01 | Phase 1 | Complete |
-| DEV-02 | Phase 2 | Complete |
-| DEV-03 | Phase 2 | Complete |
-| CAP-01 | Phase 3 | Complete |
-| CAP-02 | Phase 3 | Complete |
-| CAP-03 | Phase 3 | Complete |
-| CAP-04 | Phase 3 | Complete |
-| RUN-01 | Phase 4 | Complete |
-| RUN-02 | Phase 4 | Complete |
-| RUN-03 | Phase 4 | Complete |
-| EXP-01 | Phase 5 | Complete |
-| EXP-02 | Phase 5 | Complete |
-| EXP-03 | Phase 5 | Complete |
-| EXP-04 | Phase 5 | Complete |
-| CLI-01 | Phase 6 | Pending |
-| CLI-02 | Phase 6 | Pending |
-| CLI-03 | Phase 6 | Pending |
+| DEV-01 | Phase 7 | Pending |
+| DEV-02 | Phase 7 | Pending |
+| DEV-03 | Phase 7 | Pending |
+| CAP-01 | Phase 7 | Pending |
+| CAP-02 | Phase 7 | Pending |
+| CAP-03 | Phase 7 | Pending |
+| CAP-04 | Phase 7 | Pending |
+| RUN-01 | Phase 8 | Pending |
+| RUN-02 | Phase 8 | Pending |
+| RUN-03 | Phase 8 | Pending |
+| EXP-01 | Phase 8 | Pending |
+| EXP-02 | Phase 8 | Pending |
+| EXP-03 | Phase 8 | Pending |
+| EXP-04 | Phase 8 | Pending |
+| CLI-01 | Phase 9 | Pending |
+| CLI-02 | Phase 9 | Pending |
+| CLI-03 | Phase 9 | Pending |
 
 **Coverage:**
 - v1 requirements: 17 total

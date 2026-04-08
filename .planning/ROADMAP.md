@@ -11,7 +11,10 @@ This roadmap takes DSView CLI from project setup to a first usable Rust-based ca
 - [x] **Phase 3: Capture Configuration Surface** - Expose and validate the minimum useful capture parameters.
 - [x] **Phase 4: Acquisition Execution** - Run reliable logic captures and handle session lifecycle cleanly.
 - [x] **Phase 5: Export Artifacts** - Produce VCD waveform files and machine-readable capture metadata.
-- [ ] **Phase 6: CLI Productization** - Deliver a scriptable end-to-end CLI command with usable diagnostics and output UX.
+- [x] **Phase 6: CLI Productization** - Deliver a scriptable end-to-end CLI command with usable diagnostics and output UX.
+- [ ] **Phase 7: Verification Backfill for Bring-Up and Configuration** - Reconstruct verification evidence for the device-discovery and capture-configuration requirements reopened by the milestone audit.
+- [ ] **Phase 8: Verification Backfill for Acquisition and Export** - Reconstruct verification evidence for the capture execution and export requirements reopened by the milestone audit.
+- [ ] **Phase 9: Audit Closeout Reconciliation** - Close the remaining audit-process gaps so the milestone can pass re-audit cleanly.
 
 ## Phase Details
 
@@ -105,9 +108,56 @@ _Status note: automated 05-03 validation is complete, and manual DSLogic Plus ex
 **Plans**: 3 plans
 
 Plans:
-- [ ] 06-01: Design and implement the end-to-end CLI command surface.
-- [ ] 06-02: Improve help text, logging, and output-path handling for scripts.
-- [ ] 06-03: Add end-to-end validation for the full capture-to-export workflow.
+- [x] 06-01: Design and implement the end-to-end CLI command surface.
+- [x] 06-02: Improve help text, logging, and output-path handling for scripts.
+- [x] 06-03: Add end-to-end validation for the full capture-to-export workflow.
+
+_Status note: Phase 6 is complete. The final `capture` command now supports non-interactive real-hardware capture/export from one CLI command, explicit artifact destination control, clear text-mode and JSON-mode artifact reporting, and successful immediate rerun reuse validated on the connected DSLogic Plus._
+
+### Phase 7: Verification Backfill for Bring-Up and Configuration
+**Goal**: Recreate durable verification evidence for the device-discovery and capture-configuration requirements so the milestone audit can prove those shipped behaviors instead of inferring them only from summaries.
+**Depends on**: Phase 6
+**Requirements**: DEV-01, DEV-02, DEV-03, CAP-01, CAP-02, CAP-03, CAP-04
+**Gap Closure**: Closes milestone audit requirement gaps caused by missing verification artifacts for Phases 2 and 3.
+**Success Criteria** (what must be TRUE):
+  1. Phase 2 has a `02-VERIFICATION.md` artifact that explicitly verifies device listing, explicit device selection, and actionable device/open failure diagnostics.
+  2. Phase 3 has a `03-VERIFICATION.md` artifact that explicitly verifies sample-rate, sample-limit, channel-selection, and pre-run validation behaviors.
+  3. The evidence in those verification artifacts traces back to existing summaries, tests, and current code paths closely enough for milestone re-audit to mark the reopened requirements satisfied.
+**Plans**: 2 plans
+
+Plans:
+- [ ] 07-01: Backfill verification evidence for Phase 2 device discovery and session bring-up.
+- [ ] 07-02: Backfill verification evidence for Phase 3 capture configuration surface.
+
+### Phase 8: Verification Backfill for Acquisition and Export
+**Goal**: Recreate durable verification evidence for the acquisition and export requirements so the milestone audit can prove end-to-end capture/export behavior from persistent verification artifacts.
+**Depends on**: Phase 7
+**Requirements**: RUN-01, RUN-02, RUN-03, EXP-01, EXP-02, EXP-03, EXP-04
+**Gap Closure**: Closes milestone audit requirement gaps caused by missing verification artifacts for Phases 4 and 5.
+**Success Criteria** (what must be TRUE):
+  1. Phase 4 has a `04-VERIFICATION.md` artifact that explicitly verifies real capture start, clean-success cleanup/reuse behavior, and actionable non-zero failure diagnostics.
+  2. Phase 5 has a `05-VERIFICATION.md` artifact that explicitly verifies VCD export, metadata sidecar semantics, and the real-hardware export evidence already captured in validation and UAT documents.
+  3. The reopened RUN-* and EXP-* requirements can be traced from `REQUIREMENTS.md` through verification evidence without relying on milestone-level inference.
+**Plans**: 2 plans
+
+Plans:
+- [ ] 08-01: Backfill verification evidence for Phase 4 acquisition execution.
+- [ ] 08-02: Backfill verification evidence for Phase 5 export artifacts.
+
+### Phase 9: Audit Closeout Reconciliation
+**Goal**: Eliminate the remaining process and documentation drift that still prevents a clean milestone re-audit.
+**Depends on**: Phase 8
+**Requirements**: DEV-01, CLI-01, CLI-02, CLI-03
+**Gap Closure**: Closes the missing Phase 1 verification artifact, Phase 6 closeout-document drift, and residual validation metadata inconsistencies noted by the milestone audit.
+**Success Criteria** (what must be TRUE):
+  1. Phase 1 has a `01-VERIFICATION.md` artifact that records how the native integration foundation was validated strongly enough for the milestone audit.
+  2. Phase 6 planning artifacts consistently reflect that the manual shell-workflow UAT passed and no longer describe it as an open gate.
+  3. Phase 6 validation metadata is reconciled well enough that a milestone re-audit no longer reports partial closeout-process drift for the final shipped workflow.
+**Plans**: 2 plans
+
+Plans:
+- [ ] 09-01: Backfill verification evidence for Phase 1 native integration foundation.
+- [ ] 09-02: Reconcile Phase 6 validation and closeout artifacts for re-audit.
 
 ## Progress
 
@@ -121,4 +171,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 3. Capture Configuration Surface | 3/3 | Complete | 2026-04-03 |
 | 4. Acquisition Execution | 3/3 | Complete | 2026-04-07 |
 | 5. Export Artifacts | 3/3 | Complete | 2026-04-08 |
-| 6. CLI Productization | 0/3 | Not started | - |
+| 6. CLI Productization | 3/3 | Complete | 2026-04-08 |
+| 7. Verification Backfill for Bring-Up and Configuration | 0/2 | Not started | - |
+| 8. Verification Backfill for Acquisition and Export | 0/2 | Not started | - |
+| 9. Audit Closeout Reconciliation | 0/2 | Not started | - |
