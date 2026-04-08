@@ -1,0 +1,91 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-08T03:17:41.416Z",
+  "phase": "05",
+  "phase_name": "export-artifacts",
+  "phase_dir": ".planning/phases/05-export-artifacts",
+  "plan": 3,
+  "task": 5,
+  "total_tasks": 5,
+  "status": "paused",
+  "completed_tasks": [
+    {
+      "id": 1,
+      "name": "Create deterministic synthetic packet fixtures and VCD golden files",
+      "status": "done",
+      "commit": "94762d9"
+    },
+    {
+      "id": 2,
+      "name": "Add normalized semantic assertions for timing, sample counts, metadata structure, and cleanup-safe writes",
+      "status": "done",
+      "commit": "19db619"
+    },
+    {
+      "id": 3,
+      "name": "Finish CLI contract checks and artifact failure-path coverage",
+      "status": "done",
+      "commit": "8967a2e"
+    },
+    {
+      "id": 4,
+      "name": "Finalize 05-VALIDATION.md as a verifier-ready matrix",
+      "status": "done",
+      "commit": "0c8bb65"
+    },
+    {
+      "id": 5,
+      "name": "Execute manual DSLogic Plus export UAT with bounded, repeatable signals",
+      "status": "in_progress",
+      "progress": "Manual UAT reproduced a real-hardware VCD bug: export succeeds and metadata/device reuse look correct, but the VCD contains `#-nan` and `#inf`. A root cause has been identified and a fix is currently uncommitted in `crates/dsview-sys/bridge_runtime.c`."
+    }
+  ],
+  "remaining_tasks": [
+    {
+      "id": 5,
+      "name": "Execute manual DSLogic Plus export UAT with bounded, repeatable signals",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Phase 5 cannot be completed until the real-hardware VCD timestamp bug is fixed and the DSLogic Plus manual export UAT is re-run successfully.",
+      "type": "technical",
+      "workaround": "Use the debug findings in `.planning/debug/vcd-export-nan-inf-timestamps.md` and the pending bridge fix in `crates/dsview-sys/bridge_runtime.c`, then rebuild `dsview-cli` and rerun the manual capture commands."
+    }
+  ],
+  "human_actions_pending": [
+    {
+      "action": "Reconnect or keep the DSLogic Plus available for a fresh manual export UAT after the timestamp fix is committed.",
+      "context": "The final gate requires rerunning bounded captures on real hardware and checking the VCD no longer contains invalid timestamps.",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Treat current master as the only trusted 05-03 baseline and rebuild automated validation there instead of trusting old worktree results.",
+      "rationale": "Previous 05-03 artifacts in older worktrees were incomplete/untrustworthy; rebuilding on master gave a clean, auditable baseline.",
+      "phase": "05"
+    },
+    {
+      "decision": "Keep Phase 5 marked in progress even after all automated 05-03 work was merged.",
+      "rationale": "Manual DSLogic Plus sign-off is an explicit phase-completion gate and must stay open until real-hardware validation passes.",
+      "phase": "05"
+    },
+    {
+      "decision": "Open a dedicated debug investigation once manual UAT exposed `#-nan` / `#inf` timestamps.",
+      "rationale": "The bug only reproduces on real hardware; automated synthetic goldens stayed green, so scientific-method debugging was needed before claiming sign-off.",
+      "phase": "05"
+    }
+  ],
+  "uncommitted_files": [
+    ".planning/config.json",
+    "crates/dsview-sys/bridge_runtime.c",
+    ".planning/debug/vcd-export-nan-inf-timestamps.md",
+    ".planning/debug/multichannel-overflow.md",
+    ".planning/quick/",
+    ".tmp/"
+  ],
+  "next_action": "Start by reviewing `.planning/debug/vcd-export-nan-inf-timestamps.md`, commit the pending `crates/dsview-sys/bridge_runtime.c` fix if it still looks correct, rebuild with `cargo build -p dsview-cli`, and rerun the documented manual DSLogic Plus capture command to confirm the VCD now has finite monotonic timestamps.",
+  "context_notes": "The repo is at a useful pause point: 05-03 automated work is merged on master, the manual gate is narrowed to one real-hardware VCD timestamp bug, and a likely fix is already drafted locally. The main thing to preserve is that metadata generation and device reuse already passed manual checks; the remaining failure is specific to VCD replay ordering on real hardware."
+}
