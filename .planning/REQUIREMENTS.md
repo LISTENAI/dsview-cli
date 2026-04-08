@@ -79,9 +79,9 @@
 | EXP-02 | Phase 8 | Closed via `.planning/phases/05-export-artifacts/05-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
 | EXP-03 | Phase 8 | Closed via `.planning/phases/05-export-artifacts/05-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
 | EXP-04 | Phase 8 | Closed via `.planning/phases/05-export-artifacts/05-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
-| CLI-01 | Phase 9 | Pending |
-| CLI-02 | Phase 9 | Pending |
-| CLI-03 | Phase 9 | Pending |
+| CLI-01 | Phase 6 | Closed via `.planning/phases/06-cli-productization/06-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
+| CLI-02 | Phase 6 | Closed via `.planning/phases/06-cli-productization/06-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
+| CLI-03 | Phase 6 | Closed via `.planning/phases/06-cli-productization/06-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
 
 **Coverage:**
 - v1 requirements: 17 total
