@@ -1243,6 +1243,7 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     int status = SR_OK;
     int saw_meta = 0;
     int saw_end = 0;
+    unsigned long long replay_samplerate_hz;
 
     if (request == NULL || out_buffer == NULL || stream == NULL) {
         return DSVIEW_BRIDGE_ERR_ARG;
@@ -1263,6 +1264,8 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     if (request->samplerate_hz == 0) {
         return DSVIEW_EXPORT_ERR_MISSING_SAMPLERATE;
     }
+
+    replay_samplerate_hz = stream->samplerate_hz != 0 ? stream->samplerate_hz : request->samplerate_hz;
 
     module = g_bridge_api.sr_output_find("vcd");
     if (module == NULL) {
@@ -1285,7 +1288,18 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
 
         if (replay_packet.type == DSVIEW_EXPORT_PACKET_META) {
             if (replay_packet.samplerate_hz == 0) {
-                replay_packet.samplerate_hz = request->samplerate_hz;
+                replay_packet.samplerate_hz = replay_samplerate_hz;
+            }
+            saw_meta = 1;
+        } else if (replay_packet.type == DSVIEW_EXPORT_PACKET_LOGIC && !saw_meta) {
+            struct dsview_retained_packet meta_packet;
+            memset(&meta_packet, 0, sizeof(meta_packet));
+            meta_packet.type = DSVIEW_EXPORT_PACKET_META;
+            meta_packet.status = SR_PKT_OK;
+            meta_packet.samplerate_hz = replay_samplerate_hz;
+            status = dsview_bridge_emit_packet(output, &meta_packet, &assembled_output);
+            if (status != SR_OK) {
+                goto cleanup;
             }
             saw_meta = 1;
         } else if (replay_packet.type == DSVIEW_EXPORT_PACKET_END) {
@@ -1303,7 +1317,7 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
         memset(&meta_packet, 0, sizeof(meta_packet));
         meta_packet.type = DSVIEW_EXPORT_PACKET_META;
         meta_packet.status = SR_PKT_OK;
-        meta_packet.samplerate_hz = request->samplerate_hz;
+        meta_packet.samplerate_hz = replay_samplerate_hz;
         status = dsview_bridge_emit_packet(output, &meta_packet, &assembled_output);
         if (status != SR_OK) {
             goto cleanup;
