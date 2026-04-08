@@ -65,13 +65,13 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEV-01 | Phase 7 | Pending verification backfill via `02-VERIFICATION.md` and `02-VALIDATION.md`; re-audit after 07-02 |
-| DEV-02 | Phase 7 | Pending verification backfill via `02-VERIFICATION.md` and `02-VALIDATION.md`; re-audit after 07-02 |
-| DEV-03 | Phase 7 | Pending verification backfill via `02-VERIFICATION.md` and `02-VALIDATION.md`; re-audit after 07-02 |
-| CAP-01 | Phase 7 | Pending |
-| CAP-02 | Phase 7 | Pending |
-| CAP-03 | Phase 7 | Pending |
-| CAP-04 | Phase 7 | Pending |
+| DEV-01 | Phase 7 | Closed via `.planning/phases/02-device-discovery-and-session-bring-up/02-VERIFICATION.md` and `.planning/phases/02-device-discovery-and-session-bring-up/02-VALIDATION.md`; rerun `/gsd:audit-milestone` |
+| DEV-02 | Phase 7 | Closed via `.planning/phases/02-device-discovery-and-session-bring-up/02-VERIFICATION.md` and `.planning/phases/02-device-discovery-and-session-bring-up/02-VALIDATION.md`; rerun `/gsd:audit-milestone` |
+| DEV-03 | Phase 7 | Closed via `.planning/phases/02-device-discovery-and-session-bring-up/02-VERIFICATION.md` and `.planning/phases/02-device-discovery-and-session-bring-up/02-VALIDATION.md`; rerun `/gsd:audit-milestone` |
+| CAP-01 | Phase 7 | Closed via `.planning/phases/03-capture-configuration-surface/03-VERIFICATION.md` and `.planning/phases/03-capture-configuration-surface/03-VALIDATION.md`; rerun `/gsd:audit-milestone` |
+| CAP-02 | Phase 7 | Closed via `.planning/phases/03-capture-configuration-surface/03-VERIFICATION.md` and `.planning/phases/03-capture-configuration-surface/03-VALIDATION.md`; rerun `/gsd:audit-milestone` |
+| CAP-03 | Phase 7 | Closed via `.planning/phases/03-capture-configuration-surface/03-VERIFICATION.md` and `.planning/phases/03-capture-configuration-surface/03-VALIDATION.md`; rerun `/gsd:audit-milestone` |
+| CAP-04 | Phase 7 | Closed via `.planning/phases/03-capture-configuration-surface/03-VERIFICATION.md` and `.planning/phases/03-capture-configuration-surface/03-VALIDATION.md`; rerun `/gsd:audit-milestone` |
 | RUN-01 | Phase 8 | Pending |
 | RUN-02 | Phase 8 | Pending |
 | RUN-03 | Phase 8 | Pending |
