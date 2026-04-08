@@ -7,16 +7,16 @@
 
 ### Device Access
 
-- [ ] **DEV-01**: User can list connected supported devices from the CLI.
-- [ ] **DEV-02**: User can select a `DSLogic Plus` device explicitly for a capture run.
-- [ ] **DEV-03**: CLI reports clear errors when no supported device is available or the target device cannot be opened.
+- [x] **DEV-01**: User can list connected supported devices from the CLI.
+- [x] **DEV-02**: User can select a `DSLogic Plus` device explicitly for a capture run.
+- [x] **DEV-03**: CLI reports clear errors when no supported device is available or the target device cannot be opened.
 
 ### Capture Configuration
 
-- [ ] **CAP-01**: User can set the sample rate for a capture run from the CLI.
-- [ ] **CAP-02**: User can set the sample limit or capture depth for a capture run from the CLI.
-- [ ] **CAP-03**: User can choose which logic channels are enabled for a capture run.
-- [ ] **CAP-04**: CLI validates requested capture settings before starting acquisition.
+- [x] **CAP-01**: User can set the sample rate for a capture run from the CLI.
+- [x] **CAP-02**: User can set the sample limit or capture depth for a capture run from the CLI.
+- [x] **CAP-03**: User can choose which logic channels are enabled for a capture run.
+- [x] **CAP-04**: CLI validates requested capture settings before starting acquisition.
 
 ### Capture Execution
 
@@ -65,13 +65,13 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEV-01 | Phase 1 | Pending |
-| DEV-02 | Phase 2 | Pending |
-| DEV-03 | Phase 2 | Pending |
-| CAP-01 | Phase 3 | Pending |
-| CAP-02 | Phase 3 | Pending |
-| CAP-03 | Phase 3 | Pending |
-| CAP-04 | Phase 3 | Pending |
+| DEV-01 | Phase 1 | Complete |
+| DEV-02 | Phase 2 | Complete |
+| DEV-03 | Phase 2 | Complete |
+| CAP-01 | Phase 3 | Complete |
+| CAP-02 | Phase 3 | Complete |
+| CAP-03 | Phase 3 | Complete |
+| CAP-04 | Phase 3 | Complete |
 | RUN-01 | Phase 4 | Complete |
 | RUN-02 | Phase 4 | Complete |
 | RUN-03 | Phase 4 | Complete |
@@ -90,4 +90,4 @@
 
 ---
 *Requirements defined: 2026-04-03*
-*Last updated: 2026-04-08 after Phase 5 export completion and post-fix DSLogic Plus hardware sign-off*
+*Last updated: 2026-04-08 after aligning completed Phase 1-5 requirements with roadmap and export sign-off state*
