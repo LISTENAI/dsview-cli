@@ -75,10 +75,10 @@
 | RUN-01 | Phase 8 | Closed via `.planning/phases/04-acquisition-execution/VERIFICATION.md`; rerun `/gsd:audit-milestone` |
 | RUN-02 | Phase 8 | Closed via `.planning/phases/04-acquisition-execution/VERIFICATION.md`; rerun `/gsd:audit-milestone` |
 | RUN-03 | Phase 8 | Closed via `.planning/phases/04-acquisition-execution/VERIFICATION.md`; rerun `/gsd:audit-milestone` |
-| EXP-01 | Phase 8 | Pending |
-| EXP-02 | Phase 8 | Pending |
-| EXP-03 | Phase 8 | Pending |
-| EXP-04 | Phase 8 | Pending |
+| EXP-01 | Phase 8 | Closed via `.planning/phases/05-export-artifacts/05-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
+| EXP-02 | Phase 8 | Closed via `.planning/phases/05-export-artifacts/05-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
+| EXP-03 | Phase 8 | Closed via `.planning/phases/05-export-artifacts/05-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
+| EXP-04 | Phase 8 | Closed via `.planning/phases/05-export-artifacts/05-VERIFICATION.md`; rerun `/gsd:audit-milestone` |
 | CLI-01 | Phase 9 | Pending |
 | CLI-02 | Phase 9 | Pending |
 | CLI-03 | Phase 9 | Pending |
