@@ -65,9 +65,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEV-01 | Phase 7 | Pending |
-| DEV-02 | Phase 7 | Pending |
-| DEV-03 | Phase 7 | Pending |
+| DEV-01 | Phase 7 | Pending verification backfill via `02-VERIFICATION.md` and `02-VALIDATION.md`; re-audit after 07-02 |
+| DEV-02 | Phase 7 | Pending verification backfill via `02-VERIFICATION.md` and `02-VALIDATION.md`; re-audit after 07-02 |
+| DEV-03 | Phase 7 | Pending verification backfill via `02-VERIFICATION.md` and `02-VALIDATION.md`; re-audit after 07-02 |
 | CAP-01 | Phase 7 | Pending |
 | CAP-02 | Phase 7 | Pending |
 | CAP-03 | Phase 7 | Pending |
