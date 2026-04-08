@@ -72,9 +72,9 @@
 | CAP-02 | Phase 7 | Closed via `.planning/phases/03-capture-configuration-surface/03-VERIFICATION.md` and `.planning/phases/03-capture-configuration-surface/03-VALIDATION.md`; rerun `/gsd:audit-milestone` |
 | CAP-03 | Phase 7 | Closed via `.planning/phases/03-capture-configuration-surface/03-VERIFICATION.md` and `.planning/phases/03-capture-configuration-surface/03-VALIDATION.md`; rerun `/gsd:audit-milestone` |
 | CAP-04 | Phase 7 | Closed via `.planning/phases/03-capture-configuration-surface/03-VERIFICATION.md` and `.planning/phases/03-capture-configuration-surface/03-VALIDATION.md`; rerun `/gsd:audit-milestone` |
-| RUN-01 | Phase 8 | Pending |
-| RUN-02 | Phase 8 | Pending |
-| RUN-03 | Phase 8 | Pending |
+| RUN-01 | Phase 8 | Closed via `.planning/phases/04-acquisition-execution/VERIFICATION.md`; rerun `/gsd:audit-milestone` |
+| RUN-02 | Phase 8 | Closed via `.planning/phases/04-acquisition-execution/VERIFICATION.md`; rerun `/gsd:audit-milestone` |
+| RUN-03 | Phase 8 | Closed via `.planning/phases/04-acquisition-execution/VERIFICATION.md`; rerun `/gsd:audit-milestone` |
 | EXP-01 | Phase 8 | Pending |
 | EXP-02 | Phase 8 | Pending |
 | EXP-03 | Phase 8 | Pending |

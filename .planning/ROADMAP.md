@@ -133,15 +133,15 @@ Plans:
 **Goal**: Recreate durable verification evidence for the acquisition and export requirements so the milestone audit can prove end-to-end capture/export behavior from persistent verification artifacts.
 **Depends on**: Phase 7
 **Requirements**: RUN-01, RUN-02, RUN-03, EXP-01, EXP-02, EXP-03, EXP-04
-**Gap Closure**: Closes milestone audit requirement gaps caused by missing verification artifacts for Phases 4 and 5.
+**Gap Closure**: Closes milestone audit requirement gaps caused by missing verification artifacts for Phase 5 and stale Phase 4 acquisition traceability.
 **Success Criteria** (what must be TRUE):
-  1. Phase 4 has a `04-VERIFICATION.md` artifact that explicitly verifies real capture start, clean-success cleanup/reuse behavior, and actionable non-zero failure diagnostics.
+  1. Existing `.planning/phases/04-acquisition-execution/VERIFICATION.md` is accepted as the requirement-closing artifact for RUN-01, RUN-02, and RUN-03; 08-01 reconciles roadmap and requirements traceability rather than creating a duplicate verification file.
   2. Phase 5 has a `05-VERIFICATION.md` artifact that explicitly verifies VCD export, metadata sidecar semantics, and the real-hardware export evidence already captured in validation and UAT documents.
   3. The reopened RUN-* and EXP-* requirements can be traced from `REQUIREMENTS.md` through verification evidence without relying on milestone-level inference.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 08-01: Backfill verification evidence for Phase 4 acquisition execution.
+- [ ] 08-01: Reconcile existing Phase 4 acquisition verification for audit closure.
 - [ ] 08-02: Backfill verification evidence for Phase 5 export artifacts.
 
 ### Phase 9: Audit Closeout Reconciliation
