@@ -1,9 +1,9 @@
 ---
 phase: 6
 slug: cli-productization
-status: draft
-nyquist_compliant: n/a
-wave_0_complete: false
+status: complete
+nyquist_compliant: partial
+wave_0_complete: true
 created: 2026-04-08
 ---
 
