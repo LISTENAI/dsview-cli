@@ -1,3 +1,5 @@
+use assert_cmd::Command;
+use predicates::prelude::*;
 use dsview_core::{
     resolve_capture_artifact_paths, AcquisitionSummary, AcquisitionTerminalEvent,
     CaptureCleanup, CaptureCompletion, CaptureExportError, CaptureExportFailureKind,
@@ -30,6 +32,137 @@ fn clean_summary() -> AcquisitionSummary {
     }
 }
 
+fn cli_command() -> Command {
+    Command::cargo_bin("dsview-cli").expect("dsview-cli binary should build for CLI tests")
+}
+
+#[test]
+fn capture_help_mentions_runtime_and_artifact_controls() {
+    cli_command()
+        .arg("capture")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--library <PATH>"))
+        .stdout(predicate::str::contains("--use-source-runtime"))
+        .stdout(predicate::str::contains("--resource-dir <PATH>"))
+        .stdout(predicate::str::contains("--output <PATH>"))
+        .stdout(predicate::str::contains("--metadata-output <PATH>"))
+        .stdout(predicate::str::contains("json is stable for automation"))
+        .stdout(predicate::str::contains("must end with .vcd"))
+        .stdout(predicate::str::contains("defaults to the VCD path with a .json extension"));
+}
+
+#[test]
+fn capture_missing_runtime_selector_fails_with_machine_readable_json() {
+    cli_command()
+        .args([
+            "capture",
+            "--resource-dir",
+            ".",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "100000000",
+            "--sample-limit",
+            "2048",
+            "--channels",
+            "0,1,2,3",
+            "--output",
+            "artifacts/run.vcd",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"code\": \"runtime_selector_missing\""))
+        .stdout(predicate::str::contains(
+            "pass either --library <PATH> or --use-source-runtime.",
+        ))
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn capture_invalid_output_path_fails_on_stderr_in_text_mode() {
+    cli_command()
+        .args([
+            "capture",
+            "--format",
+            "text",
+            "--resource-dir",
+            ".",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "100000000",
+            "--sample-limit",
+            "2048",
+            "--channels",
+            "0,1,2,3",
+            "--output",
+            "artifacts/run.bin",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("capture_output_path_invalid:"))
+        .stderr(predicate::str::contains("must use the .vcd extension"));
+}
+
+#[test]
+fn capture_invalid_metadata_output_fails_on_stderr_in_text_mode() {
+    cli_command()
+        .args([
+            "capture",
+            "--format",
+            "text",
+            "--resource-dir",
+            ".",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "100000000",
+            "--sample-limit",
+            "2048",
+            "--channels",
+            "0,1,2,3",
+            "--output",
+            "artifacts/run.vcd",
+            "--metadata-output",
+            "artifacts/run.txt",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("capture_metadata_output_path_invalid:"))
+        .stderr(predicate::str::contains("must use the .json extension"));
+}
+
+#[test]
+fn capture_conflicting_artifact_paths_fail_before_runtime_work() {
+    cli_command()
+        .args([
+            "capture",
+            "--resource-dir",
+            ".",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "100000000",
+            "--sample-limit",
+            "2048",
+            "--channels",
+            "0,1,2,3",
+            "--output",
+            "artifacts/run.vcd",
+            "--metadata-output",
+            "artifacts/run.vcd",
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"code\": \"capture_artifact_paths_conflict\""))
+        .stdout(predicate::str::contains("must be different"))
+        .stderr(predicate::str::is_empty());
+}
+
 #[test]
 fn capture_success_reports_artifacts_json() {
     let response = serde_json::to_value(json!({
@@ -49,6 +182,20 @@ fn capture_success_reports_artifacts_json() {
     assert_eq!(response["completion"], "clean_success");
     assert_eq!(response["artifacts"]["vcd_path"], "artifacts/run.vcd");
     assert_eq!(response["artifacts"]["metadata_path"], "artifacts/run.json");
+}
+
+#[test]
+fn capture_text_success_reports_completion_and_artifact_paths() {
+    let output = cli::capture_success_text(
+        "clean_success",
+        "artifacts/run.vcd",
+        "artifacts/run.json",
+    );
+
+    assert_eq!(
+        output,
+        "capture clean_success\nvcd artifacts/run.vcd\nmetadata artifacts/run.json"
+    );
 }
 
 #[test]

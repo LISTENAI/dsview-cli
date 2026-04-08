@@ -40,13 +40,31 @@ enum DeviceCommand {
 
 #[derive(Args, Debug)]
 struct SharedRuntimeArgs {
-    #[arg(long, value_name = "PATH", conflicts_with = "use_source_runtime")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with = "use_source_runtime",
+        help = "Load a DSView runtime library from this path"
+    )]
     library: Option<PathBuf>,
-    #[arg(long = "use-source-runtime", default_value_t = false)]
+    #[arg(
+        long = "use-source-runtime",
+        default_value_t = false,
+        help = "Use the source-built runtime bundled by this workspace"
+    )]
     use_source_runtime: bool,
-    #[arg(long = "resource-dir", value_name = "PATH")]
+    #[arg(
+        long = "resource-dir",
+        value_name = "PATH",
+        help = "Directory containing DSLogic firmware and bitstream resources"
+    )]
     resource_dir: PathBuf,
-    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = OutputFormat::Json,
+        help = "Output format: json is stable for automation, text is for direct shell use"
+    )]
     format: OutputFormat,
 }
 
@@ -76,9 +94,17 @@ struct CaptureArgs {
     sample_limit: u64,
     #[arg(long = "channels", value_delimiter = ',', value_name = "IDX[,IDX...]")]
     channels: Vec<u16>,
-    #[arg(long = "output", value_name = "PATH")]
+    #[arg(
+        long = "output",
+        value_name = "PATH",
+        help = "Final VCD artifact path; must end with .vcd"
+    )]
     output: PathBuf,
-    #[arg(long = "metadata-output", value_name = "PATH")]
+    #[arg(
+        long = "metadata-output",
+        value_name = "PATH",
+        help = "Optional metadata JSON path; defaults to the VCD path with a .json extension"
+    )]
     metadata_output: Option<PathBuf>,
     #[arg(long = "wait-timeout-ms", default_value_t = 10_000)]
     wait_timeout_ms: u64,
@@ -184,7 +210,7 @@ fn run_list(args: ListArgs) -> Result<(), FailedCommand> {
     let response = DeviceListResponse {
         devices: devices.iter().map(device_record).collect(),
     };
-    render_success(args.runtime.format, &response, &response.devices);
+    render_device_list_success(args.runtime.format, &response);
     Ok(())
 }
 
@@ -205,7 +231,7 @@ fn run_open(args: OpenArgs) -> Result<(), FailedCommand> {
         .release()
         .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
 
-    render_success(args.runtime.format, &response, &[]);
+    render_json_or_ok(args.runtime.format, &response);
     Ok(())
 }
 
@@ -226,9 +252,12 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
-    let validated_config = discovery
-        .validate_capture_config(&run_request.config)
-        .map_err(|error| command_error(args.runtime.format, classify_runtime_error(&RuntimeError::InvalidArgument(error.to_string()))))?;
+    let validated_config = discovery.validate_capture_config(&run_request.config).map_err(|error| {
+        command_error(
+            args.runtime.format,
+            classify_runtime_error(&RuntimeError::InvalidArgument(error.to_string())),
+        )
+    })?;
     let result = discovery
         .run_capture(&run_request)
         .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
@@ -259,7 +288,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
             metadata_path: export.metadata_path.display().to_string(),
         },
     };
-    render_success(args.runtime.format, &response, &[]);
+    render_capture_success(args.runtime.format, &response);
     Ok(())
 }
 
@@ -647,24 +676,59 @@ fn command_error(format: OutputFormat, error: ErrorResponse) -> FailedCommand {
     FailedCommand { format, error }
 }
 
-fn render_success<T: Serialize>(format: OutputFormat, payload: &T, text_devices: &[DeviceRecord]) {
+fn render_device_list_success(format: OutputFormat, response: &DeviceListResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            for device in &response.devices {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    device.handle, device.stable_id, device.model, device.native_name
+                );
+            }
+        }
+    }
+}
+
+fn render_json_or_ok<T: Serialize>(format: OutputFormat, payload: &T) {
     match format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(payload).unwrap());
         }
         OutputFormat::Text => {
-            if text_devices.is_empty() {
-                println!("ok");
-            } else {
-                for device in text_devices {
-                    println!(
-                        "{}\t{}\t{}\t{}",
-                        device.handle, device.stable_id, device.model, device.native_name
-                    );
-                }
-            }
+            println!("ok");
         }
     }
+}
+
+fn render_capture_success(format: OutputFormat, response: &CaptureResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            println!(
+                "{}",
+                capture_success_text(
+                    response.completion,
+                    &response.artifacts.vcd_path,
+                    &response.artifacts.metadata_path,
+                )
+            );
+        }
+    }
+}
+
+pub(crate) fn capture_success_text(
+    completion: &str,
+    vcd_path: &str,
+    metadata_path: &str,
+) -> String {
+    format!(
+        "capture {completion}\nvcd {vcd_path}\nmetadata {metadata_path}"
+    )
 }
 
 fn render_error(format: OutputFormat, error: &ErrorResponse) {
