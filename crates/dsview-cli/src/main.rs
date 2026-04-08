@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_core::{
-    AcquisitionSummary, AcquisitionTerminalEvent, BringUpError, CaptureCleanup,
-    CaptureCompletion, CaptureConfigRequest, CaptureExportError, CaptureRunError,
-    CaptureRunRequest, Discovery, NativeErrorCode, RuntimeError, SelectionHandle,
-    SupportedDevice, describe_native_error,
+    resolve_capture_artifact_paths, AcquisitionSummary, AcquisitionTerminalEvent,
+    BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion,
+    CaptureConfigRequest, CaptureExportError, CaptureRunError, CaptureRunRequest, Discovery,
+    NativeErrorCode, RuntimeError, SelectionHandle, SupportedDevice, describe_native_error,
 };
 use serde::Serialize;
 
@@ -78,6 +78,8 @@ struct CaptureArgs {
     channels: Vec<u16>,
     #[arg(long = "output", value_name = "PATH")]
     output: PathBuf,
+    #[arg(long = "metadata-output", value_name = "PATH")]
+    metadata_output: Option<PathBuf>,
     #[arg(long = "wait-timeout-ms", default_value_t = 10_000)]
     wait_timeout_ms: u64,
     #[arg(long = "poll-interval-ms", default_value_t = 50)]
@@ -208,6 +210,8 @@ fn run_open(args: OpenArgs) -> Result<(), FailedCommand> {
 }
 
 fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
+    let artifact_paths = resolve_capture_artifact_paths(&args.output, args.metadata_output.as_ref())
+        .map_err(|error| command_error(args.runtime.format, classify_artifact_path_error(&error)))?;
     let discovery = connect_runtime(&args.runtime)?;
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
@@ -232,7 +236,8 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         .export_clean_capture_vcd(&dsview_core::CaptureExportRequest {
             capture: result.clone(),
             validated_config,
-            vcd_path: args.output.clone(),
+            vcd_path: artifact_paths.vcd_path,
+            metadata_path: Some(artifact_paths.metadata_path),
             tool_name: env!("CARGO_PKG_NAME").to_string(),
             tool_version: env!("CARGO_PKG_VERSION").to_string(),
             capture_started_at: std::time::SystemTime::now(),
@@ -276,6 +281,45 @@ fn device_record(device: &SupportedDevice) -> DeviceRecord {
         stable_id: device.stable_id,
         model: device.kind.display_name(),
         native_name: device.name.clone(),
+    }
+}
+
+fn classify_artifact_path_error(error: &CaptureArtifactPathError) -> ErrorResponse {
+    match error {
+        CaptureArtifactPathError::InvalidVcdExtension { path } => ErrorResponse {
+            code: "capture_output_path_invalid",
+            message: format!("VCD output path `{}` must use the .vcd extension", path.display()),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureArtifactPathError::InvalidMetadataExtension { path } => ErrorResponse {
+            code: "capture_metadata_output_path_invalid",
+            message: format!(
+                "metadata output path `{}` must use the .json extension",
+                path.display()
+            ),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureArtifactPathError::ConflictingArtifactPaths {
+            vcd_path,
+            metadata_path,
+        } => ErrorResponse {
+            code: "capture_artifact_paths_conflict",
+            message: format!(
+                "VCD output path `{}` and metadata output path `{}` must be different",
+                vcd_path.display(),
+                metadata_path.display()
+            ),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
     }
 }
 
@@ -532,6 +576,7 @@ pub(crate) fn classify_export_error(error: &CaptureExportError) -> ErrorResponse
             terminal_event: None,
             cleanup: None,
         },
+        CaptureExportError::InvalidArtifactPaths(error) => classify_artifact_path_error(error),
         CaptureExportError::ExportFailed { path, kind, detail } => ErrorResponse {
             code: match kind {
                 dsview_core::CaptureExportFailureKind::Precondition { .. } => {

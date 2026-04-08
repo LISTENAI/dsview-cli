@@ -156,10 +156,32 @@ pub struct CaptureRunSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureArtifactPaths {
+    pub vcd_path: PathBuf,
+    pub metadata_path: PathBuf,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum CaptureArtifactPathError {
+    #[error("VCD output path `{path}` must use the .vcd extension")]
+    InvalidVcdExtension { path: PathBuf },
+    #[error("metadata output path `{path}` must use the .json extension")]
+    InvalidMetadataExtension { path: PathBuf },
+    #[error(
+        "VCD output path `{vcd_path}` and metadata output path `{metadata_path}` must be different"
+    )]
+    ConflictingArtifactPaths {
+        vcd_path: PathBuf,
+        metadata_path: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureExportRequest {
     pub capture: CaptureRunSummary,
     pub validated_config: ValidatedCaptureConfig,
     pub vcd_path: PathBuf,
+    pub metadata_path: Option<PathBuf>,
     pub tool_name: String,
     pub tool_version: String,
     pub capture_started_at: SystemTime,
@@ -228,6 +250,8 @@ pub enum CaptureExportFailureKind {
 pub enum CaptureExportError {
     #[error("capture completion `{completion:?}` is not export-eligible")]
     CaptureNotExportable { completion: CaptureCompletion },
+    #[error(transparent)]
+    InvalidArtifactPaths(#[from] CaptureArtifactPathError),
     #[error("export failed for `{path}` with {kind:?}: {detail}")]
     ExportFailed {
         path: PathBuf,
@@ -808,6 +832,38 @@ pub fn metadata_path_for_vcd(vcd_path: &Path) -> PathBuf {
     metadata_path
 }
 
+pub fn resolve_capture_artifact_paths(
+    vcd_path: impl AsRef<Path>,
+    metadata_path: Option<impl AsRef<Path>>,
+) -> Result<CaptureArtifactPaths, CaptureArtifactPathError> {
+    let vcd_path = vcd_path.as_ref().to_path_buf();
+    if vcd_path.extension().and_then(|ext| ext.to_str()) != Some("vcd") {
+        return Err(CaptureArtifactPathError::InvalidVcdExtension { path: vcd_path });
+    }
+
+    let metadata_path = metadata_path
+        .map(|path| path.as_ref().to_path_buf())
+        .unwrap_or_else(|| metadata_path_for_vcd(&vcd_path));
+
+    if metadata_path == vcd_path {
+        return Err(CaptureArtifactPathError::ConflictingArtifactPaths {
+            vcd_path,
+            metadata_path,
+        });
+    }
+
+    if metadata_path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+        return Err(CaptureArtifactPathError::InvalidMetadataExtension {
+            path: metadata_path,
+        });
+    }
+
+    Ok(CaptureArtifactPaths {
+        vcd_path,
+        metadata_path,
+    })
+}
+
 fn classify_capture_completion(summary: &AcquisitionSummary) -> CaptureCompletion {
     if !NativeErrorCode::from_raw(summary.start_status).is_ok() {
         return CaptureCompletion::StartFailure;
@@ -990,8 +1046,9 @@ impl Discovery {
         }
 
         let export_request = build_vcd_export_request(&request.validated_config);
-        let vcd_path = request.vcd_path.clone();
-        let metadata_path = metadata_path_for_vcd(&vcd_path);
+        let artifact_paths = resolve_capture_artifact_paths(&request.vcd_path, request.metadata_path.as_ref())?;
+        let vcd_path = artifact_paths.vcd_path;
+        let metadata_path = artifact_paths.metadata_path;
         let export = self
             .runtime
             .export_recorded_vcd_to_path(&export_request, &vcd_path)
@@ -1311,6 +1368,7 @@ mod tests {
                 channel_mode_id: 20,
             },
             vcd_path,
+            metadata_path: None,
             tool_name: "dsview-cli".to_string(),
             tool_version: "0.1.0".to_string(),
             capture_started_at: UNIX_EPOCH + Duration::from_secs(1_744_018_496),

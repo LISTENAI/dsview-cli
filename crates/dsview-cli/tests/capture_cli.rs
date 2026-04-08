@@ -1,6 +1,7 @@
 use dsview_core::{
-    AcquisitionSummary, AcquisitionTerminalEvent, CaptureCleanup, CaptureCompletion,
-    CaptureExportError, CaptureExportFailureKind, CaptureRunError, NativeErrorCode,
+    resolve_capture_artifact_paths, AcquisitionSummary, AcquisitionTerminalEvent,
+    CaptureCleanup, CaptureCompletion, CaptureExportError, CaptureExportFailureKind,
+    CaptureRunError, NativeErrorCode,
 };
 use dsview_sys::{AcquisitionPacketStatus, ExportErrorCode};
 use serde_json::json;
@@ -48,6 +49,35 @@ fn capture_success_reports_artifacts_json() {
     assert_eq!(response["completion"], "clean_success");
     assert_eq!(response["artifacts"]["vcd_path"], "artifacts/run.vcd");
     assert_eq!(response["artifacts"]["metadata_path"], "artifacts/run.json");
+}
+
+#[test]
+fn invalid_vcd_output_path_maps_to_distinct_cli_error_code() {
+    let path_error = resolve_capture_artifact_paths("artifacts/run.bin", None::<&str>).unwrap_err();
+    let error = cli::classify_export_error(&CaptureExportError::InvalidArtifactPaths(path_error));
+
+    assert_eq!(error.code, "capture_output_path_invalid");
+    assert!(error.message.contains(".vcd extension"));
+}
+
+#[test]
+fn invalid_metadata_output_path_maps_to_distinct_cli_error_code() {
+    let path_error =
+        resolve_capture_artifact_paths("artifacts/run.vcd", Some("artifacts/run.txt")).unwrap_err();
+    let error = cli::classify_export_error(&CaptureExportError::InvalidArtifactPaths(path_error));
+
+    assert_eq!(error.code, "capture_metadata_output_path_invalid");
+    assert!(error.message.contains(".json extension"));
+}
+
+#[test]
+fn conflicting_artifact_paths_map_to_distinct_cli_error_code() {
+    let path_error =
+        resolve_capture_artifact_paths("artifacts/run.vcd", Some("artifacts/run.vcd")).unwrap_err();
+    let error = cli::classify_export_error(&CaptureExportError::InvalidArtifactPaths(path_error));
+
+    assert_eq!(error.code, "capture_artifact_paths_conflict");
+    assert!(error.message.contains("must be different"));
 }
 
 #[test]

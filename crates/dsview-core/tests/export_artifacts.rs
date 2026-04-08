@@ -2,9 +2,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use dsview_core::{
-    metadata_path_for_vcd, AcquisitionSummary, AcquisitionTerminalEvent, CaptureCleanup,
-    CaptureCompletion, CaptureExportError, CaptureExportFailureKind, CaptureExportRequest,
-    CaptureRunSummary, NativeErrorCode, ValidatedCaptureConfig,
+    metadata_path_for_vcd, resolve_capture_artifact_paths, AcquisitionSummary,
+    AcquisitionTerminalEvent, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion,
+    CaptureExportError, CaptureExportFailureKind, CaptureExportRequest, CaptureRunSummary,
+    NativeErrorCode, ValidatedCaptureConfig,
 };
 use dsview_sys::{
     AcquisitionPacketStatus, ExportErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest,
@@ -60,6 +61,7 @@ fn export_request(completion: CaptureCompletion) -> CaptureExportRequest {
         capture,
         validated_config: validated_config(),
         vcd_path: PathBuf::from("/tmp/capture.vcd"),
+        metadata_path: None,
         tool_name: "dsview-cli".to_string(),
         tool_version: "0.1.0".to_string(),
         capture_started_at: UNIX_EPOCH + Duration::from_secs(1_744_018_496),
@@ -98,6 +100,64 @@ fn only_clean_success_capture_is_export_eligible() {
 fn metadata_sidecar_path_is_derived_from_vcd_path() {
     let vcd_path = Path::new("artifacts/run-01.vcd");
     assert_eq!(metadata_path_for_vcd(vcd_path), PathBuf::from("artifacts/run-01.json"));
+}
+
+#[test]
+fn explicit_metadata_path_override_is_used_when_present() {
+    let paths = resolve_capture_artifact_paths(
+        Path::new("artifacts/run-01.vcd"),
+        Some(Path::new("sidecars/run-01.json")),
+    )
+    .unwrap();
+
+    assert_eq!(paths.vcd_path, PathBuf::from("artifacts/run-01.vcd"));
+    assert_eq!(paths.metadata_path, PathBuf::from("sidecars/run-01.json"));
+}
+
+#[test]
+fn invalid_vcd_extension_is_rejected_before_export() {
+    let error = resolve_capture_artifact_paths(Path::new("artifacts/run-01.bin"), None::<&Path>)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        CaptureArtifactPathError::InvalidVcdExtension {
+            path: PathBuf::from("artifacts/run-01.bin"),
+        }
+    );
+}
+
+#[test]
+fn invalid_metadata_extension_is_rejected_before_export() {
+    let error = resolve_capture_artifact_paths(
+        Path::new("artifacts/run-01.vcd"),
+        Some(Path::new("artifacts/run-01.txt")),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CaptureArtifactPathError::InvalidMetadataExtension {
+            path: PathBuf::from("artifacts/run-01.txt"),
+        }
+    );
+}
+
+#[test]
+fn conflicting_artifact_paths_are_rejected_before_export() {
+    let error = resolve_capture_artifact_paths(
+        Path::new("artifacts/run-01.vcd"),
+        Some(Path::new("artifacts/run-01.vcd")),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        CaptureArtifactPathError::ConflictingArtifactPaths {
+            vcd_path: PathBuf::from("artifacts/run-01.vcd"),
+            metadata_path: PathBuf::from("artifacts/run-01.vcd"),
+        }
+    );
 }
 
 #[test]
