@@ -14,7 +14,7 @@ This roadmap takes DSView CLI from project setup to a first usable Rust-based ca
 - [x] **Phase 6: CLI Productization** - Deliver a scriptable end-to-end CLI command with usable diagnostics and output UX.
 - [x] **Phase 7: Verification Backfill for Bring-Up and Configuration** - Reconstruct verification evidence for the device-discovery and capture-configuration requirements reopened by the milestone audit.
 - [ ] **Phase 8: Verification Backfill for Acquisition and Export** - Reconstruct verification evidence for the capture execution and export requirements reopened by the milestone audit.
-- [ ] **Phase 9: Audit Closeout Reconciliation** - Close the remaining audit-process gaps so the milestone can pass re-audit cleanly.
+- [x] **Phase 9: Audit Closeout Reconciliation** - Close the remaining audit-process gaps so the milestone can pass re-audit cleanly.
 
 ## Phase Details
 
@@ -156,7 +156,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 09-01: Backfill verification evidence for Phase 1 native integration foundation.
+- [x] 09-01: Backfill verification evidence for Phase 1 native integration foundation.
 - [ ] 09-02: Reconcile Phase 6 validation and closeout artifacts for re-audit.
 
 ## Progress
@@ -174,4 +174,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 6. CLI Productization | 3/3 | Complete | 2026-04-08 |
 | 7. Verification Backfill for Bring-Up and Configuration | 2/2 | Complete | 2026-04-08 |
 | 8. Verification Backfill for Acquisition and Export | 2/2 | Complete | 2026-04-08 |
-| 9. Audit Closeout Reconciliation | 0/2 | Not started | - |
+| 9. Audit Closeout Reconciliation | 1/2 | In Progress | - |
