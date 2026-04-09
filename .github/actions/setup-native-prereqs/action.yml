@@ -43,6 +43,10 @@ runs:
       if: inputs.target == 'x86_64-pc-windows-msvc'
       shell: pwsh
       run: |
+        if ($env:VCPKG_DEFAULT_BINARY_CACHE) {
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+        }
+
         # vcpkg is pre-installed on GitHub-hosted Windows runners
         vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows pkgconf:x64-windows
 
@@ -62,5 +66,9 @@ runs:
       if: inputs.target == 'aarch64-pc-windows-msvc'
       shell: pwsh
       run: |
+        if ($env:VCPKG_DEFAULT_BINARY_CACHE) {
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+        }
+
         # vcpkg is pre-installed on GitHub-hosted Windows runners
         vcpkg install glib:arm64-windows libusb:arm64-windows fftw3:arm64-windows
