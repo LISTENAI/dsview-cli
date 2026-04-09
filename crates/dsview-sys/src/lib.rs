@@ -1172,7 +1172,7 @@ fn export_from_raw(raw: RawExportBuffer) -> Result<VcdExport, RuntimeError> {
         let owned = slice.to_vec();
         let mut raw = raw;
         dsview_bridge_free_export_buffer(&mut raw);
-        owned
+        normalize_vcd_timestamp_lines(owned)
     };
 
     Ok(VcdExport {
@@ -1180,6 +1180,31 @@ fn export_from_raw(raw: RawExportBuffer) -> Result<VcdExport, RuntimeError> {
         sample_count: raw.sample_count,
         packet_count: raw.packet_count,
     })
+}
+
+fn normalize_vcd_timestamp_lines(bytes: Vec<u8>) -> Vec<u8> {
+    let Ok(vcd) = String::from_utf8(bytes.clone()) else {
+        return bytes;
+    };
+
+    let mut normalized = String::with_capacity(vcd.len());
+    for line in vcd.lines() {
+        if let Some((timestamp, values)) = line.split_once(' ') {
+            if timestamp.starts_with('#') && !values.is_empty() {
+                normalized.push_str(timestamp);
+                normalized.push('\n');
+                for value in values.split_whitespace() {
+                    normalized.push_str(value);
+                    normalized.push('\n');
+                }
+                continue;
+            }
+        }
+        normalized.push_str(line);
+        normalized.push('\n');
+    }
+
+    normalized.into_bytes()
 }
 
 fn native_call_status(operation: &'static str, status: i32) -> Result<(), RuntimeError> {
