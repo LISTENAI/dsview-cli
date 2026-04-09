@@ -13,20 +13,10 @@ set(DSVIEW_ROOT "${DSVIEW_REPO_ROOT}/DSView")
 set(LIBSIGROK_ROOT "${DSVIEW_ROOT}/libsigrok4DSL")
 set(COMMON_ROOT "${DSVIEW_ROOT}/common")
 
-# Platform-specific dependency resolution
-if(WIN32)
-    # Windows: use vcpkg or manual paths for dependencies
-    find_package(PkgConfig QUIET)
-    if(NOT PkgConfig_FOUND)
-        message(STATUS "pkg-config not available on Windows, using find_package for dependencies")
-    endif()
-else()
-    # Linux/macOS: use pkg-config
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(GLIB REQUIRED glib-2.0)
-    pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-    pkg_check_modules(FFTW REQUIRED fftw3)
-endif()
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLIB REQUIRED glib-2.0)
+pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+pkg_check_modules(FFTW REQUIRED fftw3)
 
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
@@ -70,15 +60,10 @@ target_include_directories(dsview_runtime PRIVATE
     ${DSVIEW_ROOT}
     ${LIBSIGROK_ROOT}
     ${COMMON_ROOT}
+    ${GLIB_INCLUDE_DIRS}
+    ${LIBUSB_INCLUDE_DIRS}
+    ${FFTW_INCLUDE_DIRS}
 )
-
-if(NOT WIN32)
-    target_include_directories(dsview_runtime PRIVATE
-        ${GLIB_INCLUDE_DIRS}
-        ${LIBUSB_INCLUDE_DIRS}
-        ${FFTW_INCLUDE_DIRS}
-    )
-endif()
 
 target_compile_definitions(dsview_runtime PRIVATE
     HAVE_LIBUSB_1_0=1
@@ -108,15 +93,16 @@ endif()
 target_link_libraries(dsview_runtime PRIVATE
     ZLIB::ZLIB
     Threads::Threads
+    ${GLIB_LIBRARIES}
+    ${LIBUSB_LIBRARIES}
+    ${FFTW_LIBRARIES}
 )
 
-if(NOT WIN32)
-    target_link_libraries(dsview_runtime PRIVATE
-        ${GLIB_LIBRARIES}
-        ${LIBUSB_LIBRARIES}
-        ${FFTW_LIBRARIES}
-    )
-endif()
+target_link_directories(dsview_runtime PRIVATE
+    ${GLIB_LIBRARY_DIRS}
+    ${LIBUSB_LIBRARY_DIRS}
+    ${FFTW_LIBRARY_DIRS}
+)
 
 # Link math library on Unix-like systems
 if(UNIX)

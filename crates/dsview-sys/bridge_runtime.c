@@ -1,6 +1,10 @@
 #include "wrapper.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #include <glib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -132,20 +136,76 @@ static void dsview_bridge_set_error_from_text(const char *message)
     g_bridge_api.last_error[sizeof(g_bridge_api.last_error) - 1] = '\0';
 }
 
-static void dsview_bridge_set_error_from_dlerror(void)
+#if defined(_WIN32)
+static void dsview_bridge_clear_loader_error(void)
+{
+    SetLastError(ERROR_SUCCESS);
+}
+
+static void dsview_bridge_set_error_from_loader(void)
+{
+    DWORD error = GetLastError();
+    char buffer[128];
+
+    if (error == ERROR_SUCCESS) {
+        dsview_bridge_set_error_from_text("unknown dynamic loader error");
+        return;
+    }
+
+    snprintf(buffer, sizeof(buffer), "dynamic loader error code %lu", (unsigned long)error);
+    dsview_bridge_set_error_from_text(buffer);
+}
+
+static void *dsview_bridge_dlopen(const char *path)
+{
+    return (void *)LoadLibraryA(path);
+}
+
+static void *dsview_bridge_dlsym(void *library_handle, const char *name)
+{
+    return (void *)GetProcAddress((HMODULE)library_handle, name);
+}
+
+static void dsview_bridge_dlclose(void *library_handle)
+{
+    FreeLibrary((HMODULE)library_handle);
+}
+#else
+static void dsview_bridge_clear_loader_error(void)
+{
+    dlerror();
+}
+
+static void dsview_bridge_set_error_from_loader(void)
 {
     const char *error = dlerror();
     dsview_bridge_set_error_from_text(error != NULL ? error : "unknown dynamic loader error");
 }
 
+static void *dsview_bridge_dlopen(const char *path)
+{
+    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+}
+
+static void *dsview_bridge_dlsym(void *library_handle, const char *name)
+{
+    return dlsym(library_handle, name);
+}
+
+static void dsview_bridge_dlclose(void *library_handle)
+{
+    dlclose(library_handle);
+}
+#endif
+
 static void *dsview_bridge_load_symbol(const char *name, int *status_out)
 {
     void *symbol = NULL;
 
-    dlerror();
-    symbol = dlsym(g_bridge_api.library_handle, name);
+    dsview_bridge_clear_loader_error();
+    symbol = dsview_bridge_dlsym(g_bridge_api.library_handle, name);
     if (symbol == NULL) {
-        dsview_bridge_set_error_from_dlerror();
+        dsview_bridge_set_error_from_loader();
         if (status_out != NULL) {
             *status_out = DSVIEW_BRIDGE_ERR_DLSYM;
         }
@@ -471,10 +531,10 @@ int dsview_bridge_load_library(const char *path)
 
     dsview_bridge_unload_library();
 
-    dlerror();
-    g_bridge_api.library_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    dsview_bridge_clear_loader_error();
+    g_bridge_api.library_handle = dsview_bridge_dlopen(path);
     if (g_bridge_api.library_handle == NULL) {
-        dsview_bridge_set_error_from_dlerror();
+        dsview_bridge_set_error_from_loader();
         return DSVIEW_BRIDGE_ERR_DLOPEN;
     }
 
@@ -633,7 +693,7 @@ void dsview_bridge_unload_library(void)
     dsview_bridge_reset_recorded_stream();
 
     if (g_bridge_api.library_handle != NULL) {
-        dlclose(g_bridge_api.library_handle);
+        dsview_bridge_dlclose(g_bridge_api.library_handle);
     }
 
     memset(&g_bridge_api, 0, sizeof(g_bridge_api));

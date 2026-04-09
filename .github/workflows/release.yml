@@ -27,8 +27,6 @@ jobs:
             runner: macos-14
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
-          - target: aarch64-pc-windows-msvc
-            runner: windows-latest
 
     steps:
       - name: Checkout repository
@@ -135,7 +133,7 @@ jobs:
             This release provides pre-built bundles for:
             - Linux x86_64 and ARM64
             - macOS x86_64 (Intel) and ARM64 (Apple Silicon)
-            - Windows x86_64 and ARM64
+            - Windows x86_64
 
             ### Bundle Contents
 

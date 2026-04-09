@@ -118,10 +118,8 @@ brew install cmake pkg-config glib libusb fftw
 Install dependencies via vcpkg:
 
 ```powershell
-vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows
+vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows pkgconf:x64-windows
 ```
-
-For ARM64 Windows, use `arm64-windows` triplet instead.
 
 ## Testing
 

@@ -27,8 +27,6 @@ jobs:
             runner: macos-14
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
-          - target: aarch64-pc-windows-msvc
-            runner: windows-latest
 
     steps:
       - name: Checkout repository
