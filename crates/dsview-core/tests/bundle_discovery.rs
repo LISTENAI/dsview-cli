@@ -163,7 +163,7 @@ fn bundle_layout_matches_packaging_contract() {
     fs::write(runtime_dir.join(runtime_library_name()), b"runtime").unwrap();
     write_valid_resources(&resource_dir);
 
-    // Verify the layout matches what package-bundle.rs creates
+    // Verify the layout matches what the bundle packaging helper creates.
     assert!(runtime_dir.is_dir(), "runtime/ directory must exist");
     assert!(resource_dir.is_dir(), "resources/ directory must exist");
     assert!(
@@ -193,4 +193,3 @@ fn runtime_library_name_helper_is_consistent() {
         assert_eq!(name1, "libdsview_runtime.so");
     }
 }
-
