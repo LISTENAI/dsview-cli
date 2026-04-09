@@ -18,6 +18,16 @@ pkg_check_modules(GLIB REQUIRED glib-2.0)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 pkg_check_modules(FFTW REQUIRED fftw3)
 
+set(LIBUSB_NORMALIZED_INCLUDE_DIRS ${LIBUSB_INCLUDE_DIRS})
+foreach(LIBUSB_INCLUDE_DIR IN LISTS LIBUSB_INCLUDE_DIRS)
+    get_filename_component(LIBUSB_INCLUDE_BASENAME "${LIBUSB_INCLUDE_DIR}" NAME)
+    if(LIBUSB_INCLUDE_BASENAME STREQUAL "libusb-1.0")
+        get_filename_component(LIBUSB_INCLUDE_PARENT "${LIBUSB_INCLUDE_DIR}" DIRECTORY)
+        list(APPEND LIBUSB_NORMALIZED_INCLUDE_DIRS "${LIBUSB_INCLUDE_PARENT}")
+    endif()
+endforeach()
+list(REMOVE_DUPLICATES LIBUSB_NORMALIZED_INCLUDE_DIRS)
+
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -61,7 +71,7 @@ target_include_directories(dsview_runtime PRIVATE
     ${LIBSIGROK_ROOT}
     ${COMMON_ROOT}
     ${GLIB_INCLUDE_DIRS}
-    ${LIBUSB_INCLUDE_DIRS}
+    ${LIBUSB_NORMALIZED_INCLUDE_DIRS}
     ${FFTW_INCLUDE_DIRS}
 )
 

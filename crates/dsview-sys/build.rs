@@ -332,8 +332,19 @@ fn bridge_dependency_include_flags(_target: &TargetInfo) -> Vec<String> {
     let mut flags = Vec::new();
     for package in ["glib-2.0", "libusb-1.0", "fftw3"] {
         for flag in pkg_config_output(package, "--cflags") {
+            let parent_flag = if package == "libusb-1.0" {
+                normalized_libusb_include_flag(&flag)
+            } else {
+                None
+            };
+
             if !flags.contains(&flag) {
                 flags.push(flag);
+            }
+            if let Some(parent_flag) = parent_flag {
+                if !flags.contains(&parent_flag) {
+                    flags.push(parent_flag);
+                }
             }
         }
     }
@@ -528,4 +539,14 @@ fn append_msvc_flag(command: &mut Command, flag: &str) {
     } else {
         command.arg(flag);
     }
+}
+
+fn normalized_libusb_include_flag(flag: &str) -> Option<String> {
+    let include_path = flag.strip_prefix("-I")?;
+    let include_path = Path::new(include_path);
+    if include_path.file_name()? != "libusb-1.0" {
+        return None;
+    }
+
+    Some(format!("-I{}", include_path.parent()?.display()))
 }
