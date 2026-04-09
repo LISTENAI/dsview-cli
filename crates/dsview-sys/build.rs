@@ -373,9 +373,9 @@ fn build_static_object_archive(
     target: &TargetInfo,
 ) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let object_path = out_dir.join(format!("{archive_stem}.o"));
-    let archive_path = out_dir.join(format!("libdsview_sys_{archive_stem}.a"));
     if target.is_windows_msvc() {
+        let object_path = out_dir.join(format!("{archive_stem}.obj"));
+        let archive_path = out_dir.join(format!("dsview_sys_{archive_stem}.lib"));
         let mut compile = Command::new("cl");
         compile
             .arg("/nologo")
@@ -422,6 +422,8 @@ fn build_static_object_archive(
         return;
     }
 
+    let object_path = out_dir.join(format!("{archive_stem}.o"));
+    let archive_path = out_dir.join(format!("libdsview_sys_{archive_stem}.a"));
     let mut compile = Command::new("cc");
     compile.arg("-c").arg(source).arg("-o").arg(&object_path);
     for include in include_flags {

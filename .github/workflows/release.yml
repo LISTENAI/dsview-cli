@@ -44,6 +44,12 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Setup MSVC developer command prompt
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Extract version from tag
         id: version
         shell: bash
