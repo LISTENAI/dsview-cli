@@ -33,7 +33,7 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 
 The workspace already contains an open-source `DSView/` project, which is a GUI application for DSLogic devices and communicates with hardware through its modified `libsigrok4DSL` stack. The CLI milestone now proves that a separate Rust command-line workflow can reuse that existing stack without modifying `DSView/`, while still giving shell users and automation a stable non-interactive capture/export path.
 
-The validated v1 journey on `DSLogic Plus` is now closed loop: discover the device, open it safely, configure capture parameters, run a bounded capture, and export both `VCD` waveform data plus a machine-readable JSON sidecar. Phase 6 additionally verified the final product surface on real hardware with clear text-mode and JSON-mode artifact reporting, explicit artifact destination control, and immediate rerun reuse. Phase 8 then backfilled the remaining durable requirement-level verification chain so both acquisition (`RUN-*`) and export (`EXP-*`) requirements now close through explicit verification artifacts ahead of milestone re-audit.
+The validated v1 journey on `DSLogic Plus` is now closed loop: discover the device, open it safely, configure capture parameters, run a bounded capture, and export both `VCD` waveform data plus a machine-readable JSON sidecar. Phase 6 additionally verified the final product surface on real hardware with clear text-mode and JSON-mode artifact reporting, explicit artifact destination control, and immediate rerun reuse. Phase 8 then backfilled the remaining durable requirement-level verification chain so both acquisition (`RUN-*`) and export (`EXP-*`) requirements now close through explicit verification artifacts. Phase 9 finished the audit-closeout reconciliation by backfilling the missing Phase 1 verification artifact, aligning the stale Phase 6 closeout records, and restoring requirement traceability so the milestone is ready for a fresh re-audit.
 
 ## Constraints
 
@@ -71,4 +71,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-08 after Phase 8 verification backfill completion and milestone re-audit preparation*
+*Last updated: 2026-04-09 after Phase 9 audit-closeout reconciliation and milestone re-audit preparation*
