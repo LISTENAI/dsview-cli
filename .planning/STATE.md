@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-04-09T01:42:14.074Z"
+stopped_at: Milestone v1.0 archived
+last_updated: "2026-04-09T03:36:32.977Z"
 last_activity: 2026-04-09
 progress:
   total_phases: 9
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Milestone v1.0 re-audit and closeout
+**Current focus:** Between milestones - define the next milestone scope
 
 ## Current Position
 
-Phase: 09
+Phase: Archived
 Plan: Complete
-Status: Completed 09-02-PLAN.md
-Last activity: 2026-04-09 - Phase 09 marked complete and closeout bookkeeping synchronized
+Status: Milestone v1.0 archived
+Last activity: 2026-04-09 - milestone archive, audit, and planning reset completed
 
 Progress: [##########] 100%
 
@@ -38,8 +38,8 @@ Progress: [##########] 100%
 
 - Total phases completed: 9 / 9
 - Total plans completed: 24 / 24
-- Latest formal action: `gsd-tools phase complete 09` marked the final planned phase complete on 2026-04-09
-- Remaining milestone-control action: rerun `/gsd:audit-milestone`
+- Latest formal action: `gsd-tools milestone complete "v1.0" --name "MVP"` archived the shipped milestone on 2026-04-09
+- Remaining milestone-control action: none
 
 ## Accumulated Context
 
@@ -69,21 +69,21 @@ Recent decisions affecting current work:
 - Phase 09 plan 02: use `.planning/phases/06-cli-productization/06-VERIFICATION.md` and the passed body of `06-VALIDATION.md` as the final closeout truth for `CLI-01`, `CLI-02`, and `CLI-03`.
 - Phase 09 plan 02: preserve the distinction between 06-03 automated completion and the later 2026-04-08 manual shell-workflow UAT closeout instead of rewriting the historical trail.
 - Phase 09 plan 02: limit roadmap cleanup to the audit-listed Phase 8 checklist and execution-order drift, then hand off to a fresh `/gsd:audit-milestone` rerun.
+- Milestone closeout: preserve the fresh rerun result in `.planning/v1.0-MILESTONE-AUDIT.md`, archive the shipped scope in `.planning/milestones/`, and reset root planning files for the next milestone.
 
 ### Pending Todos
 
-- Re-run `/gsd:audit-milestone` after Phase 9 closeout reconciliation
-- Archive the milestone and prepare the next milestone requirements/roadmap
+- Define the next milestone scope from the candidate decode, support, export, and preset ideas.
+- Decide whether to backfill additional `VALIDATION.md` artifacts for workflow-completeness debt only.
 
 ### Blockers/Concerns
 
-- Phase 06 acceptance is now green, and milestone closeout bookkeeping has been reconciled for re-audit.
-- The source-built runtime path still depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
-- Phase 9 closeout artifacts are now reconciled; the remaining milestone step is a fresh `/gsd:audit-milestone` rerun.
-- Milestone archival should wait until the re-audit rerun confirms the reconciled repository state.
+- The shipped source-built runtime path still depends on local native prerequisites (`cmake`, `pkg-config`, `glib-2.0`, `libusb-1.0`, `fftw3`, `zlib`) remaining available.
+- Hardware confidence for Phase 3 configuration behavior still relies partly on automated supplement evidence rather than direct config-only UAT.
+- Validation/Nyquist coverage remains partial outside Phase 05 and may be normalized later if archival completeness matters.
 
 ## Session Continuity
 
-Last session: 2026-04-08T23:59:00Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-04-09T03:36:32Z
+Stopped at: Milestone v1.0 archived
 Resume file: None
