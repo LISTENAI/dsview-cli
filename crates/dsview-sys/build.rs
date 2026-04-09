@@ -30,10 +30,6 @@ impl TargetInfo {
         matches!(self.os.as_str(), "linux" | "android")
     }
 
-    fn needs_m_link(&self) -> bool {
-        !matches!(self.os.as_str(), "windows")
-    }
-
     fn is_windows_msvc(&self) -> bool {
         self.os == "windows" && self.env == "msvc"
     }
