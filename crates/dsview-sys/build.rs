@@ -2,7 +2,45 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Target descriptor for platform-aware build decisions.
+struct TargetInfo {
+    os: String,
+    arch: String,
+    env: String,
+}
+
+impl TargetInfo {
+    fn from_cargo_env() -> Self {
+        Self {
+            os: env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS is set by Cargo"),
+            arch: env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH is set by Cargo"),
+            env: env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default(),
+        }
+    }
+
+    fn runtime_library_name(&self) -> String {
+        match self.os.as_str() {
+            "windows" => "dsview_runtime.dll".to_string(),
+            "macos" => "libdsview_runtime.dylib".to_string(),
+            _ => "libdsview_runtime.so".to_string(),
+        }
+    }
+
+    fn needs_dl_link(&self) -> bool {
+        matches!(self.os.as_str(), "linux" | "android")
+    }
+
+    fn needs_m_link(&self) -> bool {
+        !matches!(self.os.as_str(), "windows")
+    }
+
+    fn is_windows_msvc(&self) -> bool {
+        self.os == "windows" && self.env == "msvc"
+    }
+}
+
 fn main() {
+    let target = TargetInfo::from_cargo_env();
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"));
     let repo_root = manifest_dir
@@ -80,7 +118,7 @@ fn main() {
         libsigrok_root.join("libsigrok.h").display()
     );
 
-    let bridge_include_flags = glib_include_flags();
+    let bridge_include_flags = glib_include_flags(&target);
     build_static_object_archive(
         &runtime_bridge,
         "bridge_runtime",
@@ -92,12 +130,15 @@ fn main() {
             format!("-I{}", native_root.display()),
         ],
         &bridge_include_flags,
+        &target,
     );
-    emit_glib_link_flags();
-    println!("cargo:rustc-link-lib=dl");
+    emit_glib_link_flags(&target);
+    if target.needs_dl_link() {
+        println!("cargo:rustc-link-lib=dl");
+    }
     println!("cargo:warning=Built dsview-sys runtime bridge shim for dynamic ds_* loading.");
 
-    if should_build_smoke_runtime() {
+    if should_build_smoke_runtime(&target) {
         build_static_object_archive(
             &smoke_shim,
             "smoke_version",
@@ -108,6 +149,7 @@ fn main() {
                 format!("-I{}", manifest_dir.display()),
             ],
             &[],
+            &target,
         );
         println!("cargo:rustc-cfg=dsview_runtime_smoke_available");
         println!(
@@ -119,7 +161,7 @@ fn main() {
         );
     }
 
-    match build_source_runtime(&dsview_repo_root, &native_root) {
+    match build_source_runtime(&dsview_repo_root, &native_root, &target) {
         Ok(library_path) => {
             println!("cargo:rustc-cfg=dsview_source_runtime_available");
             println!(
@@ -158,14 +200,17 @@ fn missing_dsview_message(repo_root: &Path) -> String {
     )
 }
 
-fn should_build_smoke_runtime() -> bool {
+fn should_build_smoke_runtime(target: &TargetInfo) -> bool {
+    if target.is_windows_msvc() {
+        return false;
+    }
     header_exists("/usr/include/glib-2.0/glib.h")
         && header_exists("/usr/lib/x86_64-linux-gnu/glib-2.0/include/glibconfig.h")
         && command_available("cc")
         && command_available("ar")
 }
 
-fn build_source_runtime(repo_root: &Path, native_root: &Path) -> Result<PathBuf, String> {
+fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInfo) -> Result<PathBuf, String> {
     if !command_available("cmake") {
         return Err("cmake is not available".to_string());
     }
@@ -206,11 +251,13 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path) -> Result<PathBuf,
         return Err("cmake build failed for source-backed runtime".to_string());
     }
 
-    let library_path = build_dir.join("libdsview_runtime.so");
+    let library_path = build_dir.join(target.runtime_library_name());
     if !library_path.exists() {
         return Err(format!(
-            "expected source runtime artifact at {}",
-            library_path.display()
+            "expected source runtime artifact at {} (target: {}-{})",
+            library_path.display(),
+            target.os,
+            target.arch
         ));
     }
 
@@ -234,11 +281,17 @@ fn pkg_config_output(package: &str, flag: &str) -> Vec<String> {
         .collect()
 }
 
-fn glib_include_flags() -> Vec<String> {
+fn glib_include_flags(target: &TargetInfo) -> Vec<String> {
+    if target.is_windows_msvc() {
+        return vec![];
+    }
     pkg_config_output("glib-2.0", "--cflags")
 }
 
-fn emit_glib_link_flags() {
+fn emit_glib_link_flags(target: &TargetInfo) {
+    if target.is_windows_msvc() {
+        return;
+    }
     for flag in pkg_config_output("glib-2.0", "--libs") {
         if let Some(path) = flag.strip_prefix("-L") {
             println!("cargo:rustc-link-search=native={path}");
@@ -257,12 +310,27 @@ fn build_static_object_archive(
     archive_stem: &str,
     include_flags: &[String],
     extra_flags: &[String],
+    target: &TargetInfo,
 ) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let object_path = out_dir.join(format!("{archive_stem}.o"));
     let archive_path = out_dir.join(format!("libdsview_sys_{archive_stem}.a"));
 
-    let mut compile = Command::new("cc");
+    let compiler = if target.is_windows_msvc() {
+        "cl"
+    } else {
+        "cc"
+    };
+
+    if target.is_windows_msvc() {
+        panic!(
+            "MSVC compilation for dsview-sys shims is not yet implemented. \
+             Target: {}-{}-{}",
+            target.os, target.arch, target.env
+        );
+    }
+
+    let mut compile = Command::new(compiler);
     compile.arg("-c").arg(source).arg("-o").arg(&object_path);
     for include in include_flags {
         compile.arg(include);
@@ -273,7 +341,7 @@ fn build_static_object_archive(
 
     let status = compile
         .status()
-        .expect("failed to invoke cc for dsview-sys shim");
+        .expect("failed to invoke compiler for dsview-sys shim");
     if !status.success() {
         panic!(
             "failed to compile dsview-sys shim source {}",

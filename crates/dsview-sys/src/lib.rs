@@ -11,6 +11,20 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+/// Returns the platform-specific runtime library filename.
+///
+/// This is the shared naming contract between build.rs, packaging helpers,
+/// and runtime discovery logic.
+pub fn runtime_library_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "dsview_runtime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libdsview_runtime.dylib"
+    } else {
+        "libdsview_runtime.so"
+    }
+}
+
 #[cfg(dsview_runtime_smoke_available)]
 unsafe extern "C" {
     /// Public frontend symbol exported by `DSView/libsigrok4DSL`.
