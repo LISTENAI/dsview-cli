@@ -114,7 +114,7 @@ fn main() {
         libsigrok_root.join("libsigrok.h").display()
     );
 
-    let bridge_include_flags = glib_include_flags(&target);
+    let bridge_include_flags = bridge_dependency_include_flags(&target);
     build_static_object_archive(
         &runtime_bridge,
         "bridge_runtime",
@@ -277,11 +277,20 @@ fn pkg_config_output(package: &str, flag: &str) -> Vec<String> {
         .collect()
 }
 
-fn glib_include_flags(target: &TargetInfo) -> Vec<String> {
+fn bridge_dependency_include_flags(target: &TargetInfo) -> Vec<String> {
     if target.is_windows_msvc() {
         return vec![];
     }
-    pkg_config_output("glib-2.0", "--cflags")
+
+    let mut flags = Vec::new();
+    for package in ["glib-2.0", "libusb-1.0", "fftw3", "zlib"] {
+        for flag in pkg_config_output(package, "--cflags") {
+            if !flags.contains(&flag) {
+                flags.push(flag);
+            }
+        }
+    }
+    flags
 }
 
 fn emit_glib_link_flags(target: &TargetInfo) {

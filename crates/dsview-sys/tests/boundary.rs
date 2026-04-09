@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dsview_sys::{
-    source_runtime_library_path, upstream_header_path, ExportErrorCode, RuntimeBridge,
+    runtime_library_name, source_runtime_library_path, upstream_header_path, ExportErrorCode, RuntimeBridge,
     RuntimeError, VcdExportRequest,
 };
 
@@ -113,7 +113,7 @@ fn upstream_header_exists_for_boundary_tests() {
 fn source_runtime_path_shape_matches_cfg_state() {
     if let Some(path) = source_runtime_library_path() {
         assert!(Path::new(path).is_absolute());
-        assert!(path.to_string_lossy().ends_with("libdsview_runtime.so"));
+        assert!(path.to_string_lossy().ends_with(runtime_library_name()));
     }
 }
 
