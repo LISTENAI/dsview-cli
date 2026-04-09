@@ -8,7 +8,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.cache/vcpkg/archives
 
 jobs:
   build-test-package:
@@ -26,8 +25,6 @@ jobs:
             runner: macos-15-intel
           - target: aarch64-apple-darwin
             runner: macos-14
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
 
     steps:
       - name: Checkout repository
@@ -40,25 +37,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Restore vcpkg binary cache
-        if: matrix.target == 'x86_64-pc-windows-msvc'
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: ${{ runner.os }}-vcpkg-${{ matrix.target }}-${{ hashFiles('.github/actions/setup-native-prereqs/action.yml', 'crates/dsview-sys/build.rs', 'crates/dsview-sys/native/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-vcpkg-${{ matrix.target }}-
-
       - name: Setup native prerequisites
         uses: ./.github/actions/setup-native-prereqs
         with:
           target: ${{ matrix.target }}
-
-      - name: Setup MSVC developer command prompt
-        if: matrix.target == 'x86_64-pc-windows-msvc'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
 
       - name: Build workspace
         run: cargo build --release --target ${{ matrix.target }}

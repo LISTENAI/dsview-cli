@@ -54,13 +54,15 @@ runs:
         $Triplet = "x64-windows"
         $PkgConfigPath = "$VcpkgRoot/installed/$Triplet/lib/pkgconfig;$VcpkgRoot/installed/$Triplet/share/pkgconfig"
         $PkgConfigBin = "$VcpkgRoot/installed/$Triplet/tools/pkgconf"
+        $RuntimeBin = "$VcpkgRoot/installed/$Triplet/bin"
+        $DebugRuntimeBin = "$VcpkgRoot/installed/$Triplet/debug/bin"
 
         "DSVIEW_VCPKG_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "DSVIEW_VCPKG_TRIPLET=$Triplet" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "CMAKE_TOOLCHAIN_FILE=$VcpkgRoot/scripts/buildsystems/vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "PKG_CONFIG_PATH=$PkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "PKG_CONFIG_LIBDIR=$PkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-        "PATH=$PkgConfigBin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "PATH=$RuntimeBin;$DebugRuntimeBin;$PkgConfigBin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
     - name: Install Windows ARM64 dependencies
       if: inputs.target == 'aarch64-pc-windows-msvc'
