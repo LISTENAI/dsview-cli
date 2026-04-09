@@ -4,7 +4,7 @@
 > Decisions are captured in CONTEXT.md — this log preserves the alternatives considered.
 
 **Date:** 2026-04-09T00:00:00Z
-**Phase:** 01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64
+**Phase:** 01-readme-ci-release-workflows
 **Areas discussed:** Support posture, README structure, CI coverage, Release workflow
 
 ---

@@ -60,7 +60,7 @@ Define Phase 1 as the next-milestone portability, packaging, documentation, and 
 - `.planning/REQUIREMENTS.md` — Records the between-milestones candidate scope and standing constraints that still govern automation, native boundaries, and scriptable CLI behavior.
 
 ### Phase-Specific Research
-- `.planning/phases/01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64/01-RESEARCH.md` — Documents the current Linux-centric build reality, current CLI/documentation-safe examples, and the portability blockers this phase must address.
+- `.planning/phases/01-readme-ci-release-workflows/01-RESEARCH.md` — Documents the current Linux-centric build reality, current CLI/documentation-safe examples, and the portability blockers this phase must address.
 
 </canonical_refs>
 
@@ -104,5 +104,5 @@ None — discussion stayed within phase scope.
 
 ---
 
-*Phase: 01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64*
+*Phase: 01-readme-ci-release-workflows*
 *Context gathered: 2026-04-09*

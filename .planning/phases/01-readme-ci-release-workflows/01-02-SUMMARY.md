@@ -7,8 +7,8 @@ dependency_graph:
   requires:
     - target-aware runtime naming helper (dsview_sys::runtime_library_name)
     - portable CMakeLists.txt for Linux/macOS/Windows
-    - bundle packaging helper (tools/package-bundle.rs)
-    - bundle validation helper (tools/validate-bundle.rs)
+    - bundle packaging helper (tools/package-bundle.py)
+    - bundle validation helper (tools/validate-bundle.py)
   provides:
     - bundled runtime/resource discovery as default CLI behavior
     - removed --library and --use-source-runtime flags
@@ -132,7 +132,7 @@ None - all plan requirements satisfied.
 
 Plan 01-03 will consume these outputs to:
 - Document the bundled runtime/resource discovery contract in README.md
-- Create CI workflows that use `tools/package-bundle.rs` and `tools/validate-bundle.rs` for all six targets
+- Create CI workflows that use `tools/package-bundle.py` and `tools/validate-bundle.py` for all six targets
 - Create release workflows that publish validated bundles with checksums
 - Ensure README examples reflect the new CLI surface (no runtime flags, `--resource-dir` override only)
 

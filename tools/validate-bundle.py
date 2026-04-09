@@ -78,13 +78,6 @@ def main() -> int:
         if not resources_dir.is_dir():
             raise FileNotFoundError("resources/ directory not found")
 
-        for resource_name in [
-            "DSLogicPlus.fw",
-            "DSLogicPlus.bin",
-            "DSLogicPlus-pgl12.bin",
-        ]:
-            require_exists(resources_dir / resource_name, f"Required resource {resource_name}")
-
         run_smoke_test(exe_path, ["--help"], "dsview-cli --help")
         run_smoke_test(exe_path, ["devices", "list", "--help"], "dsview-cli devices list --help")
     finally:

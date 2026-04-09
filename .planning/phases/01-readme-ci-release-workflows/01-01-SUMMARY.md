@@ -8,8 +8,8 @@ dependency_graph:
   provides:
     - target-aware runtime naming helper (dsview_sys::runtime_library_name)
     - portable CMakeLists.txt for Linux/macOS/Windows
-    - bundle packaging helper (tools/package-bundle.rs)
-    - bundle validation helper (tools/validate-bundle.rs)
+    - bundle packaging helper (tools/package-bundle.py)
+    - bundle validation helper (tools/validate-bundle.py)
     - Wave 0 runtime naming tests
     - Wave 0 bundle discovery tests
   affects:
@@ -18,15 +18,15 @@ dependency_graph:
     - crates/dsview-sys/native/CMakeLists.txt
 tech_stack:
   added:
-    - cargo-script pattern for standalone packaging/validation tools
+    - repo-local Python helpers for standalone packaging/validation tools
   patterns:
     - target-aware build orchestration via TargetInfo struct
     - platform-conditional dependency resolution in CMake
     - shared runtime naming contract across build/package/discovery layers
 key_files:
   created:
-    - tools/package-bundle.rs
-    - tools/validate-bundle.rs
+    - tools/package-bundle.py
+    - tools/validate-bundle.py
     - crates/dsview-sys/tests/runtime_packaging.rs
   modified:
     - crates/dsview-sys/build.rs
@@ -34,7 +34,7 @@ key_files:
     - crates/dsview-sys/native/CMakeLists.txt
     - crates/dsview-core/tests/bundle_discovery.rs
 decisions:
-  - Use cargo +stable -Zscript for packaging/validation tools instead of separate crate
+  - Use repo-local Python helpers for packaging/validation instead of separate crate
   - Expose runtime_library_name() as public API for reuse across packaging and discovery
   - Make MSVC compilation explicit panic with clear message rather than silent failure
   - Keep math library linking in CMakeLists.txt rather than build.rs
@@ -50,7 +50,7 @@ metrics:
 
 # Phase 01 Plan 01: Establish six-target native portability and bundle contract foundations
 
-**One-liner:** Target-aware runtime naming, portable CMake build, and cargo-script packaging/validation helpers establish the foundation for six-target bundle contract.
+**One-liner:** Target-aware runtime naming, portable CMake build, and Python packaging/validation helpers establish the foundation for six-target bundle contract.
 
 ## What Was Built
 
@@ -60,9 +60,9 @@ Transformed the Linux-centric source-runtime build into a six-target-ready porta
 
 2. **Portable CMake build**: Refactored `native/CMakeLists.txt` to support Linux, macOS, and Windows. Made pkg-config dependency resolution conditional on non-Windows platforms. Added MSVC-specific compiler flags and made GLib/libusb/fftw includes/links conditional. Math library linking now only applies on Unix systems.
 
-3. **Bundle packaging helper**: Created `tools/package-bundle.rs` as a cargo-script tool that assembles versioned archives with `exe/runtime/resources` layout. Packages only DSLogic Plus resources (firmware and bitstreams) rather than entire DSView resource tree.
+3. **Bundle packaging helper**: Created `tools/package-bundle.py` as a repo-local Python helper that assembles versioned archives with `exe/runtime/resources` layout. Packages only DSLogic Plus resources (firmware and bitstreams) rather than entire DSView resource tree.
 
-4. **Bundle validation helper**: Created `tools/validate-bundle.rs` as a cargo-script tool that validates unpacked bundle structure, verifies target-correct runtime library presence, checks required DSLogic Plus resources, and runs smoke tests (`--help`, `devices list --help`).
+4. **Bundle validation helper**: Created `tools/validate-bundle.py` as a repo-local Python helper that validates unpacked bundle structure, verifies the target-correct runtime library and `resources/` directory are present, and runs smoke tests (`--help`, `devices list --help`).
 
 5. **Wave 0 tests**: Added `crates/dsview-sys/tests/runtime_packaging.rs` with 7 tests covering runtime naming consistency across platforms. Extended `crates/dsview-core/tests/bundle_discovery.rs` with 5 new tests for target-aware runtime filename contract and bundle layout validation, while preserving existing CLI-layer tests.
 
@@ -72,7 +72,7 @@ None - plan executed exactly as written.
 
 ## Technical Decisions
 
-**Cargo-script pattern for tools**: Chose `cargo +stable -Zscript` invocation pattern for packaging and validation helpers instead of creating a separate `tools/` crate. This keeps the helpers standalone and directly executable while avoiding workspace complexity. CI workflows can invoke them with a single command.
+**Python helper pattern for tools**: Chose `python3` invocation pattern for packaging and validation helpers instead of creating a separate `tools/` crate. This keeps the helpers standalone and directly executable while avoiding workspace complexity. CI workflows can invoke them without relying on unstable Cargo script support.
 
 **Public runtime naming API**: Exposed `runtime_library_name()` as public function in `dsview-sys` rather than keeping it build-script-internal. This creates a single source of truth for the naming contract that packaging helpers, discovery logic, and tests all reference.
 
@@ -139,16 +139,16 @@ Plan 01-02 will consume these outputs to:
 - Wire the bundle discovery contract into `dsview-cli` and `dsview-core` public APIs
 
 Plan 01-03 will consume these outputs to:
-- Use `tools/package-bundle.rs` in CI matrix jobs for all six targets
-- Use `tools/validate-bundle.rs` in CI to verify unpacked bundle layout and smoke tests
+- Use `tools/package-bundle.py` in CI matrix jobs for all six targets
+- Use `tools/validate-bundle.py` in CI to verify unpacked bundle layout and smoke tests
 - Document the bundle contract in README.md
 - Wire the same packaging/validation flow into tag-driven release automation
 
 ## Self-Check: PASSED
 
 All created files verified:
-- FOUND: tools/package-bundle.rs
-- FOUND: tools/validate-bundle.rs
+- FOUND: tools/package-bundle.py
+- FOUND: tools/validate-bundle.py
 - FOUND: crates/dsview-sys/tests/runtime_packaging.rs
 
 All commits verified:

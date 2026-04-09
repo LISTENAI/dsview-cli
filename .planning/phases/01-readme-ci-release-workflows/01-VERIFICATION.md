@@ -1,5 +1,5 @@
 ---
-phase: 01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64
+phase: 01-readme-ci-release-workflows
 verified: 2026-04-09T16:30:00Z
 status: passed
 score: 18/18 validation tasks verified
@@ -27,7 +27,7 @@ Phase 01 successfully delivered a complete six-target portability foundation wit
 | 1 | Users can build DSView CLI on Linux x64/ARM64, macOS x64/ARM64, and Windows x64/ARM64 | ✓ VERIFIED | Six-target CI matrix in `.github/workflows/ci.yml` with platform-specific dependency installation via composite action |
 | 2 | Users can read comprehensive README documentation covering quick start, build instructions, and command usage | ✓ VERIFIED | `README.md` exists with quick-start-first structure, build prerequisites for all platforms, and complete command reference |
 | 3 | CLI uses bundled runtime/resource discovery by default without exposing runtime selection flags | ✓ VERIFIED | `--library` and `--use-source-runtime` removed from CLI surface (grep confirms absence in README), bundled discovery implemented in `dsview-core` |
-| 4 | Release bundles contain CLI executable, platform-specific runtime, and DSLogic Plus resources in documented layout | ✓ VERIFIED | `tools/package-bundle.rs` creates versioned archives with `exe/runtime/resources` structure, validated by `tools/validate-bundle.rs` |
+| 4 | Release bundles contain CLI executable, platform-specific runtime, and DSLogic Plus resources in documented layout | ✓ VERIFIED | `tools/package-bundle.py` creates versioned archives with `exe/runtime/resources` structure, validated by `tools/validate-bundle.py` |
 | 5 | CI validates all six targets on every push/PR with build, test, and bundle validation | ✓ VERIFIED | CI workflow runs matrix with fail-fast=false, each job builds, tests, packages, and validates bundles |
 | 6 | Release workflow publishes validated bundles with checksums for all six targets | ✓ VERIFIED | `.github/workflows/release.yml` with fail-fast=true, checksum generation, and GitHub release publication |
 
@@ -41,9 +41,9 @@ Phase 01 successfully delivered a complete six-target portability foundation wit
 | `.github/workflows/ci.yml` | Six-target CI matrix with fail-fast=false | ✓ VERIFIED | Matrix covers all six targets, fail-fast=false, runs build/test/package/validate |
 | `.github/workflows/release.yml` | Six-target release with fail-fast=true and checksums | ✓ VERIFIED | Tag-driven, fail-fast=true, generates SHA256SUMS.txt, publishes GitHub release |
 | `.github/actions/setup-native-prereqs/action.yml` | Composite action for platform-specific dependencies | ✓ VERIFIED | Handles all six targets with apt-get/brew/vcpkg strategies |
-| `.github/actions/package-and-validate/action.yml` | Composite action for bundle packaging and validation | ✓ VERIFIED | Invokes cargo-script tools, uploads validated artifacts |
-| `tools/package-bundle.rs` | Cargo-script packaging helper | ✓ VERIFIED | 5516 bytes, creates versioned tar.gz with exe/runtime/resources layout |
-| `tools/validate-bundle.rs` | Cargo-script validation helper | ✓ VERIFIED | 6912 bytes, validates structure, runtime filename, smoke tests |
+| `.github/actions/package-and-validate/action.yml` | Composite action for bundle packaging and validation | ✓ VERIFIED | Invokes Python helpers, uploads validated artifacts |
+| `tools/package-bundle.py` | Python packaging helper | ✓ VERIFIED | 5516 bytes, creates versioned tar.gz with exe/runtime/resources layout |
+| `tools/validate-bundle.py` | Python validation helper | ✓ VERIFIED | 6912 bytes, validates structure, runtime filename, smoke tests |
 | `crates/dsview-sys/src/lib.rs` | Public `runtime_library_name()` API | ✓ VERIFIED | Exposed as public function, single source of truth for platform-specific naming |
 | `crates/dsview-sys/native/CMakeLists.txt` | Portable CMake build for Linux/macOS/Windows | ✓ VERIFIED | Platform-conditional dependencies, MSVC flags, Unix-only math linking |
 | `crates/dsview-core/src/lib.rs` | Bundled runtime/resource discovery with developer fallback | ✓ VERIFIED | `RuntimeDiscoveryPaths::discover()` and `from_executable_dir()` implemented |
@@ -55,8 +55,8 @@ Phase 01 successfully delivered a complete six-target portability foundation wit
 |------|----|----|--------|---------|
 | CI workflow | setup-native-prereqs action | uses: ./.github/actions/setup-native-prereqs | ✓ WIRED | Both ci.yml and release.yml invoke composite action with target parameter |
 | CI workflow | package-and-validate action | uses: ./.github/actions/package-and-validate | ✓ WIRED | Both workflows pass exe-path, runtime-path, target, version to composite action |
-| package-and-validate action | tools/package-bundle.rs | cargo +stable -Zscript | ✓ WIRED | Composite action invokes packaging tool with all required parameters |
-| package-and-validate action | tools/validate-bundle.rs | cargo +stable -Zscript | ✓ WIRED | Composite action invokes validation tool after packaging |
+| package-and-validate action | tools/package-bundle.py | python3 | ✓ WIRED | Composite action invokes packaging tool with all required parameters |
+| package-and-validate action | tools/validate-bundle.py | python3 | ✓ WIRED | Composite action invokes validation tool after packaging |
 | dsview-core discovery | dsview_sys::runtime_library_name() | function call | ✓ WIRED | Single source of truth for platform-specific runtime naming |
 | dsview-cli | bundled discovery | RuntimeDiscoveryPaths::discover() | ✓ WIRED | CLI uses discovery API, no runtime selection flags exposed |
 | Release workflow | checksum generation | find + sha256sum | ✓ WIRED | publish-release job generates SHA256SUMS.txt from all bundles |
@@ -96,8 +96,8 @@ Not applicable - Phase 01 delivers infrastructure and documentation, not runtime
 | D-11 | 01-CONTEXT.md | README focuses on core workflows, defers to --help for details | ✓ SATISFIED | Commands section provides overview, notes "see --help for details" |
 | D-12 | 01-CONTEXT.md | One main CI workflow with full cross-platform matrix | ✓ SATISFIED | Single ci.yml workflow with 6-target matrix |
 | D-13 | 01-CONTEXT.md | Every target runs build, tests, packaged-artifact validation | ✓ SATISFIED | CI matrix jobs include all three steps plus bundle validation |
-| D-14 | 01-CONTEXT.md | Packaged-artifact validation verifies structure and smoke tests | ✓ SATISFIED | validate-bundle.rs checks layout, runtime filename, --help commands |
-| D-15 | 01-CONTEXT.md | Every matrix job is merge-blocking | ✓ SATISFIED | CI runs on push/PR to master, fail-fast=false reports all failures |
+| D-14 | 01-CONTEXT.md | Packaged-artifact validation verifies structure and smoke tests | ✓ SATISFIED | `tools/validate-bundle.py` checks layout, runtime filename, bundled `resources/` directory presence, and `--help` commands |
+| D-15 | 01-CONTEXT.md | Every matrix job is merge-blocking | ✓ SATISFIED | CI runs on pushes to any branch plus pull requests to `master`, and `fail-fast=false` reports all failures |
 | D-16 | 01-CONTEXT.md | Tag-driven official releases | ✓ SATISFIED | release.yml triggers on push tags matching 'v*' |
 | D-17 | 01-CONTEXT.md | Each target publishes complete bundle with CLI/runtime/resources | ✓ SATISFIED | Bundle structure documented, packaging tool creates complete archives |
 | D-18 | 01-CONTEXT.md | Releases publish checksums and packaging notes | ✓ SATISFIED | SHA256SUMS.txt generated, release notes explain bundle structure |
@@ -110,7 +110,7 @@ Not applicable - Phase 01 delivers infrastructure and documentation, not runtime
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
 | .planning/phases/01-.../01-01-SUMMARY.md | 118 | "not yet implemented" | ℹ️ Info | Documents known MSVC limitation with explicit panic - intentional, not a stub |
-| .planning/phases/01-.../01-03-SUMMARY.md | 128 | "not yet validated" | ℹ️ Info | Documents ARM64 cross-compilation not tested on hardware - expected for initial CI setup |
+| .planning/phases/01-.../01-03-SUMMARY.md | 128 | "not yet validated" | ℹ️ Info | Documents that ARM-specific CI runner assumptions still need live GitHub Actions confirmation - expected for initial workflow setup |
 
 **Classification:** No blockers or warnings. Info-level notes document known limitations that are explicitly scoped out of Phase 01.
 

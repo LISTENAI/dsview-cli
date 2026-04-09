@@ -29,11 +29,9 @@ runs:
           build-essential \
           cmake \
           pkg-config \
-          gcc-aarch64-linux-gnu \
-          g++-aarch64-linux-gnu \
-          libglib2.0-dev:arm64 \
-          libusb-1.0-0-dev:arm64 \
-          libfftw3-dev:arm64
+          libglib2.0-dev \
+          libusb-1.0-0-dev \
+          libfftw3-dev
 
     - name: Install macOS dependencies
       if: startsWith(inputs.target, 'x86_64-apple-darwin') || startsWith(inputs.target, 'aarch64-apple-darwin')
