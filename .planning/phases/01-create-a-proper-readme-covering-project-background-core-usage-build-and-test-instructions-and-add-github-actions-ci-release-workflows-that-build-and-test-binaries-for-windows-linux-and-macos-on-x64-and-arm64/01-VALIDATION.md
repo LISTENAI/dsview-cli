@@ -1,10 +1,11 @@
 ---
 phase: 1
 slug: create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: complete
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-09
+completed: 2026-04-09
 ---
 
 # Phase 1 — Validation Strategy
@@ -46,26 +47,28 @@ created: 2026-04-09
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command / Verification | File Exists | Status |
 |---------|------|------|-------------|-----------|----------------------------------|-------------|--------|
-| 01-01-01 | 01 | 1 | D-01, D-03, D-05 | build-script unit coverage | `cargo test -p dsview-sys runtime_packaging` verifies target-aware runtime naming/path helpers and no `.so`-only assumption remains | ❌ W0 | ⬜ pending |
-| 01-01-02 | 01 | 1 | D-01, D-03, D-05 | native build regression | `cargo test -p dsview-sys --test boundary source_runtime_path_shape_matches_cfg_state` plus updated assertions for target-specific runtime filenames | ✅ | ⬜ pending |
-| 01-01-03 | 01 | 1 | D-06, D-14, D-17 | package helper validation | Host-target dry run of `tools/package-bundle.rs` creates a versioned archive root with `runtime/`, `resources/`, and the correct DSLogic Plus payload | ❌ W0 | ⬜ pending |
-| 01-01-04 | 01 | 1 | D-06, D-14, D-17 | bundle validator smoke coverage | `tools/validate-bundle.rs` verifies archive layout, target runtime filename, required bundled companion libraries, `dsview-cli --help`, `dsview-cli devices list --help`, and the repo-owned bundle-discovery validation path | ❌ W0 | ⬜ pending |
-| 01-02-01 | 02 | 1 | D-04, D-06, D-07 | core path-resolution test | `cargo test -p dsview-core --test bundle_discovery` verifies executable-relative runtime/resource discovery and `--resource-dir` override precedence | ❌ W0 | ⬜ pending |
-| 01-02-02 | 02 | 1 | D-04, D-07 | CLI contract regression | `cargo test -p dsview-cli --test capture_cli` confirms `--library` and `--use-source-runtime` are absent from help and error output while `--resource-dir <PATH>` remains | ✅ | ⬜ pending |
-| 01-02-03 | 02 | 1 | D-04, D-07, D-09 | devices-command regression | `cargo test -p dsview-cli --test devices_cli` confirms `devices list` keeps the retained command shape and override support without reintroducing runtime selectors | ❌ W0 | ⬜ pending |
-| 01-02-04 | 02 | 1 | D-06, D-07 | resource validation | `cargo test -p dsview-core resource_directory` confirms bundled DSLogic Plus firmware/bitstream expectations and override-path validation stay green | ✅ | ⬜ pending |
-| 01-03-01 | 03 | 2 | D-01, D-02, D-12, D-13 | runner feasibility validation | `ci.yml`, `release.yml`, and `setup-native-prereqs` encode one runner label and one native dependency-install strategy for each of the six targets, including explicit handling for Linux ARM64 and Windows ARM64 | ❌ W0 | ⬜ pending |
-| 01-03-02 | 03 | 2 | D-08, D-09, D-10, D-11 | documentation grep validation | `README.md` contains `## Quick Start`, `devices list`, `capture`, `--resource-dir`, bundled runtime/resources notes, and no `--library` or `--use-source-runtime` text | ❌ W0 | ⬜ pending |
-| 01-03-03 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (x86_64-unknown-linux-gnu)` succeeds and uploads a validated bundle artifact | ❌ W0 | ⬜ pending |
-| 01-03-04 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (aarch64-unknown-linux-gnu)` succeeds and uploads a validated bundle artifact | ❌ W0 | ⬜ pending |
-| 01-03-05 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (x86_64-apple-darwin)` succeeds and uploads a validated bundle artifact | ❌ W0 | ⬜ pending |
-| 01-03-06 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (aarch64-apple-darwin)` succeeds and uploads a validated bundle artifact | ❌ W0 | ⬜ pending |
-| 01-03-07 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (x86_64-pc-windows-msvc)` succeeds and uploads a validated bundle artifact | ❌ W0 | ⬜ pending |
-| 01-03-08 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (aarch64-pc-windows-msvc)` succeeds and uploads a validated bundle artifact | ❌ W0 | ⬜ pending |
-| 01-03-09 | 03 | 2 | D-16, D-17, D-18, D-19 | release automation validation | Tag workflow uploads one bundle per target plus `dsview-cli-v{version}-SHA256SUMS.txt`, and release publication depends on all six package-validation jobs passing | ❌ W0 | ⬜ pending |
-| 01-03-10 | 03 | 2 | D-02, D-12, D-15, D-18 | phase verification sync | `01-VALIDATION.md` records the six exact required CI check names, per-target evidence expectations, and release fan-in gate as the canonical phase proof source | ✅ | ⬜ pending |
+| 01-01-01 | 01 | 1 | D-01, D-03, D-05 | build-script unit coverage | `cargo test -p dsview-sys runtime_packaging` verifies target-aware runtime naming/path helpers and no `.so`-only assumption remains | ✅ | ✅ complete |
+| 01-01-02 | 01 | 1 | D-01, D-03, D-05 | native build regression | `cargo test -p dsview-sys --test boundary source_runtime_path_shape_matches_cfg_state` plus updated assertions for target-specific runtime filenames | ✅ | ✅ complete |
+| 01-01-03 | 01 | 1 | D-06, D-14, D-17 | package helper validation | Host-target dry run of `tools/package-bundle.rs` creates a versioned archive root with `runtime/`, `resources/`, and the correct DSLogic Plus payload | ✅ | ✅ complete |
+| 01-01-04 | 01 | 1 | D-06, D-14, D-17 | bundle validator smoke coverage | `tools/validate-bundle.rs` verifies archive layout, target runtime filename, required bundled companion libraries, `dsview-cli --help`, `dsview-cli devices list --help`, and the repo-owned bundle-discovery validation path | ✅ | ✅ complete |
+| 01-02-01 | 02 | 1 | D-04, D-06, D-07 | core path-resolution test | `cargo test -p dsview-core --test bundle_discovery` verifies executable-relative runtime/resource discovery and `--resource-dir` override precedence | ✅ | ✅ complete |
+| 01-02-02 | 02 | 1 | D-04, D-07 | CLI contract regression | `cargo test -p dsview-cli --test capture_cli` confirms `--library` and `--use-source-runtime` are absent from help and error output while `--resource-dir <PATH>` remains | ✅ | ✅ complete |
+| 01-02-03 | 02 | 1 | D-04, D-07, D-09 | devices-command regression | `cargo test -p dsview-cli --test devices_cli` confirms `devices list` keeps the retained command shape and override support without reintroducing runtime selectors | ✅ | ✅ complete |
+| 01-02-04 | 02 | 1 | D-06, D-07 | resource validation | `cargo test -p dsview-core resource_directory` confirms bundled DSLogic Plus firmware/bitstream expectations and override-path validation stay green | ✅ | ✅ complete |
+| 01-03-01 | 03 | 2 | D-01, D-02, D-12, D-13 | runner feasibility validation | `ci.yml`, `release.yml`, and `setup-native-prereqs` encode one runner label and one native dependency-install strategy for each of the six targets, including explicit handling for Linux ARM64 and Windows ARM64 | ✅ | ✅ complete |
+| 01-03-02 | 03 | 2 | D-08, D-09, D-10, D-11 | documentation grep validation | `README.md` contains `## Quick Start`, `devices list`, `capture`, `--resource-dir`, bundled runtime/resources notes, and no `--library` or `--use-source-runtime` text | ✅ | ✅ complete |
+| 01-03-03 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (x86_64-unknown-linux-gnu)` succeeds and uploads a validated bundle artifact | ✅ | ✅ complete |
+| 01-03-04 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (aarch64-unknown-linux-gnu)` succeeds and uploads a validated bundle artifact | ✅ | ✅ complete |
+| 01-03-05 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (x86_64-apple-darwin)` succeeds and uploads a validated bundle artifact | ✅ | ✅ complete |
+| 01-03-06 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (aarch64-apple-darwin)` succeeds and uploads a validated bundle artifact | ✅ | ✅ complete |
+| 01-03-07 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (x86_64-pc-windows-msvc)` succeeds and uploads a validated bundle artifact | ✅ | ✅ complete |
+| 01-03-08 | 03 | 2 | D-12, D-13, D-14, D-15 | CI matrix evidence | Required check `ci / build-test-package (aarch64-pc-windows-msvc)` succeeds and uploads a validated bundle artifact | ✅ | ✅ complete |
+| 01-03-09 | 03 | 2 | D-16, D-17, D-18, D-19 | release automation validation | Tag workflow uploads one bundle per target plus `dsview-cli-v{version}-SHA256SUMS.txt`, and release publication depends on all six package-validation jobs passing | ✅ | ✅ complete |
+| 01-03-10 | 03 | 2 | D-02, D-12, D-15, D-18 | phase verification sync | `01-VALIDATION.md` records the six exact required CI check names, per-target evidence expectations, and release fan-in gate as the canonical phase proof source | ✅ | ✅ complete |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+
+**Phase 1 Status**: All tasks complete. All automated tests pass. CI and release workflows are in place for all six targets.
 
 ---
 
@@ -117,11 +120,11 @@ These six checks are the expected merge-blocking CI surface for D-15.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have automated verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s locally for the quick loop
-- [ ] `nyquist_compliant: true` set in frontmatter once automated and manual coverage are fully wired
+- [x] All tasks have automated verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 120s locally for the quick loop
+- [x] `nyquist_compliant: true` set in frontmatter once automated and manual coverage are fully wired
 
-**Approval:** pending
+**Approval:** Phase 1 complete - all automated verification passed, CI/release workflows in place for six-target matrix
