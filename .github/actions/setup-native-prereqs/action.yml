@@ -37,7 +37,13 @@ runs:
       if: startsWith(inputs.target, 'x86_64-apple-darwin') || startsWith(inputs.target, 'aarch64-apple-darwin')
       shell: bash
       run: |
-        brew install cmake pkg-config glib libusb fftw
+        for formula in cmake pkg-config glib libusb fftw; do
+          if brew list --versions "$formula" >/dev/null 2>&1; then
+            echo "$formula is already installed"
+          else
+            brew install "$formula"
+          fi
+        done
 
     - name: Install Windows x86_64 dependencies
       if: inputs.target == 'x86_64-pc-windows-msvc'
