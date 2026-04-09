@@ -1,0 +1,42 @@
+name: 'Package and Validate Bundle'
+description: 'Package DSView CLI bundle and validate its structure'
+inputs:
+  target:
+    description: 'Rust target triple'
+    required: true
+  version:
+    description: 'Version string (e.g., v0.1.0)'
+    required: true
+  exe-path:
+    description: 'Path to built executable'
+    required: true
+  runtime-path:
+    description: 'Path to built runtime library'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Package bundle
+      shell: bash
+      run: |
+        cargo +stable -Zscript tools/package-bundle.rs \
+          --exe "${{ inputs.exe-path }}" \
+          --runtime "${{ inputs.runtime-path }}" \
+          --resources DSView/DSView/res \
+          --output "dsview-cli-${{ inputs.version }}-${{ inputs.target }}.tar.gz" \
+          --version "${{ inputs.version }}" \
+          --target "${{ inputs.target }}"
+
+    - name: Validate bundle
+      shell: bash
+      run: |
+        cargo +stable -Zscript tools/validate-bundle.rs \
+          --archive "dsview-cli-${{ inputs.version }}-${{ inputs.target }}.tar.gz" \
+          --target "${{ inputs.target }}"
+
+    - name: Upload bundle artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: dsview-cli-${{ inputs.version }}-${{ inputs.target }}
+        path: dsview-cli-${{ inputs.version }}-${{ inputs.target }}.tar.gz
+        retention-days: 30

@@ -1,0 +1,56 @@
+name: 'Setup Native Prerequisites'
+description: 'Install platform-specific native dependencies for DSView CLI builds'
+inputs:
+  target:
+    description: 'Rust target triple'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Linux x86_64 dependencies
+      if: inputs.target == 'x86_64-unknown-linux-gnu'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          libglib2.0-dev \
+          libusb-1.0-0-dev \
+          libfftw3-dev
+
+    - name: Install Linux ARM64 dependencies
+      if: inputs.target == 'aarch64-unknown-linux-gnu'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          gcc-aarch64-linux-gnu \
+          g++-aarch64-linux-gnu \
+          libglib2.0-dev:arm64 \
+          libusb-1.0-0-dev:arm64 \
+          libfftw3-dev:arm64
+
+    - name: Install macOS dependencies
+      if: startsWith(inputs.target, 'x86_64-apple-darwin') || startsWith(inputs.target, 'aarch64-apple-darwin')
+      shell: bash
+      run: |
+        brew install cmake pkg-config glib libusb fftw
+
+    - name: Install Windows x86_64 dependencies
+      if: inputs.target == 'x86_64-pc-windows-msvc'
+      shell: pwsh
+      run: |
+        # vcpkg is pre-installed on GitHub-hosted Windows runners
+        vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows
+
+    - name: Install Windows ARM64 dependencies
+      if: inputs.target == 'aarch64-pc-windows-msvc'
+      shell: pwsh
+      run: |
+        # vcpkg is pre-installed on GitHub-hosted Windows runners
+        vcpkg install glib:arm64-windows libusb:arm64-windows fftw3:arm64-windows

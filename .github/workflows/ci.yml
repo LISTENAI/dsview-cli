@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-test-package:
+    name: build-test-package (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: aarch64-pc-windows-msvc
+            runner: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup native prerequisites
+        uses: ./.github/actions/setup-native-prereqs
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build workspace
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        run: cargo test --workspace --target ${{ matrix.target }}
+
+      - name: Find runtime library
+        id: find-runtime
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "dsview_runtime.dll" | head -n 1)
+          elif [[ "${{ matrix.target }}" == *"darwin"* ]] || [[ "${{ matrix.target }}" == *"macos"* ]]; then
+            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "libdsview_runtime.dylib" | head -n 1)
+          else
+            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "libdsview_runtime.so" | head -n 1)
+          fi
+          echo "runtime-lib=$RUNTIME_LIB" >> $GITHUB_OUTPUT
+
+      - name: Determine executable path
+        id: exe-path
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            echo "exe=target/${{ matrix.target }}/release/dsview-cli.exe" >> $GITHUB_OUTPUT
+          else
+            echo "exe=target/${{ matrix.target }}/release/dsview-cli" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Package and validate bundle
+        uses: ./.github/actions/package-and-validate
+        with:
+          target: ${{ matrix.target }}
+          version: v0.1.0-ci
+          exe-path: ${{ steps.exe-path.outputs.exe }}
+          runtime-path: ${{ steps.find-runtime.outputs.runtime-lib }}
