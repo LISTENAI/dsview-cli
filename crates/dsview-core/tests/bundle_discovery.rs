@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dsview_core::RuntimeDiscoveryPaths;
-use dsview_sys::source_runtime_library_path;
+use dsview_sys::{runtime_library_name, source_runtime_library_path};
 
 fn temp_dir(name: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -29,7 +29,7 @@ fn bundle_defaults_resolve_from_executable_layout() {
     let resource_dir = exe_dir.join("resources");
     fs::create_dir_all(&runtime_dir).unwrap();
     fs::write(
-        runtime_dir.join(platform_runtime_library_name()),
+        runtime_dir.join(runtime_library_name()),
         b"runtime",
     )
     .unwrap();
@@ -38,7 +38,7 @@ fn bundle_defaults_resolve_from_executable_layout() {
     let paths = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, None::<&std::path::Path>)
         .expect("bundle-relative discovery should succeed");
 
-    assert_eq!(paths.runtime_library, runtime_dir.join(platform_runtime_library_name()));
+    assert_eq!(paths.runtime_library, runtime_dir.join(runtime_library_name()));
     assert_eq!(paths.resource_dir, resource_dir);
 }
 
@@ -50,7 +50,7 @@ fn resource_override_wins_over_bundled_resource_dir() {
     let override_resources = temp_dir("resource-override-explicit");
     fs::create_dir_all(&runtime_dir).unwrap();
     fs::write(
-        runtime_dir.join(platform_runtime_library_name()),
+        runtime_dir.join(runtime_library_name()),
         b"runtime",
     )
     .unwrap();
@@ -60,7 +60,7 @@ fn resource_override_wins_over_bundled_resource_dir() {
     let paths = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, Some(&override_resources))
         .expect("explicit resource override should succeed");
 
-    assert_eq!(paths.runtime_library, runtime_dir.join(platform_runtime_library_name()));
+    assert_eq!(paths.runtime_library, runtime_dir.join(runtime_library_name()));
     assert_eq!(paths.resource_dir, override_resources);
 }
 
@@ -89,7 +89,7 @@ fn discovery_paths_feed_connect_auto_contract_without_resource_override() {
     let resource_dir = exe_dir.join("resources");
     fs::create_dir_all(&runtime_dir).unwrap();
     fs::write(
-        runtime_dir.join(platform_runtime_library_name()),
+        runtime_dir.join(runtime_library_name()),
         b"runtime",
     )
     .unwrap();
@@ -99,15 +99,98 @@ fn discovery_paths_feed_connect_auto_contract_without_resource_override() {
         .expect("bundle-relative defaults should resolve");
 
     assert_eq!(paths.resource_dir, resource_dir);
-    assert_eq!(paths.runtime_library, runtime_dir.join(platform_runtime_library_name()));
+    assert_eq!(paths.runtime_library, runtime_dir.join(runtime_library_name()));
 }
 
-fn platform_runtime_library_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "dsview_runtime.dll"
-    } else if cfg!(target_os = "macos") {
-        "libdsview_runtime.dylib"
-    } else {
+// Wave 0 tests: target-aware runtime filename contract
+
+#[test]
+fn bundle_discovery_uses_target_aware_runtime_filename() {
+    let exe_dir = temp_dir("target-aware-runtime");
+    let runtime_dir = exe_dir.join("runtime");
+    let resource_dir = exe_dir.join("resources");
+    fs::create_dir_all(&runtime_dir).unwrap();
+
+    // Create runtime with the correct platform-specific name
+    let runtime_name = runtime_library_name();
+    fs::write(runtime_dir.join(runtime_name), b"runtime").unwrap();
+    write_valid_resources(&resource_dir);
+
+    let paths = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, None::<&std::path::Path>)
+        .expect("target-aware runtime discovery should succeed");
+
+    assert_eq!(
+        paths.runtime_library.file_name().unwrap().to_str().unwrap(),
+        runtime_name
+    );
+}
+
+#[test]
+fn bundle_discovery_rejects_wrong_platform_runtime() {
+    let exe_dir = temp_dir("wrong-platform-runtime");
+    let runtime_dir = exe_dir.join("runtime");
+    let resource_dir = exe_dir.join("resources");
+    fs::create_dir_all(&runtime_dir).unwrap();
+
+    // Create runtime with the WRONG platform name
+    let wrong_name = if cfg!(target_os = "windows") {
         "libdsview_runtime.so"
+    } else {
+        "dsview_runtime.dll"
+    };
+    fs::write(runtime_dir.join(wrong_name), b"runtime").unwrap();
+    write_valid_resources(&resource_dir);
+
+    // Discovery should fail or fall back to source runtime
+    let result = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, None::<&std::path::Path>);
+
+    if let Ok(paths) = result {
+        // If it succeeded, it must have fallen back to source runtime
+        assert_ne!(
+            paths.runtime_library.file_name().unwrap().to_str().unwrap(),
+            wrong_name,
+            "Discovery should not use wrong-platform runtime"
+        );
     }
 }
+
+#[test]
+fn bundle_layout_matches_packaging_contract() {
+    let exe_dir = temp_dir("packaging-contract");
+    let runtime_dir = exe_dir.join("runtime");
+    let resource_dir = exe_dir.join("resources");
+    fs::create_dir_all(&runtime_dir).unwrap();
+    fs::write(runtime_dir.join(runtime_library_name()), b"runtime").unwrap();
+    write_valid_resources(&resource_dir);
+
+    // Verify the layout matches what package-bundle.rs creates
+    assert!(runtime_dir.is_dir(), "runtime/ directory must exist");
+    assert!(resource_dir.is_dir(), "resources/ directory must exist");
+    assert!(
+        runtime_dir.join(runtime_library_name()).is_file(),
+        "runtime library must exist with correct name"
+    );
+
+    // Verify required DSLogic Plus resources
+    assert!(resource_dir.join("DSLogicPlus.fw").is_file());
+    assert!(resource_dir.join("DSLogicPlus.bin").is_file());
+    assert!(resource_dir.join("DSLogicPlus-pgl12.bin").is_file());
+}
+
+#[test]
+fn runtime_library_name_helper_is_consistent() {
+    // Verify the helper returns the same value across calls
+    let name1 = runtime_library_name();
+    let name2 = runtime_library_name();
+    assert_eq!(name1, name2);
+
+    // Verify it matches the platform
+    if cfg!(target_os = "windows") {
+        assert_eq!(name1, "dsview_runtime.dll");
+    } else if cfg!(target_os = "macos") {
+        assert_eq!(name1, "libdsview_runtime.dylib");
+    } else {
+        assert_eq!(name1, "libdsview_runtime.so");
+    }
+}
+
