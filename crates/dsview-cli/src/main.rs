@@ -71,7 +71,11 @@ struct ListArgs {
 struct OpenArgs {
     #[command(flatten)]
     runtime: SharedRuntimeArgs,
-    #[arg(long, value_name = "HANDLE")]
+    #[arg(
+        long,
+        value_name = "HANDLE",
+        help = "Selection handle returned by `devices list`"
+    )]
     handle: u64,
 }
 
@@ -79,13 +83,30 @@ struct OpenArgs {
 struct CaptureArgs {
     #[command(flatten)]
     runtime: SharedRuntimeArgs,
-    #[arg(long, value_name = "HANDLE")]
+    #[arg(
+        long,
+        value_name = "HANDLE",
+        help = "Selection handle returned by `devices list`"
+    )]
     handle: u64,
-    #[arg(long = "sample-rate-hz", value_name = "HZ")]
+    #[arg(
+        long = "sample-rate-hz",
+        value_name = "HZ",
+        help = "Requested capture sample rate in hertz"
+    )]
     sample_rate_hz: u64,
-    #[arg(long = "sample-limit", value_name = "SAMPLES")]
+    #[arg(
+        long = "sample-limit",
+        value_name = "SAMPLES",
+        help = "Requested sample count before the finite capture stops"
+    )]
     sample_limit: u64,
-    #[arg(long = "channels", value_delimiter = ',', value_name = "IDX[,IDX...]")]
+    #[arg(
+        long = "channels",
+        value_delimiter = ',',
+        value_name = "IDX[,IDX...]",
+        help = "Comma-separated logic channel indexes to enable, for example 0,1,2,3"
+    )]
     channels: Vec<u16>,
     #[arg(
         long = "output",
@@ -99,9 +120,17 @@ struct CaptureArgs {
         help = "Optional metadata JSON path; defaults to the VCD path with a .json extension"
     )]
     metadata_output: Option<PathBuf>,
-    #[arg(long = "wait-timeout-ms", default_value_t = 10_000)]
+    #[arg(
+        long = "wait-timeout-ms",
+        default_value_t = 10_000,
+        help = "Maximum time to wait for capture completion before aborting"
+    )]
     wait_timeout_ms: u64,
-    #[arg(long = "poll-interval-ms", default_value_t = 50)]
+    #[arg(
+        long = "poll-interval-ms",
+        default_value_t = 50,
+        help = "Polling interval for checking capture progress while waiting"
+    )]
     poll_interval_ms: u64,
 }
 
