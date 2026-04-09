@@ -275,7 +275,7 @@ Use commands that avoid requiring a connected device while still exercising bund
 
 Good candidates after Phase 1 runtime/resource refactor:
 - `dsview-cli --help`
-- `dsview-cli devices --help`
+- `dsview-cli devices list --help`
 - `dsview-cli capture --help`
 - a deliberately invalid capture path that fails after parsing but before hardware access, while still using default resource discovery if the command initializes discovery early enough
 - a test-only or debug-only command is not recommended for this phase unless the repo already has such a pattern; it does not today
