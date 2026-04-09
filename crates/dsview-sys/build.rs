@@ -33,6 +33,30 @@ impl TargetInfo {
     fn is_windows_msvc(&self) -> bool {
         self.os == "windows" && self.env == "msvc"
     }
+
+    fn windows_cmake_generator_platform(&self) -> Option<&'static str> {
+        if !self.is_windows_msvc() {
+            return None;
+        }
+
+        match self.arch.as_str() {
+            "x86_64" => Some("x64"),
+            "aarch64" => Some("ARM64"),
+            _ => None,
+        }
+    }
+
+    fn windows_vcpkg_triplet(&self) -> Option<&'static str> {
+        if !self.is_windows_msvc() {
+            return None;
+        }
+
+        match self.arch.as_str() {
+            "x86_64" => Some("x64-windows"),
+            "aarch64" => Some("arm64-windows"),
+            _ => None,
+        }
+    }
 }
 
 fn main() {
@@ -53,6 +77,7 @@ fn main() {
     let runtime_bridge = manifest_dir.join("bridge_runtime.c");
     let wrapper_header = manifest_dir.join("wrapper.h");
     let native_root = manifest_dir.join("native");
+    let compat_root = manifest_dir.join("compat");
 
     println!("cargo:rerun-if-changed={}", wrapper_header.display());
     println!(
@@ -114,11 +139,12 @@ fn main() {
         libsigrok_root.join("libsigrok.h").display()
     );
 
-    let bridge_include_flags = glib_include_flags(&target);
+    let bridge_include_flags = bridge_dependency_include_flags(&target);
     build_static_object_archive(
         &runtime_bridge,
         "bridge_runtime",
         &[
+            format!("-I{}", compat_root.display()),
             format!("-I{}", dsview_root.display()),
             format!("-I{}", libsigrok_root.display()),
             format!("-I{}", common_root.display()),
@@ -139,6 +165,7 @@ fn main() {
             &smoke_shim,
             "smoke_version",
             &[
+                format!("-I{}", compat_root.display()),
                 format!("-I{}", dsview_root.display()),
                 format!("-I{}", libsigrok_root.display()),
                 format!("-I{}", common_root.display()),
@@ -210,11 +237,11 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
     if !command_available("cmake") {
         return Err("cmake is not available".to_string());
     }
-    if !command_available("pkg-config") {
+    if pkg_config_command().is_none() {
         return Err("pkg-config is not available".to_string());
     }
 
-    let required_packages = ["glib-2.0", "libusb-1.0", "fftw3", "zlib"];
+    let required_packages = ["glib-2.0", "libusb-1.0", "fftw3"];
     for package in required_packages {
         if !pkg_config_has(package) {
             return Err(format!("pkg-config could not resolve `{package}`"));
@@ -226,28 +253,54 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
     std::fs::create_dir_all(&build_dir)
         .map_err(|error| format!("failed to create source runtime build directory: {error}"))?;
 
-    let configure_status = Command::new("cmake")
+    let mut configure = Command::new("cmake");
+    configure
         .arg("-S")
         .arg(native_root)
         .arg("-B")
         .arg(&build_dir)
-        .arg(format!("-DDSVIEW_REPO_ROOT={}", repo_root.display()))
+        .arg(format!("-DDSVIEW_REPO_ROOT={}", repo_root.display()));
+
+    if let Some(platform) = target.windows_cmake_generator_platform() {
+        configure.arg("-A").arg(platform);
+    }
+    if let Some(toolchain_file) = cmake_toolchain_file() {
+        configure.arg(format!(
+            "-DCMAKE_TOOLCHAIN_FILE={}",
+            toolchain_file.display()
+        ));
+    }
+    if let Some(triplet) = windows_vcpkg_triplet(target) {
+        configure.arg(format!("-DVCPKG_TARGET_TRIPLET={triplet}"));
+    }
+
+    let configure_status = configure
         .status()
         .map_err(|error| format!("failed to launch cmake configure: {error}"))?;
     if !configure_status.success() {
         return Err("cmake configure failed for source-backed runtime".to_string());
     }
 
-    let build_status = Command::new("cmake")
-        .arg("--build")
-        .arg(&build_dir)
+    let mut build = Command::new("cmake");
+    build.arg("--build").arg(&build_dir);
+    if target.is_windows_msvc() {
+        build.arg("--config").arg(cmake_build_config());
+    }
+
+    let build_status = build
         .status()
         .map_err(|error| format!("failed to launch cmake build: {error}"))?;
     if !build_status.success() {
         return Err("cmake build failed for source-backed runtime".to_string());
     }
 
-    let library_path = build_dir.join(target.runtime_library_name());
+    let library_path = if target.is_windows_msvc() {
+        build_dir
+            .join(cmake_build_config())
+            .join(target.runtime_library_name())
+    } else {
+        build_dir.join(target.runtime_library_name())
+    };
     if !library_path.exists() {
         return Err(format!(
             "expected source runtime artifact at {} (target: {}-{})",
@@ -261,7 +314,8 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
 }
 
 fn pkg_config_output(package: &str, flag: &str) -> Vec<String> {
-    let output = Command::new("pkg-config")
+    let pkg_config = pkg_config_command().expect("pkg-config compatible command should exist");
+    let output = Command::new(pkg_config)
         .arg(flag)
         .arg(package)
         .output()
@@ -277,17 +331,30 @@ fn pkg_config_output(package: &str, flag: &str) -> Vec<String> {
         .collect()
 }
 
-fn glib_include_flags(target: &TargetInfo) -> Vec<String> {
-    if target.is_windows_msvc() {
-        return vec![];
+fn bridge_dependency_include_flags(_target: &TargetInfo) -> Vec<String> {
+    let mut flags = Vec::new();
+    for package in ["glib-2.0", "libusb-1.0", "fftw3"] {
+        for flag in pkg_config_output(package, "--cflags") {
+            let parent_flag = if package == "libusb-1.0" {
+                normalized_libusb_include_flag(&flag)
+            } else {
+                None
+            };
+
+            if !flags.contains(&flag) {
+                flags.push(flag);
+            }
+            if let Some(parent_flag) = parent_flag {
+                if !flags.contains(&parent_flag) {
+                    flags.push(parent_flag);
+                }
+            }
+        }
     }
-    pkg_config_output("glib-2.0", "--cflags")
+    flags
 }
 
-fn emit_glib_link_flags(target: &TargetInfo) {
-    if target.is_windows_msvc() {
-        return;
-    }
+fn emit_glib_link_flags(_target: &TargetInfo) {
     for flag in pkg_config_output("glib-2.0", "--libs") {
         if let Some(path) = flag.strip_prefix("-L") {
             println!("cargo:rustc-link-search=native={path}");
@@ -309,24 +376,58 @@ fn build_static_object_archive(
     target: &TargetInfo,
 ) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let object_path = out_dir.join(format!("{archive_stem}.o"));
-    let archive_path = out_dir.join(format!("libdsview_sys_{archive_stem}.a"));
-
-    let compiler = if target.is_windows_msvc() {
-        "cl"
-    } else {
-        "cc"
-    };
-
     if target.is_windows_msvc() {
-        panic!(
-            "MSVC compilation for dsview-sys shims is not yet implemented. \
-             Target: {}-{}-{}",
-            target.os, target.arch, target.env
+        let object_path = out_dir.join(format!("{archive_stem}.obj"));
+        let archive_path = out_dir.join(format!("dsview_sys_{archive_stem}.lib"));
+        let mut compile = Command::new("cl");
+        compile
+            .arg("/nologo")
+            .arg("/c")
+            .arg("/TC")
+            .arg(source)
+            .arg(format!("/Fo{}", object_path.display()));
+        for include in include_flags {
+            append_msvc_flag(&mut compile, include);
+        }
+        for flag in extra_flags {
+            append_msvc_flag(&mut compile, flag);
+        }
+
+        let status = compile
+            .status()
+            .expect("failed to invoke MSVC compiler for dsview-sys shim");
+        if !status.success() {
+            panic!(
+                "failed to compile dsview-sys shim source {} with cl.exe",
+                source.display()
+            );
+        }
+
+        let status = Command::new("lib")
+            .arg("/nologo")
+            .arg(format!("/OUT:{}", archive_path.display()))
+            .arg(&object_path)
+            .status()
+            .expect("failed to invoke lib.exe for dsview-sys shim");
+        if !status.success() {
+            panic!(
+                "failed to archive dsview-sys shim source {} with lib.exe",
+                source.display()
+            );
+        }
+
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+        println!("cargo:rustc-link-lib=static=dsview_sys_{archive_stem}");
+        println!(
+            "cargo:warning=Built dsview-sys shim {}.",
+            source.file_name().unwrap_or_default().to_string_lossy()
         );
+        return;
     }
 
-    let mut compile = Command::new(compiler);
+    let object_path = out_dir.join(format!("{archive_stem}.o"));
+    let archive_path = out_dir.join(format!("libdsview_sys_{archive_stem}.a"));
+    let mut compile = Command::new("cc");
     compile.arg("-c").arg(source).arg("-o").arg(&object_path);
     for include in include_flags {
         compile.arg(include);
@@ -379,10 +480,78 @@ fn command_available(command: &str) -> bool {
 }
 
 fn pkg_config_has(package: &str) -> bool {
-    Command::new("pkg-config")
+    let Some(pkg_config) = pkg_config_command() else {
+        return false;
+    };
+
+    Command::new(pkg_config)
         .arg("--exists")
         .arg(package)
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn pkg_config_command() -> Option<String> {
+    if let Ok(explicit) = env::var("PKG_CONFIG") {
+        return Some(explicit);
+    }
+
+    for candidate in ["pkg-config", "pkgconf"] {
+        if command_available(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+
+    None
+}
+
+fn cmake_toolchain_file() -> Option<PathBuf> {
+    if let Ok(path) = env::var("CMAKE_TOOLCHAIN_FILE") {
+        return Some(PathBuf::from(path));
+    }
+
+    vcpkg_root().map(|root| root.join("scripts/buildsystems/vcpkg.cmake"))
+}
+
+fn cmake_build_config() -> &'static str {
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "Release",
+        _ => "Debug",
+    }
+}
+
+fn windows_vcpkg_triplet(target: &TargetInfo) -> Option<String> {
+    env::var("DSVIEW_VCPKG_TRIPLET")
+        .ok()
+        .or_else(|| env::var("VCPKG_TARGET_TRIPLET").ok())
+        .or_else(|| target.windows_vcpkg_triplet().map(str::to_string))
+}
+
+fn vcpkg_root() -> Option<PathBuf> {
+    env::var("DSVIEW_VCPKG_ROOT")
+        .ok()
+        .or_else(|| env::var("VCPKG_INSTALLATION_ROOT").ok())
+        .or_else(|| env::var("VCPKG_ROOT").ok())
+        .map(PathBuf::from)
+}
+
+fn append_msvc_flag(command: &mut Command, flag: &str) {
+    if let Some(include) = flag.strip_prefix("-I") {
+        command.arg(format!("/I{include}"));
+    } else if let Some(define) = flag.strip_prefix("-D") {
+        command.arg(format!("/D{define}"));
+    } else {
+        command.arg(flag);
+    }
+}
+
+fn normalized_libusb_include_flag(flag: &str) -> Option<String> {
+    let include_path = flag.strip_prefix("-I")?;
+    let include_path = Path::new(include_path);
+    if include_path.file_name()? != "libusb-1.0" {
+        return None;
+    }
+
+    Some(format!("-I{}", include_path.parent()?.display()))
 }

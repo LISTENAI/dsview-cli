@@ -19,7 +19,11 @@ runs:
     - name: Package bundle
       shell: bash
       run: |
-        cargo +stable -Zscript tools/package-bundle.rs \
+        PYTHON_BIN=python3
+        if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+          PYTHON_BIN=python
+        fi
+        "$PYTHON_BIN" tools/package-bundle.py \
           --exe "${{ inputs.exe-path }}" \
           --runtime "${{ inputs.runtime-path }}" \
           --resources DSView/DSView/res \
@@ -30,7 +34,11 @@ runs:
     - name: Validate bundle
       shell: bash
       run: |
-        cargo +stable -Zscript tools/validate-bundle.rs \
+        PYTHON_BIN=python3
+        if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+          PYTHON_BIN=python
+        fi
+        "$PYTHON_BIN" tools/validate-bundle.py \
           --archive "dsview-cli-${{ inputs.version }}-${{ inputs.target }}.tar.gz" \
           --target "${{ inputs.target }}"
 

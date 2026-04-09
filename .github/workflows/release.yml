@@ -20,15 +20,11 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-15-intel
           - target: aarch64-apple-darwin
             runner: macos-14
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
-          - target: aarch64-pc-windows-msvc
-            runner: windows-latest
 
     steps:
       - name: Checkout repository
@@ -135,12 +131,11 @@ jobs:
             This release provides pre-built bundles for:
             - Linux x86_64 and ARM64
             - macOS x86_64 (Intel) and ARM64 (Apple Silicon)
-            - Windows x86_64 and ARM64
 
             ### Bundle Contents
 
             Each bundle contains:
-            - `dsview-cli` executable (or `dsview-cli.exe` on Windows)
+            - platform-appropriate `dsview-cli` executable
             - `runtime/` directory with the platform-specific runtime library
             - `resources/` directory with DSLogic Plus firmware and bitstreams
 

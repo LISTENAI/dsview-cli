@@ -12,21 +12,22 @@ endif()
 set(DSVIEW_ROOT "${DSVIEW_REPO_ROOT}/DSView")
 set(LIBSIGROK_ROOT "${DSVIEW_ROOT}/libsigrok4DSL")
 set(COMMON_ROOT "${DSVIEW_ROOT}/common")
+set(DSVIEW_SYS_COMPAT_ROOT "${DSVIEW_REPO_ROOT}/crates/dsview-sys/compat")
 
-# Platform-specific dependency resolution
-if(WIN32)
-    # Windows: use vcpkg or manual paths for dependencies
-    find_package(PkgConfig QUIET)
-    if(NOT PkgConfig_FOUND)
-        message(STATUS "pkg-config not available on Windows, using find_package for dependencies")
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLIB REQUIRED glib-2.0)
+pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+pkg_check_modules(FFTW REQUIRED fftw3)
+
+set(LIBUSB_NORMALIZED_INCLUDE_DIRS ${LIBUSB_INCLUDE_DIRS})
+foreach(LIBUSB_INCLUDE_DIR IN LISTS LIBUSB_INCLUDE_DIRS)
+    get_filename_component(LIBUSB_INCLUDE_BASENAME "${LIBUSB_INCLUDE_DIR}" NAME)
+    if(LIBUSB_INCLUDE_BASENAME STREQUAL "libusb-1.0")
+        get_filename_component(LIBUSB_INCLUDE_PARENT "${LIBUSB_INCLUDE_DIR}" DIRECTORY)
+        list(APPEND LIBUSB_NORMALIZED_INCLUDE_DIRS "${LIBUSB_INCLUDE_PARENT}")
     endif()
-else()
-    # Linux/macOS: use pkg-config
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(GLIB REQUIRED glib-2.0)
-    pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-    pkg_check_modules(FFTW REQUIRED fftw3)
-endif()
+endforeach()
+list(REMOVE_DUPLICATES LIBUSB_NORMALIZED_INCLUDE_DIRS)
 
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
@@ -67,18 +68,14 @@ add_library(dsview_runtime SHARED
 )
 
 target_include_directories(dsview_runtime PRIVATE
+    ${DSVIEW_SYS_COMPAT_ROOT}
     ${DSVIEW_ROOT}
     ${LIBSIGROK_ROOT}
     ${COMMON_ROOT}
+    ${GLIB_INCLUDE_DIRS}
+    ${LIBUSB_NORMALIZED_INCLUDE_DIRS}
+    ${FFTW_INCLUDE_DIRS}
 )
-
-if(NOT WIN32)
-    target_include_directories(dsview_runtime PRIVATE
-        ${GLIB_INCLUDE_DIRS}
-        ${LIBUSB_INCLUDE_DIRS}
-        ${FFTW_INCLUDE_DIRS}
-    )
-endif()
 
 target_compile_definitions(dsview_runtime PRIVATE
     HAVE_LIBUSB_1_0=1
@@ -108,15 +105,16 @@ endif()
 target_link_libraries(dsview_runtime PRIVATE
     ZLIB::ZLIB
     Threads::Threads
+    ${GLIB_LIBRARIES}
+    ${LIBUSB_LIBRARIES}
+    ${FFTW_LIBRARIES}
 )
 
-if(NOT WIN32)
-    target_link_libraries(dsview_runtime PRIVATE
-        ${GLIB_LIBRARIES}
-        ${LIBUSB_LIBRARIES}
-        ${FFTW_LIBRARIES}
-    )
-endif()
+target_link_directories(dsview_runtime PRIVATE
+    ${GLIB_LIBRARY_DIRS}
+    ${LIBUSB_LIBRARY_DIRS}
+    ${FFTW_LIBRARY_DIRS}
+)
 
 # Link math library on Unix-like systems
 if(UNIX)

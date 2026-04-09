@@ -118,10 +118,8 @@ brew install cmake pkg-config glib libusb fftw
 Install dependencies via vcpkg:
 
 ```powershell
-vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows
+vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows pkgconf:x64-windows
 ```
-
-For ARM64 Windows, use `arm64-windows` triplet instead.
 
 ## Testing
 
@@ -231,7 +229,7 @@ The native integration is intentionally isolated behind Rust layers to keep unsa
 
 ### Packaging
 
-Release bundles are created using `tools/package-bundle.rs` and validated with `tools/validate-bundle.rs`. These are cargo-script tools that CI uses to ensure consistent bundle structure across all platforms.
+Release bundles are created using `tools/package-bundle.py` and validated with `tools/validate-bundle.py`. CI uses these Python helpers to ensure consistent bundle structure across all platforms without relying on unstable Cargo script support.
 
 ## License
 

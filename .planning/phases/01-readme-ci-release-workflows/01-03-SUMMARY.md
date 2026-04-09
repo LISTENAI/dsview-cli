@@ -7,8 +7,8 @@ dependency_graph:
   requires:
     - target-aware runtime naming helper (dsview_sys::runtime_library_name)
     - portable CMakeLists.txt for Linux/macOS/Windows
-    - bundle packaging helper (tools/package-bundle.rs)
-    - bundle validation helper (tools/validate-bundle.rs)
+    - bundle packaging helper (tools/package-bundle.py)
+    - bundle validation helper (tools/validate-bundle.py)
     - bundled runtime/resource discovery as default CLI behavior
     - removed --library and --use-source-runtime flags
   provides:
@@ -23,7 +23,7 @@ dependency_graph:
     - .github/workflows/release.yml
     - .github/actions/setup-native-prereqs/action.yml
     - .github/actions/package-and-validate/action.yml
-    - .planning/phases/01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64/01-VALIDATION.md
+    - .planning/phases/01-readme-ci-release-workflows/01-VALIDATION.md
 tech_stack:
   added:
     - GitHub Actions composite actions pattern
@@ -40,12 +40,12 @@ key_files:
     - .github/actions/setup-native-prereqs/action.yml
     - .github/actions/package-and-validate/action.yml
   modified:
-    - .planning/phases/01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64/01-VALIDATION.md
+    - .planning/phases/01-readme-ci-release-workflows/01-VALIDATION.md
 decisions:
   - Use GitHub-hosted runners for all six targets with explicit dependency strategies
-  - Linux ARM64 uses cross-compilation with aarch64-linux-gnu toolchain on ubuntu-latest
+  - Linux ARM64 uses the native `ubuntu-24.04-arm` runner
   - Windows ARM64 uses vcpkg with arm64-windows triplet on windows-latest
-  - macOS uses separate runners for x86_64 (macos-13) and ARM64 (macos-14)
+  - macOS uses separate runners for x86_64 (`macos-15-intel`) and ARM64 (`macos-14`)
   - CI uses fail-fast=false to see all target failures, release uses fail-fast=true to abort on any failure
   - README leads with Quick Start section before diving into architecture details
   - Bundle structure documentation shows exact layout users will see in releases
@@ -67,13 +67,13 @@ metrics:
 
 Completed the Phase 1 documentation and automation foundation with:
 
-1. **Six-target CI workflow** (`.github/workflows/ci.yml`): Matrix covering x86_64 and ARM64 for Linux, macOS, and Windows. Uses fail-fast=false to report all target failures. Each job builds, tests, packages, and validates bundles. Runs on push and pull requests to master.
+1. **Six-target CI workflow** (`.github/workflows/ci.yml`): Matrix covering x86_64 and ARM64 for Linux, macOS, and Windows. Uses fail-fast=false to report all target failures. Each job builds, tests, packages, and validates bundles. Runs on pushes to any branch and pull requests to `master`.
 
 2. **Six-target release workflow** (`.github/workflows/release.yml`): Tag-driven automation with fail-fast=true (any target failure aborts release). Builds and validates all six targets, generates SHA256SUMS.txt, and publishes GitHub release with bundles and checksums. Release notes document bundle structure, installation, and usage.
 
 3. **Reusable composite actions**:
-   - `setup-native-prereqs`: Platform-specific dependency installation for all six targets. Linux uses apt-get, macOS uses Homebrew, Windows uses vcpkg. Linux ARM64 includes cross-compilation toolchain. Windows ARM64 uses arm64-windows vcpkg triplet.
-   - `package-and-validate`: Invokes tools/package-bundle.rs and tools/validate-bundle.rs, then uploads validated bundle as artifact.
+   - `setup-native-prereqs`: Platform-specific dependency installation for all six targets. Linux uses apt-get, macOS uses Homebrew, Windows uses vcpkg. Linux ARM64 uses native ARM runner packages. Windows ARM64 uses arm64-windows vcpkg triplet.
+   - `package-and-validate`: Invokes tools/package-bundle.py and tools/validate-bundle.py, then uploads validated bundle as artifact.
 
 4. **Quick-start-first README.md**: Leads with build → devices list → capture workflow. Documents bundled runtime/resource discovery model, release bundle structure, platform support, build prerequisites, and command reference. No mention of removed --library or --use-source-runtime flags. Explains --resource-dir as only resource override.
 
@@ -85,7 +85,7 @@ None - plan executed exactly as written.
 
 ## Technical Decisions
 
-**GitHub-hosted runners for all six targets**: All targets use GitHub-hosted runners rather than self-hosted infrastructure. Linux ARM64 uses cross-compilation on ubuntu-latest with aarch64-linux-gnu toolchain. Windows ARM64 uses vcpkg arm64-windows triplet on windows-latest. macOS uses separate runner versions for x86_64 (macos-13) and ARM64 (macos-14).
+**GitHub-hosted runners for all six targets**: All targets use GitHub-hosted runners rather than self-hosted infrastructure. Linux ARM64 uses the native `ubuntu-24.04-arm` runner. Windows ARM64 uses vcpkg arm64-windows triplet on windows-latest. macOS uses separate runner versions for x86_64 (`macos-15-intel`) and ARM64 (`macos-14`).
 
 **Fail-fast strategy split**: CI uses fail-fast=false to report all target failures in one run, helping developers see the full cross-platform impact. Release uses fail-fast=true to abort immediately on any target failure, ensuring partial releases never publish.
 
@@ -125,7 +125,7 @@ All files use correct runner labels and dependency strategies for each target.
 
 **CI validation is hardware-independent**: The CI workflows validate bundle structure, smoke tests (--help commands), and test suite execution, but cannot validate actual device discovery or capture with physical DSLogic Plus hardware. This is expected for hosted CI runners.
 
-**Cross-compilation not fully tested**: Linux ARM64 and Windows ARM64 builds use cross-compilation strategies that have not been validated on actual ARM64 hardware yet. The workflows encode the correct toolchain setup based on GitHub Actions documentation, but first-run validation will happen when CI executes.
+**ARM-specific workflow assumptions still need live CI confirmation**: Linux ARM64 now uses a native ARM runner while Windows ARM64 still depends on the hosted runner plus `arm64-windows` vcpkg path. The workflows encode the intended setup, but first-run validation still needs to happen in GitHub Actions.
 
 **Release workflow not yet triggered**: The release workflow is tag-driven and has not been executed yet. First release will validate the full publish flow including checksum generation and GitHub release creation.
 
@@ -160,7 +160,7 @@ All created files verified:
 - FOUND: .github/actions/package-and-validate/action.yml
 
 All modified files verified:
-- FOUND: .planning/phases/01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64/01-VALIDATION.md
+- FOUND: .planning/phases/01-readme-ci-release-workflows/01-VALIDATION.md
 
 All commits verified:
 - FOUND: 72e5867

@@ -47,13 +47,13 @@ See: .planning/PROJECT.md
 - Full test suite passing (0 failures)
 - No gaps or blockers identified
 
-**Verification Report:** `.planning/phases/01-create-a-proper-readme-covering-project-background-core-usage-build-and-test-instructions-and-add-github-actions-ci-release-workflows-that-build-and-test-binaries-for-windows-linux-and-macos-on-x64-and-arm64/01-VERIFICATION.md`
+**Verification Report:** `.planning/phases/01-readme-ci-release-workflows/01-VERIFICATION.md`
 
 ## Key Decisions
 
 - D-01: Target-aware runtime naming contract established via `runtime_library_name()` helper
 - D-02: Portable CMake build supports Linux/macOS/Windows with platform-conditional dependencies
-- D-03: Bundle packaging uses cargo-script pattern for standalone tool execution
+- D-03: Bundle packaging uses repo-local Python helpers for standalone tool execution
 - D-04: Bundle validation includes smoke tests for --help commands without hardware dependency
 - D-05: Single source of truth for runtime naming via dsview_sys::runtime_library_name()
 - D-06: Bundled runtime/resource discovery as default CLI behavior with developer fallback

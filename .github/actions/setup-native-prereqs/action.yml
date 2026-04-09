@@ -29,11 +29,9 @@ runs:
           build-essential \
           cmake \
           pkg-config \
-          gcc-aarch64-linux-gnu \
-          g++-aarch64-linux-gnu \
-          libglib2.0-dev:arm64 \
-          libusb-1.0-0-dev:arm64 \
-          libfftw3-dev:arm64
+          libglib2.0-dev \
+          libusb-1.0-0-dev \
+          libfftw3-dev
 
     - name: Install macOS dependencies
       if: startsWith(inputs.target, 'x86_64-apple-darwin') || startsWith(inputs.target, 'aarch64-apple-darwin')
@@ -45,12 +43,34 @@ runs:
       if: inputs.target == 'x86_64-pc-windows-msvc'
       shell: pwsh
       run: |
+        if ($env:VCPKG_DEFAULT_BINARY_CACHE) {
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+        }
+
         # vcpkg is pre-installed on GitHub-hosted Windows runners
-        vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows
+        vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows pkgconf:x64-windows
+
+        $VcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } elseif ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { throw "vcpkg root environment variable is not set" }
+        $Triplet = "x64-windows"
+        $PkgConfigPath = "$VcpkgRoot/installed/$Triplet/lib/pkgconfig;$VcpkgRoot/installed/$Triplet/share/pkgconfig"
+        $PkgConfigBin = "$VcpkgRoot/installed/$Triplet/tools/pkgconf"
+        $RuntimeBin = "$VcpkgRoot/installed/$Triplet/bin"
+        $DebugRuntimeBin = "$VcpkgRoot/installed/$Triplet/debug/bin"
+
+        "DSVIEW_VCPKG_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "DSVIEW_VCPKG_TRIPLET=$Triplet" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "CMAKE_TOOLCHAIN_FILE=$VcpkgRoot/scripts/buildsystems/vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "PKG_CONFIG_PATH=$PkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "PKG_CONFIG_LIBDIR=$PkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "PATH=$RuntimeBin;$DebugRuntimeBin;$PkgConfigBin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
     - name: Install Windows ARM64 dependencies
       if: inputs.target == 'aarch64-pc-windows-msvc'
       shell: pwsh
       run: |
+        if ($env:VCPKG_DEFAULT_BINARY_CACHE) {
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+        }
+
         # vcpkg is pre-installed on GitHub-hosted Windows runners
         vcpkg install glib:arm64-windows libusb:arm64-windows fftw3:arm64-windows
