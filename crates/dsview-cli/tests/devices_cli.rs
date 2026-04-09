@@ -5,6 +5,22 @@ fn cli_command() -> Command {
     Command::cargo_bin("dsview-cli").expect("dsview-cli binary should build for CLI tests")
 }
 
+fn expected_build_version() -> &'static str {
+    match option_env!("DSVIEW_BUILD_VERSION") {
+        Some(version) => version,
+        None => env!("CARGO_PKG_VERSION"),
+    }
+}
+
+#[test]
+fn version_flag_reports_the_resolved_build_version() {
+    cli_command()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(expected_build_version()));
+}
+
 #[test]
 fn devices_help_does_not_expose_runtime_selection_flags() {
     cli_command()
@@ -25,7 +41,9 @@ fn devices_list_help_keeps_resource_override_only() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--resource-dir <PATH>"))
-        .stdout(predicate::str::contains("bundled resources are used by default"))
+        .stdout(predicate::str::contains(
+            "bundled resources are used by default",
+        ))
         .stdout(predicate::str::contains("--library").not())
         .stdout(predicate::str::contains("--use-source-runtime").not());
 }
@@ -45,10 +63,17 @@ fn devices_open_help_keeps_resource_override_only() {
 #[test]
 fn devices_list_rejects_removed_library_flag() {
     cli_command()
-        .args(["devices", "list", "--library", "runtime/libdsview_runtime.so"])
+        .args([
+            "devices",
+            "list",
+            "--library",
+            "runtime/libdsview_runtime.so",
+        ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("unexpected argument '--library' found"));
+        .stderr(predicate::str::contains(
+            "unexpected argument '--library' found",
+        ));
 }
 
 #[test]

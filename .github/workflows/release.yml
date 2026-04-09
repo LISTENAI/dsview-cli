@@ -45,7 +45,10 @@ jobs:
       - name: Extract version from tag
         id: version
         shell: bash
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "DSVIEW_BUILD_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Build workspace
         run: cargo build --release --target ${{ matrix.target }}
@@ -83,14 +86,6 @@ jobs:
           version: ${{ steps.version.outputs.version }}
           exe-path: ${{ steps.exe-path.outputs.exe }}
           runtime-path: ${{ steps.find-runtime.outputs.runtime-lib }}
-
-      - name: Upload release bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: dsview-cli-${{ steps.version.outputs.version }}-${{ matrix.target }}
-          path: dsview-cli-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz
-          retention-days: 90
-
   publish-release:
     name: publish-release
     needs: build-release

@@ -42,6 +42,18 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Derive build version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "DSVIEW_BUILD_VERSION=$VERSION" >> "$GITHUB_ENV"
+
       - name: Build workspace
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -75,6 +87,6 @@ jobs:
         uses: ./.github/actions/package-and-validate
         with:
           target: ${{ matrix.target }}
-          version: v0.1.0-ci
+          version: ${{ steps.version.outputs.version }}
           exe-path: ${{ steps.exe-path.outputs.exe }}
           runtime-path: ${{ steps.find-runtime.outputs.runtime-lib }}

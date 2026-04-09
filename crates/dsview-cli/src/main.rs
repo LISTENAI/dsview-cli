@@ -5,14 +5,20 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_core::{
-    resolve_capture_artifact_paths, AcquisitionSummary, AcquisitionTerminalEvent,
-    BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion,
-    CaptureConfigRequest, CaptureExportError, CaptureRunError, CaptureRunRequest, Discovery,
-    NativeErrorCode, RuntimeError, SelectionHandle, SupportedDevice, describe_native_error,
+    describe_native_error, resolve_capture_artifact_paths, AcquisitionSummary,
+    AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError, CaptureCleanup,
+    CaptureCompletion, CaptureConfigRequest, CaptureExportError, CaptureRunError,
+    CaptureRunRequest, Discovery, NativeErrorCode, RuntimeError, SelectionHandle, SupportedDevice,
 };
 use serde::Serialize;
 
+const BUILD_VERSION: &str = match option_env!("DSVIEW_BUILD_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser, Debug)]
+#[command(version = BUILD_VERSION)]
 #[command(name = "dsview-cli")]
 #[command(about = "Scriptable DSLogic bring-up CLI")]
 struct Cli {
@@ -223,8 +229,10 @@ fn run_open(args: OpenArgs) -> Result<(), FailedCommand> {
 }
 
 fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
-    let artifact_paths = resolve_capture_artifact_paths(&args.output, args.metadata_output.as_ref())
-        .map_err(|error| command_error(args.runtime.format, classify_artifact_path_error(&error)))?;
+    let artifact_paths =
+        resolve_capture_artifact_paths(&args.output, args.metadata_output.as_ref()).map_err(
+            |error| command_error(args.runtime.format, classify_artifact_path_error(&error)),
+        )?;
     let discovery = connect_runtime(&args.runtime)?;
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
@@ -239,12 +247,14 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
-    let validated_config = discovery.validate_capture_config(&run_request.config).map_err(|error| {
-        command_error(
-            args.runtime.format,
-            classify_runtime_error(&RuntimeError::InvalidArgument(error.to_string())),
-        )
-    })?;
+    let validated_config = discovery
+        .validate_capture_config(&run_request.config)
+        .map_err(|error| {
+            command_error(
+                args.runtime.format,
+                classify_runtime_error(&RuntimeError::InvalidArgument(error.to_string())),
+            )
+        })?;
     let result = discovery
         .run_capture(&run_request)
         .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
@@ -255,7 +265,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
             vcd_path: artifact_paths.vcd_path,
             metadata_path: Some(artifact_paths.metadata_path),
             tool_name: env!("CARGO_PKG_NAME").to_string(),
-            tool_version: env!("CARGO_PKG_VERSION").to_string(),
+            tool_version: BUILD_VERSION.to_string(),
             capture_started_at: std::time::SystemTime::now(),
             device_model: "DSLogic Plus".to_string(),
             device_stable_id: "dslogic-plus".to_string(),
@@ -297,7 +307,10 @@ fn classify_artifact_path_error(error: &CaptureArtifactPathError) -> ErrorRespon
     match error {
         CaptureArtifactPathError::InvalidVcdExtension { path } => ErrorResponse {
             code: "capture_output_path_invalid",
-            message: format!("VCD output path `{}` must use the .vcd extension", path.display()),
+            message: format!(
+                "VCD output path `{}` must use the .vcd extension",
+                path.display()
+            ),
             detail: None,
             native_error: None,
             terminal_event: None,
@@ -726,9 +739,7 @@ pub(crate) fn capture_success_text(
     vcd_path: &str,
     metadata_path: &str,
 ) -> String {
-    format!(
-        "capture {completion}\nvcd {vcd_path}\nmetadata {metadata_path}"
-    )
+    format!("capture {completion}\nvcd {vcd_path}\nmetadata {metadata_path}")
 }
 
 fn render_error(format: OutputFormat, error: &ErrorResponse) {
@@ -997,7 +1008,10 @@ mod tests {
             completion_name(CaptureCompletion::CleanSuccess),
             "clean_success"
         );
-        assert_eq!(completion_name(CaptureCompletion::RunFailure), "run_failure");
+        assert_eq!(
+            completion_name(CaptureCompletion::RunFailure),
+            "run_failure"
+        );
         assert_eq!(completion_name(CaptureCompletion::Detached), "detach");
         assert_eq!(completion_name(CaptureCompletion::Timeout), "timeout");
     }
