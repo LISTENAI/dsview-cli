@@ -41,24 +41,11 @@ enum DeviceCommand {
 #[derive(Args, Debug)]
 struct SharedRuntimeArgs {
     #[arg(
-        long,
-        value_name = "PATH",
-        conflicts_with = "use_source_runtime",
-        help = "Load a DSView runtime library from this path"
-    )]
-    library: Option<PathBuf>,
-    #[arg(
-        long = "use-source-runtime",
-        default_value_t = false,
-        help = "Use the source-built runtime bundled by this workspace"
-    )]
-    use_source_runtime: bool,
-    #[arg(
         long = "resource-dir",
         value_name = "PATH",
-        help = "Directory containing DSLogic firmware and bitstream resources"
+        help = "Directory containing DSLogic Plus firmware and bitstream resources; bundled resources are used by default"
     )]
-    resource_dir: PathBuf,
+    resource_dir: Option<PathBuf>,
     #[arg(
         long,
         value_enum,
@@ -293,15 +280,8 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
 }
 
 fn connect_runtime(args: &SharedRuntimeArgs) -> Result<Discovery, FailedCommand> {
-    let result = if args.use_source_runtime {
-        Discovery::connect_auto(&args.resource_dir)
-    } else if let Some(library) = &args.library {
-        Discovery::connect(library, &args.resource_dir)
-    } else {
-        return Err(command_error(args.format, missing_runtime_selector_error()));
-    };
-
-    result.map_err(|error| command_error(args.format, classify_error(&error)))
+    Discovery::connect_auto(args.resource_dir.as_deref())
+        .map_err(|error| command_error(args.format, classify_error(&error)))
 }
 
 fn device_record(device: &SupportedDevice) -> DeviceRecord {
@@ -363,24 +343,35 @@ fn invalid_handle_error() -> ErrorResponse {
     }
 }
 
-fn missing_runtime_selector_error() -> ErrorResponse {
-    ErrorResponse {
-        code: "runtime_selector_missing",
-        message: "pass either --library <PATH> or --use-source-runtime.".to_string(),
-        detail: None,
-        native_error: None,
-        terminal_event: None,
-        cleanup: None,
-    }
-}
-
 fn classify_error(error: &BringUpError) -> ErrorResponse {
     match error {
-        BringUpError::SourceRuntimeUnavailable => ErrorResponse {
-            code: "source_runtime_unavailable",
-            message: "this build does not include a source-built DSView runtime library"
-                .to_string(),
-            detail: None,
+        BringUpError::CurrentExecutableUnavailable { detail } => ErrorResponse {
+            code: "current_executable_unavailable",
+            message: format!(
+                "could not determine the executable location used for bundled runtime discovery: {detail}"
+            ),
+            detail: Some(
+                "The CLI resolves bundled `runtime/` and `resources/` relative to the executable; rerun from a normal filesystem location or rebuild the bundle."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        BringUpError::BundledRuntimeMissing {
+            path,
+            executable_dir,
+        } => ErrorResponse {
+            code: "bundled_runtime_missing",
+            message: format!(
+                "bundled runtime `{}` was not found relative to executable directory `{}`",
+                path.display(),
+                executable_dir.display()
+            ),
+            detail: Some(
+                "Build or unpack the CLI with its sibling runtime/ directory, or use `--resource-dir <PATH>` only to point at alternate DSLogic Plus resources."
+                    .to_string(),
+            ),
             native_error: None,
             terminal_event: None,
             cleanup: None,
@@ -388,7 +379,10 @@ fn classify_error(error: &BringUpError) -> ErrorResponse {
         BringUpError::MissingResourceDirectory { path } => ErrorResponse {
             code: "resource_dir_missing",
             message: format!("resource directory `{}` is missing", path.display()),
-            detail: None,
+            detail: Some(
+                "The CLI expects bundled resources at `resources/` next to the executable unless you pass `--resource-dir <PATH>`."
+                    .to_string(),
+            ),
             native_error: None,
             terminal_event: None,
             cleanup: None,
@@ -396,7 +390,10 @@ fn classify_error(error: &BringUpError) -> ErrorResponse {
         BringUpError::UnreadableResourceDirectory { path } => ErrorResponse {
             code: "resource_dir_unreadable",
             message: format!("resource directory `{}` is not readable", path.display()),
-            detail: None,
+            detail: Some(
+                "The CLI expects bundled resources at `resources/` next to the executable unless you pass `--resource-dir <PATH>`."
+                    .to_string(),
+            ),
             native_error: None,
             terminal_event: None,
             cleanup: None,
@@ -404,11 +401,14 @@ fn classify_error(error: &BringUpError) -> ErrorResponse {
         BringUpError::MissingResourceFiles { path, missing } => ErrorResponse {
             code: "resource_files_missing",
             message: format!(
-                "resource directory `{}` is missing required files: {}",
+                "resource directory `{}` is missing required DSLogic Plus files: {}",
                 path.display(),
                 missing.join(", ")
             ),
-            detail: None,
+            detail: Some(
+                "Check the bundled `resources/` directory next to the executable or pass `--resource-dir <PATH>` to a complete DSLogic Plus resource set."
+                    .to_string(),
+            ),
             native_error: None,
             terminal_event: None,
             cleanup: None,
@@ -754,11 +754,13 @@ mod tests {
     }
 
     #[test]
-    fn missing_runtime_selector_maps_to_stable_error_code() {
-        assert_eq!(
-            missing_runtime_selector_error().code,
-            "runtime_selector_missing"
-        );
+    fn bundled_runtime_missing_maps_to_stable_error_code() {
+        let error = classify_error(&BringUpError::BundledRuntimeMissing {
+            path: PathBuf::from("runtime/libdsview_runtime.so"),
+            executable_dir: PathBuf::from("bundle"),
+        });
+        assert_eq!(error.code, "bundled_runtime_missing");
+        assert!(error.message.contains("bundled runtime"));
     }
 
     #[test]
@@ -788,9 +790,11 @@ mod tests {
     }
 
     #[test]
-    fn source_runtime_unavailable_maps_to_stable_error_code() {
-        let error = classify_error(&BringUpError::SourceRuntimeUnavailable);
-        assert_eq!(error.code, "source_runtime_unavailable");
+    fn current_executable_unavailable_maps_to_stable_error_code() {
+        let error = classify_error(&BringUpError::CurrentExecutableUnavailable {
+            detail: "sandbox denied path lookup".to_string(),
+        });
+        assert_eq!(error.code, "current_executable_unavailable");
     }
 
     #[test]

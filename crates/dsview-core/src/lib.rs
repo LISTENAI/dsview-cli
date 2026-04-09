@@ -1,3 +1,4 @@
+use std::env;
 use std::fmt;
 use std::fs;
 use std::num::NonZeroU64;
@@ -25,6 +26,8 @@ const DSLOGIC_PLUS_MODELS: &[&str] = &["DSLogic PLus"];
 const DSLOGIC_PLUS_PRIMARY_FIRMWARES: &[&str] = &["DSLogicPlus.fw"];
 const DSLOGIC_PLUS_FIRMWARE_FALLBACKS: &[&str] = &["DSLogic.fw"];
 const DSLOGIC_PLUS_BITSTREAMS: &[&str] = &["DSLogicPlus.bin", "DSLogicPlus-pgl12.bin"];
+const BUNDLED_RUNTIME_DIR: &str = "runtime";
+const BUNDLED_RESOURCE_DIR: &str = "resources";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionHandle(NonZeroU64);
@@ -81,6 +84,63 @@ pub struct SupportedDevice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceDirectory {
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDiscoveryPaths {
+    pub runtime_library: PathBuf,
+    pub resource_dir: PathBuf,
+}
+
+impl RuntimeDiscoveryPaths {
+    pub fn discover(resource_override: Option<impl AsRef<Path>>) -> Result<Self, BringUpError> {
+        let executable = env::current_exe().map_err(|error| {
+            BringUpError::CurrentExecutableUnavailable {
+                detail: error.to_string(),
+            }
+        })?;
+        let executable_dir = executable.parent().ok_or_else(|| {
+            BringUpError::CurrentExecutableUnavailable {
+                detail: format!("path `{}` has no parent directory", executable.display()),
+            }
+        })?;
+        Self::from_executable_dir(executable_dir, resource_override)
+    }
+
+    pub fn from_executable_dir(
+        executable_dir: impl AsRef<Path>,
+        resource_override: Option<impl AsRef<Path>>,
+    ) -> Result<Self, BringUpError> {
+        let executable_dir = executable_dir.as_ref();
+        let resource_override = resource_override.map(|path| path.as_ref().to_path_buf());
+        let bundled_runtime = executable_dir
+            .join(BUNDLED_RUNTIME_DIR)
+            .join(platform_runtime_library_name());
+        let bundled_resources = executable_dir.join(BUNDLED_RESOURCE_DIR);
+        let resource_dir = resource_override
+            .clone()
+            .unwrap_or_else(|| bundled_resources.clone());
+
+        if bundled_runtime.is_file() {
+            return Ok(Self {
+                runtime_library: bundled_runtime,
+                resource_dir,
+            });
+        }
+
+        if let Some(source_runtime) = source_runtime_library_path().filter(|path| path.is_file()) {
+            let resource_dir = resource_override.unwrap_or_else(developer_resource_dir);
+            return Ok(Self {
+                runtime_library: source_runtime.to_path_buf(),
+                resource_dir,
+            });
+        }
+
+        Err(BringUpError::BundledRuntimeMissing {
+            path: bundled_runtime,
+            executable_dir: executable_dir.to_path_buf(),
+        })
+    }
 }
 
 impl ResourceDirectory {
@@ -384,10 +444,15 @@ impl Discovery {
         Ok(Self { runtime, resources })
     }
 
-    pub fn connect_auto(resource_dir: impl AsRef<Path>) -> Result<Self, BringUpError> {
-        let library_path =
-            source_runtime_library_path().ok_or(BringUpError::SourceRuntimeUnavailable)?;
-        Self::connect(library_path, resource_dir)
+    pub fn connect_auto(resource_override: Option<impl AsRef<Path>>) -> Result<Self, BringUpError> {
+        let paths = RuntimeDiscoveryPaths::discover(resource_override)?;
+        Self::connect(&paths.runtime_library, &paths.resource_dir)
+    }
+
+    pub fn discovery_paths(
+        resource_override: Option<impl AsRef<Path>>,
+    ) -> Result<RuntimeDiscoveryPaths, BringUpError> {
+        RuntimeDiscoveryPaths::discover(resource_override)
     }
 
     pub fn resources(&self) -> &ResourceDirectory {
@@ -741,8 +806,15 @@ impl Drop for OpenedDevice<'_> {
 pub enum BringUpError {
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
-    #[error("no source-built DSView runtime library is available in this build")]
-    SourceRuntimeUnavailable,
+    #[error("could not determine the current executable path: {detail}")]
+    CurrentExecutableUnavailable { detail: String },
+    #[error(
+        "bundled runtime `{path}` was not found next to executable directory `{executable_dir}` and no developer source runtime is available"
+    )]
+    BundledRuntimeMissing {
+        path: PathBuf,
+        executable_dir: PathBuf,
+    },
     #[error("resource directory `{path}` is missing")]
     MissingResourceDirectory { path: PathBuf },
     #[error("resource directory `{path}` is not readable")]
@@ -1086,6 +1158,25 @@ impl Discovery {
     }
 }
 
+fn developer_resource_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("DSView")
+        .join("DSView")
+        .join("res")
+}
+
+fn platform_runtime_library_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "dsview_runtime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libdsview_runtime.dylib"
+    } else {
+        "libdsview_runtime.so"
+    }
+}
+
 fn ensure_resource_file_set(path: &Path) -> Result<(), BringUpError> {
     if !path.exists() {
         return Err(BringUpError::MissingResourceDirectory {
@@ -1277,6 +1368,47 @@ mod tests {
     }
 
     #[test]
+    fn discovery_prefers_bundle_relative_layout() {
+        let exe_dir = temp_dir("bundle-layout");
+        let runtime_dir = exe_dir.join("runtime");
+        let resource_dir = exe_dir.join("resources");
+        fs::create_dir_all(&runtime_dir).unwrap();
+        fs::create_dir_all(&resource_dir).unwrap();
+        fs::write(runtime_dir.join(platform_runtime_library_name()), b"runtime").unwrap();
+        fs::write(resource_dir.join("DSLogicPlus.fw"), b"fw").unwrap();
+        fs::write(resource_dir.join("DSLogicPlus.bin"), b"bin").unwrap();
+        fs::write(resource_dir.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
+
+        let discovered = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, None::<&Path>)
+            .unwrap();
+        assert_eq!(discovered.runtime_library, runtime_dir.join(platform_runtime_library_name()));
+        assert_eq!(discovered.resource_dir, resource_dir);
+    }
+
+    #[test]
+    fn discovery_preserves_explicit_resource_override() {
+        let exe_dir = temp_dir("bundle-override");
+        let runtime_dir = exe_dir.join("runtime");
+        let bundled_resources = exe_dir.join("resources");
+        let override_resources = temp_dir("bundle-override-resources");
+        fs::create_dir_all(&runtime_dir).unwrap();
+        fs::create_dir_all(&bundled_resources).unwrap();
+        fs::write(runtime_dir.join(platform_runtime_library_name()), b"runtime").unwrap();
+        fs::write(bundled_resources.join("DSLogicPlus.fw"), b"fw").unwrap();
+        fs::write(bundled_resources.join("DSLogicPlus.bin"), b"bin").unwrap();
+        fs::write(bundled_resources.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
+        fs::write(override_resources.join("DSLogicPlus.fw"), b"fw").unwrap();
+        fs::write(override_resources.join("DSLogicPlus.bin"), b"bin").unwrap();
+        fs::write(override_resources.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
+
+        let discovered =
+            RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, Some(&override_resources))
+                .unwrap();
+        assert_eq!(discovered.runtime_library, runtime_dir.join(platform_runtime_library_name()));
+        assert_eq!(discovered.resource_dir, override_resources);
+    }
+
+    #[test]
     fn connect_auto_requires_source_runtime_when_not_built() {
         let dir = temp_dir("resources-auto");
         fs::write(dir.join("DSLogicPlus.fw"), b"fw").unwrap();
@@ -1284,8 +1416,9 @@ mod tests {
         fs::write(dir.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
 
         if source_runtime_library_path().is_none() {
-            let error = Discovery::connect_auto(&dir).unwrap_err();
-            assert!(matches!(error, BringUpError::SourceRuntimeUnavailable));
+            let exe_dir = temp_dir("missing-runtime");
+            let error = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, Some(&dir)).unwrap_err();
+            assert!(matches!(error, BringUpError::BundledRuntimeMissing { .. }));
         }
     }
 
