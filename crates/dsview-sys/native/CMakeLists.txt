@@ -12,6 +12,7 @@ endif()
 set(DSVIEW_ROOT "${DSVIEW_REPO_ROOT}/DSView")
 set(LIBSIGROK_ROOT "${DSVIEW_ROOT}/libsigrok4DSL")
 set(COMMON_ROOT "${DSVIEW_ROOT}/common")
+set(DSVIEW_SYS_COMPAT_ROOT "${DSVIEW_REPO_ROOT}/crates/dsview-sys/compat")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
@@ -67,6 +68,7 @@ add_library(dsview_runtime SHARED
 )
 
 target_include_directories(dsview_runtime PRIVATE
+    ${DSVIEW_SYS_COMPAT_ROOT}
     ${DSVIEW_ROOT}
     ${LIBSIGROK_ROOT}
     ${COMMON_ROOT}

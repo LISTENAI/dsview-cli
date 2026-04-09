@@ -77,6 +77,7 @@ fn main() {
     let runtime_bridge = manifest_dir.join("bridge_runtime.c");
     let wrapper_header = manifest_dir.join("wrapper.h");
     let native_root = manifest_dir.join("native");
+    let compat_root = manifest_dir.join("compat");
 
     println!("cargo:rerun-if-changed={}", wrapper_header.display());
     println!(
@@ -143,6 +144,7 @@ fn main() {
         &runtime_bridge,
         "bridge_runtime",
         &[
+            format!("-I{}", compat_root.display()),
             format!("-I{}", dsview_root.display()),
             format!("-I{}", libsigrok_root.display()),
             format!("-I{}", common_root.display()),
@@ -163,6 +165,7 @@ fn main() {
             &smoke_shim,
             "smoke_version",
             &[
+                format!("-I{}", compat_root.display()),
                 format!("-I{}", dsview_root.display()),
                 format!("-I{}", libsigrok_root.display()),
                 format!("-I{}", common_root.display()),
