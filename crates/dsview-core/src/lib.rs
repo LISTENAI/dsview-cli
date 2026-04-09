@@ -14,7 +14,8 @@ pub use capture_config::{
 };
 pub use dsview_sys::{
     AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, ExportErrorCode,
-    NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest, source_runtime_library_path,
+    NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest, runtime_library_name,
+    source_runtime_library_path,
 };
 use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
 use serde::Serialize;
@@ -115,7 +116,7 @@ impl RuntimeDiscoveryPaths {
         let resource_override = resource_override.map(|path| path.as_ref().to_path_buf());
         let bundled_runtime = executable_dir
             .join(BUNDLED_RUNTIME_DIR)
-            .join(platform_runtime_library_name());
+            .join(runtime_library_name());
         let bundled_resources = executable_dir.join(BUNDLED_RESOURCE_DIR);
         let resource_dir = resource_override
             .clone()
@@ -1167,16 +1168,6 @@ fn developer_resource_dir() -> PathBuf {
         .join("res")
 }
 
-fn platform_runtime_library_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "dsview_runtime.dll"
-    } else if cfg!(target_os = "macos") {
-        "libdsview_runtime.dylib"
-    } else {
-        "libdsview_runtime.so"
-    }
-}
-
 fn ensure_resource_file_set(path: &Path) -> Result<(), BringUpError> {
     if !path.exists() {
         return Err(BringUpError::MissingResourceDirectory {
@@ -1374,14 +1365,14 @@ mod tests {
         let resource_dir = exe_dir.join("resources");
         fs::create_dir_all(&runtime_dir).unwrap();
         fs::create_dir_all(&resource_dir).unwrap();
-        fs::write(runtime_dir.join(platform_runtime_library_name()), b"runtime").unwrap();
+        fs::write(runtime_dir.join(runtime_library_name()), b"runtime").unwrap();
         fs::write(resource_dir.join("DSLogicPlus.fw"), b"fw").unwrap();
         fs::write(resource_dir.join("DSLogicPlus.bin"), b"bin").unwrap();
         fs::write(resource_dir.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
 
         let discovered = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, None::<&Path>)
             .unwrap();
-        assert_eq!(discovered.runtime_library, runtime_dir.join(platform_runtime_library_name()));
+        assert_eq!(discovered.runtime_library, runtime_dir.join(runtime_library_name()));
         assert_eq!(discovered.resource_dir, resource_dir);
     }
 
@@ -1393,7 +1384,7 @@ mod tests {
         let override_resources = temp_dir("bundle-override-resources");
         fs::create_dir_all(&runtime_dir).unwrap();
         fs::create_dir_all(&bundled_resources).unwrap();
-        fs::write(runtime_dir.join(platform_runtime_library_name()), b"runtime").unwrap();
+        fs::write(runtime_dir.join(runtime_library_name()), b"runtime").unwrap();
         fs::write(bundled_resources.join("DSLogicPlus.fw"), b"fw").unwrap();
         fs::write(bundled_resources.join("DSLogicPlus.bin"), b"bin").unwrap();
         fs::write(bundled_resources.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
@@ -1404,7 +1395,7 @@ mod tests {
         let discovered =
             RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, Some(&override_resources))
                 .unwrap();
-        assert_eq!(discovered.runtime_library, runtime_dir.join(platform_runtime_library_name()));
+        assert_eq!(discovered.runtime_library, runtime_dir.join(runtime_library_name()));
         assert_eq!(discovered.resource_dir, override_resources);
     }
 
