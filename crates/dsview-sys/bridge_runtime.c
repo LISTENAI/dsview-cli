@@ -1142,6 +1142,7 @@ int dsview_bridge_ds_get_device_options(struct dsview_device_options_snapshot *o
     int original_operation_mode = 0;
     int has_original_channel_mode = 0;
     int original_channel_mode = 0;
+    int active_operation_mode = 0;
     int has_current_vth = 0;
     int has_current_threshold_code = 0;
     int index;
@@ -1247,6 +1248,7 @@ int dsview_bridge_ds_get_device_options(struct dsview_device_options_snapshot *o
     original_operation_mode = out_snapshot->current_operation_mode_code;
     has_original_channel_mode = out_snapshot->has_current_channel_mode;
     original_channel_mode = out_snapshot->current_channel_mode_code;
+    active_operation_mode = original_operation_mode;
 
     for (index = 0;
          index < out_snapshot->operation_mode_count &&
@@ -1256,9 +1258,12 @@ int dsview_bridge_ds_get_device_options(struct dsview_device_options_snapshot *o
         int operation_mode_code = out_snapshot->operation_modes[index].code;
 
         group->operation_mode_code = operation_mode_code;
-        status = dsview_bridge_set_int16_config(SR_CONF_OPERATION_MODE, operation_mode_code);
-        if (status != SR_OK) {
-            goto restore;
+        if (!has_original_operation_mode || active_operation_mode != operation_mode_code) {
+            status = dsview_bridge_set_int16_config(SR_CONF_OPERATION_MODE, operation_mode_code);
+            if (status != SR_OK) {
+                goto restore;
+            }
+            active_operation_mode = operation_mode_code;
         }
 
         status = dsview_bridge_copy_channel_modes_for_current_operation(

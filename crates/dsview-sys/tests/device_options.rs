@@ -3,10 +3,9 @@ use std::sync::{Mutex, OnceLock};
 use dsview_sys::{source_runtime_library_path, RuntimeBridge};
 
 const SR_OK: i32 = 0;
-const SR_ERR_ARG: i32 = 3;
 const SR_ERR_NA: i32 = 6;
+const SR_ERR_ARG: i32 = 3;
 
-const SR_CONF_VLD_CH_NUM: i32 = 30027;
 const SR_CONF_FILTER: i32 = 30021;
 const SR_CONF_OPERATION_MODE: i32 = 30065;
 const SR_CONF_BUFFER_OPTIONS: i32 = 30066;
@@ -63,6 +62,12 @@ unsafe extern "C" {
         count: i32,
         status: i32,
     );
+    fn dsview_test_mock_get_current_int(
+        key: i32,
+        out_has_value: *mut i32,
+        out_value: *mut i32,
+    ) -> i32;
+    fn dsview_test_mock_get_set_call_count(key: i32) -> i32;
 }
 
 fn runtime_test_guard() -> &'static Mutex<()> {
@@ -171,9 +176,16 @@ fn configure_mock_option_api() {
         dsview_test_mock_set_current_int(SR_CONF_FILTER, 1, FILTER_ONE_TICK, SR_OK);
         dsview_test_mock_set_current_int(SR_CONF_CHANNEL_MODE, 1, BUFFER_COMPACT_MODE, SR_OK);
         dsview_test_mock_set_current_int(SR_CONF_THRESHOLD, 1, THRESHOLD_3V3, SR_OK);
-        dsview_test_mock_set_current_int(SR_CONF_VLD_CH_NUM, 1, 8, SR_OK);
         dsview_test_mock_set_current_double(SR_CONF_VTH, 1, 1.8, SR_OK);
     }
+}
+
+fn read_current_int(key: i32) -> (bool, i32) {
+    let mut has_value = 0;
+    let mut value = 0;
+    let status = unsafe { dsview_test_mock_get_current_int(key, &mut has_value, &mut value) };
+    assert_eq!(status, SR_OK);
+    (has_value != 0, value)
 }
 
 #[test]
@@ -287,3 +299,90 @@ fn channel_modes_are_grouped_by_operation_mode() {
     );
 }
 
+#[test]
+fn restore_original_modes_after_successful_channel_mode_discovery() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    let snapshot = runtime
+        .device_options()
+        .expect("successful discovery should restore original modes");
+
+    assert_eq!(snapshot.current_operation_mode_code, Some(BUFFER_MODE as i16));
+    assert_eq!(snapshot.current_channel_mode_code, Some(BUFFER_COMPACT_MODE as i16));
+    assert_eq!(read_current_int(SR_CONF_OPERATION_MODE), (true, BUFFER_MODE));
+    assert_eq!(read_current_int(SR_CONF_CHANNEL_MODE), (true, BUFFER_COMPACT_MODE));
+    assert!(
+        unsafe { dsview_test_mock_get_set_call_count(SR_CONF_OPERATION_MODE) } >= 2,
+        "discovery should switch operation modes before restoring the original mode"
+    );
+    assert!(
+        unsafe { dsview_test_mock_get_set_call_count(SR_CONF_CHANNEL_MODE) } >= 5,
+        "discovery should enumerate each channel mode and then restore the original channel mode"
+    );
+}
+
+#[test]
+fn restore_original_modes_after_channel_mode_discovery_failure() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    let broken_stream_modes = [channel_mode(STREAM_WIDE_MODE, "Streaming full lanes", 16)];
+    unsafe {
+        dsview_test_mock_set_channel_mode_group(
+            STREAM_MODE,
+            broken_stream_modes.as_ptr(),
+            broken_stream_modes.len() as i32,
+            SR_ERR_ARG,
+        );
+    }
+
+    let error = runtime
+        .device_options()
+        .expect_err("broken mode-scoped enumeration should fail");
+
+    assert!(matches!(
+        error,
+        dsview_sys::RuntimeError::NativeCall {
+            operation: "ds_get_device_options",
+            code: dsview_sys::NativeErrorCode::Arg,
+        }
+    ));
+    assert_eq!(read_current_int(SR_CONF_OPERATION_MODE), (true, BUFFER_MODE));
+    assert_eq!(read_current_int(SR_CONF_CHANNEL_MODE), (true, BUFFER_COMPACT_MODE));
+}
+
+#[test]
+fn sr_err_na_options_stay_optional_and_threshold_truthful() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    unsafe {
+        dsview_test_mock_set_list_items(SR_CONF_FILTER, std::ptr::null(), 0, SR_ERR_NA);
+        dsview_test_mock_set_list_items(SR_CONF_THRESHOLD, std::ptr::null(), 0, SR_ERR_NA);
+        dsview_test_mock_set_current_int(SR_CONF_THRESHOLD, 0, 0, SR_ERR_NA);
+    }
+
+    let snapshot = runtime
+        .device_options()
+        .expect("SR_ERR_NA options should not fail discovery");
+
+    assert!(snapshot.filters.is_empty());
+    assert_eq!(snapshot.current_filter_code, Some(FILTER_ONE_TICK as i16));
+    assert_eq!(snapshot.threshold.kind, "voltage-range");
+    assert_eq!(snapshot.threshold.id, "threshold:vth-range");
+    assert_eq!(snapshot.threshold.current_volts, Some(1.8));
+    assert_eq!(snapshot.threshold.min_volts, 0.0);
+    assert_eq!(snapshot.threshold.max_volts, 5.0);
+    assert_eq!(snapshot.threshold.step_volts, 0.1);
+    assert!(snapshot.threshold.legacy.is_none());
+}
