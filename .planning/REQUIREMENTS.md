@@ -8,7 +8,7 @@
 
 ### Device Option Discovery
 
-- [ ] **OPT-01**: User can inspect the supported `DSLogic Plus` device-option values for operation mode, stop option, channel mode, threshold voltage, and filter selection from the CLI.
+- [x] **OPT-01**: User can inspect the supported `DSLogic Plus` device-option values for operation mode, stop option, channel mode, threshold voltage, and filter selection from the CLI.
 
 ### Device Option Configuration
 
@@ -51,7 +51,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| OPT-01 | Phase 10 | Pending |
+| OPT-01 | Phase 10 | Complete |
 | OPT-02 | Phase 12 | Pending |
 | OPT-03 | Phase 12 | Pending |
 | OPT-04 | Phase 12 | Pending |
