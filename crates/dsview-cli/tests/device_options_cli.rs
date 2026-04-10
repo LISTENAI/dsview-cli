@@ -1,10 +1,16 @@
+use assert_cmd::Command;
 use dsview_cli::{build_device_options_response, render_device_options_text};
 use dsview_core::{
     ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
     DeviceIdentitySnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot,
     LegacyThresholdMetadataSnapshot, RawOptionMetadataSnapshot, ThresholdCapabilitySnapshot,
 };
+use predicates::prelude::*;
 use serde_json::json;
+
+fn cli_command() -> Command {
+    Command::cargo_bin("dsview-cli").expect("dsview-cli binary should build for CLI tests")
+}
 
 fn sample_snapshot() -> DeviceOptionsSnapshot {
     DeviceOptionsSnapshot {
@@ -283,4 +289,40 @@ fn device_options_text_uses_deterministic_section_order() {
     );
 
     assert_eq!(rendered, expected);
+}
+
+#[test]
+fn devices_options_help_mentions_handle_and_output_contract() {
+    cli_command()
+        .args(["devices", "options", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--handle <HANDLE>"))
+        .stdout(predicate::str::contains("Selection handle returned by `devices list`"))
+        .stdout(predicate::str::contains("json is stable for automation"))
+        .stdout(predicate::str::contains("text is for direct shell use"));
+}
+
+#[test]
+fn devices_options_invalid_handle_fails_before_runtime_in_json_mode() {
+    cli_command()
+        .args(["devices", "options", "--handle", "0"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"code\": \"invalid_selector\""))
+        .stdout(predicate::str::contains(
+            "--handle must be a non-zero device handle from `devices list`.",
+        ))
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn devices_root_help_lists_options_subcommand() {
+    cli_command()
+        .args(["devices", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("options"))
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("open"));
 }

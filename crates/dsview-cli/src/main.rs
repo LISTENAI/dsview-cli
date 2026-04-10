@@ -10,6 +10,7 @@ use dsview_core::{
     CaptureCompletion, CaptureConfigRequest, CaptureExportError, CaptureRunError,
     CaptureRunRequest, Discovery, NativeErrorCode, RuntimeError, SelectionHandle, SupportedDevice,
 };
+use dsview_cli::{DeviceOptionsResponse, build_device_options_response, render_device_options_text};
 use serde::Serialize;
 
 const BUILD_VERSION: &str = match option_env!("DSVIEW_BUILD_VERSION") {
@@ -42,6 +43,7 @@ struct DeviceArgs {
 enum DeviceCommand {
     List(ListArgs),
     Open(OpenArgs),
+    Options(OptionsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -69,6 +71,18 @@ struct ListArgs {
 
 #[derive(Args, Debug)]
 struct OpenArgs {
+    #[command(flatten)]
+    runtime: SharedRuntimeArgs,
+    #[arg(
+        long,
+        value_name = "HANDLE",
+        help = "Selection handle returned by `devices list`"
+    )]
+    handle: u64,
+}
+
+#[derive(Args, Debug)]
+struct OptionsArgs {
     #[command(flatten)]
     runtime: SharedRuntimeArgs,
     #[arg(
@@ -205,6 +219,7 @@ fn main() -> ExitCode {
         Command::Devices(args) => match args.command {
             DeviceCommand::List(args) => run_list(args),
             DeviceCommand::Open(args) => run_open(args),
+            DeviceCommand::Options(args) => run_options(args),
         },
         Command::Capture(args) => run_capture(args),
     };
@@ -315,6 +330,18 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         },
     };
     render_capture_success(args.runtime.format, &response);
+    Ok(())
+}
+
+fn run_options(args: OptionsArgs) -> Result<(), FailedCommand> {
+    let handle = SelectionHandle::new(args.handle)
+        .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
+    let discovery = connect_runtime(&args.runtime)?;
+    let snapshot = discovery
+        .inspect_device_options(handle)
+        .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+    let response = build_device_options_response(&snapshot);
+    render_device_options_success(args.runtime.format, &response);
     Ok(())
 }
 
@@ -759,6 +786,17 @@ fn render_capture_success(format: OutputFormat, response: &CaptureResponse) {
                     &response.artifacts.metadata_path,
                 )
             );
+        }
+    }
+}
+
+fn render_device_options_success(format: OutputFormat, response: &DeviceOptionsResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            println!("{}", render_device_options_text(response));
         }
     }
 }
