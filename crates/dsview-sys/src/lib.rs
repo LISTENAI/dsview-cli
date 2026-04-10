@@ -61,6 +61,9 @@ unsafe extern "C" {
         max_modes: c_int,
         out_count: *mut c_int,
     ) -> c_int;
+    fn dsview_bridge_ds_get_device_options(
+        out_snapshot: *mut RawDeviceOptionsSnapshot,
+    ) -> c_int;
     fn dsview_bridge_ds_set_samplerate(value: u64) -> c_int;
     fn dsview_bridge_ds_set_sample_limit(value: u64) -> c_int;
     fn dsview_bridge_ds_enable_channel(channel_index: c_int, enable: c_int) -> c_int;
@@ -123,6 +126,11 @@ const DSVIEW_EXPORT_ERR_OUTPUT_MODULE: i32 = -106;
 const DSVIEW_EXPORT_ERR_RUNTIME: i32 = -107;
 
 const DEVICE_NAME_CAPACITY: usize = 150;
+const OPTION_LABEL_CAPACITY: usize = 64;
+const OPTION_VALUE_CAPACITY: usize = 16;
+const CHANNEL_MODE_GROUP_CAPACITY: usize = 8;
+const CHANNEL_MODE_CAPACITY: usize = 16;
+const THRESHOLD_KIND_CAPACITY: usize = 32;
 const END_PACKET_STATUS_UNKNOWN: i32 = -1;
 
 #[repr(C)]
@@ -138,6 +146,59 @@ struct RawChannelMode {
     id: i32,
     name: [u8; 64],
     max_enabled_channels: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawOptionValue {
+    code: i32,
+    label: [u8; OPTION_LABEL_CAPACITY],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawChannelModeGroup {
+    operation_mode_code: i32,
+    channel_mode_count: u16,
+    channel_modes: [RawChannelMode; CHANNEL_MODE_CAPACITY],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawThresholdRange {
+    kind: [u8; THRESHOLD_KIND_CAPACITY],
+    id: [u8; OPTION_LABEL_CAPACITY],
+    has_current_volts: c_int,
+    current_volts: f64,
+    min_volts: f64,
+    max_volts: f64,
+    step_volts: f64,
+    has_current_legacy_code: c_int,
+    current_legacy_code: i32,
+    legacy_option_count: u16,
+    legacy_options: [RawOptionValue; OPTION_VALUE_CAPACITY],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDeviceOptionsSnapshot {
+    has_current_operation_mode: c_int,
+    current_operation_mode_code: i32,
+    operation_mode_count: u16,
+    operation_modes: [RawOptionValue; OPTION_VALUE_CAPACITY],
+    has_current_stop_option: c_int,
+    current_stop_option_code: i32,
+    stop_option_count: u16,
+    stop_options: [RawOptionValue; OPTION_VALUE_CAPACITY],
+    has_current_filter: c_int,
+    current_filter_code: i32,
+    filter_count: u16,
+    filters: [RawOptionValue; OPTION_VALUE_CAPACITY],
+    has_current_channel_mode: c_int,
+    current_channel_mode_code: i32,
+    channel_mode_group_count: u16,
+    channel_mode_groups: [RawChannelModeGroup; CHANNEL_MODE_GROUP_CAPACITY],
+    threshold: RawThresholdRange,
 }
 
 #[repr(C)]
@@ -421,6 +482,55 @@ pub struct ChannelMode {
     pub max_enabled_channels: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceOptionValue {
+    pub code: i16,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceOptionChannelMode {
+    pub code: i16,
+    pub label: String,
+    pub max_enabled_channels: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceOptionChannelModeGroup {
+    pub operation_mode_code: i16,
+    pub channel_modes: Vec<DeviceOptionChannelMode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyThresholdMetadata {
+    pub current_code: Option<i16>,
+    pub options: Vec<DeviceOptionValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThresholdVoltageRange {
+    pub kind: String,
+    pub id: String,
+    pub current_volts: Option<f64>,
+    pub min_volts: f64,
+    pub max_volts: f64,
+    pub step_volts: f64,
+    pub legacy: Option<LegacyThresholdMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeviceOptionsSnapshot {
+    pub current_operation_mode_code: Option<i16>,
+    pub operation_modes: Vec<DeviceOptionValue>,
+    pub current_stop_option_code: Option<i16>,
+    pub stop_options: Vec<DeviceOptionValue>,
+    pub current_filter_code: Option<i16>,
+    pub filters: Vec<DeviceOptionValue>,
+    pub current_channel_mode_code: Option<i16>,
+    pub channel_mode_groups: Vec<DeviceOptionChannelModeGroup>,
+    pub threshold: ThresholdVoltageRange,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeErrorCode {
     Ok,
@@ -702,6 +812,64 @@ impl RuntimeBridge {
             samplerates_hz,
             channel_modes,
         })
+    }
+
+    pub fn device_options(&self) -> Result<DeviceOptionsSnapshot, RuntimeError> {
+        let mut raw = RawDeviceOptionsSnapshot {
+            has_current_operation_mode: 0,
+            current_operation_mode_code: 0,
+            operation_mode_count: 0,
+            operation_modes: [RawOptionValue {
+                code: 0,
+                label: [0; OPTION_LABEL_CAPACITY],
+            }; OPTION_VALUE_CAPACITY],
+            has_current_stop_option: 0,
+            current_stop_option_code: 0,
+            stop_option_count: 0,
+            stop_options: [RawOptionValue {
+                code: 0,
+                label: [0; OPTION_LABEL_CAPACITY],
+            }; OPTION_VALUE_CAPACITY],
+            has_current_filter: 0,
+            current_filter_code: 0,
+            filter_count: 0,
+            filters: [RawOptionValue {
+                code: 0,
+                label: [0; OPTION_LABEL_CAPACITY],
+            }; OPTION_VALUE_CAPACITY],
+            has_current_channel_mode: 0,
+            current_channel_mode_code: 0,
+            channel_mode_group_count: 0,
+            channel_mode_groups: [RawChannelModeGroup {
+                operation_mode_code: 0,
+                channel_mode_count: 0,
+                channel_modes: [RawChannelMode {
+                    id: 0,
+                    name: [0; OPTION_LABEL_CAPACITY],
+                    max_enabled_channels: 0,
+                }; CHANNEL_MODE_CAPACITY],
+            }; CHANNEL_MODE_GROUP_CAPACITY],
+            threshold: RawThresholdRange {
+                kind: [0; THRESHOLD_KIND_CAPACITY],
+                id: [0; OPTION_LABEL_CAPACITY],
+                has_current_volts: 0,
+                current_volts: 0.0,
+                min_volts: 0.0,
+                max_volts: 0.0,
+                step_volts: 0.0,
+                has_current_legacy_code: 0,
+                current_legacy_code: 0,
+                legacy_option_count: 0,
+                legacy_options: [RawOptionValue {
+                    code: 0,
+                    label: [0; OPTION_LABEL_CAPACITY],
+                }; OPTION_VALUE_CAPACITY],
+            },
+        };
+        native_call_status("ds_get_device_options", unsafe {
+            dsview_bridge_ds_get_device_options(&mut raw)
+        })?;
+        decode_device_options_snapshot(&raw)
     }
 
     pub fn set_samplerate(&self, value: u64) -> Result<(), RuntimeError> {
@@ -1143,6 +1311,112 @@ fn get_f64_config(
     let mut value = 0.0;
     native_call_status(operation, unsafe { getter(&mut value) })?;
     Ok(value)
+}
+
+fn decode_device_options_snapshot(
+    raw: &RawDeviceOptionsSnapshot,
+) -> Result<DeviceOptionsSnapshot, RuntimeError> {
+    let legacy_options = decode_option_values(
+        &raw.threshold.legacy_options,
+        raw.threshold.legacy_option_count as usize,
+    )?;
+
+    Ok(DeviceOptionsSnapshot {
+        current_operation_mode_code: decode_optional_code(
+            raw.has_current_operation_mode,
+            raw.current_operation_mode_code,
+        ),
+        operation_modes: decode_option_values(&raw.operation_modes, raw.operation_mode_count as usize)?,
+        current_stop_option_code: decode_optional_code(
+            raw.has_current_stop_option,
+            raw.current_stop_option_code,
+        ),
+        stop_options: decode_option_values(&raw.stop_options, raw.stop_option_count as usize)?,
+        current_filter_code: decode_optional_code(raw.has_current_filter, raw.current_filter_code),
+        filters: decode_option_values(&raw.filters, raw.filter_count as usize)?,
+        current_channel_mode_code: decode_optional_code(
+            raw.has_current_channel_mode,
+            raw.current_channel_mode_code,
+        ),
+        channel_mode_groups: decode_channel_mode_groups(
+            &raw.channel_mode_groups,
+            raw.channel_mode_group_count as usize,
+        )?,
+        threshold: ThresholdVoltageRange {
+            kind: decode_fixed_string(&raw.threshold.kind)?,
+            id: decode_fixed_string(&raw.threshold.id)?,
+            current_volts: if raw.threshold.has_current_volts != 0 {
+                Some(raw.threshold.current_volts)
+            } else {
+                None
+            },
+            min_volts: raw.threshold.min_volts,
+            max_volts: raw.threshold.max_volts,
+            step_volts: raw.threshold.step_volts,
+            legacy: if legacy_options.is_empty() && raw.threshold.has_current_legacy_code == 0 {
+                None
+            } else {
+                Some(LegacyThresholdMetadata {
+                    current_code: decode_optional_code(
+                        raw.threshold.has_current_legacy_code,
+                        raw.threshold.current_legacy_code,
+                    ),
+                    options: legacy_options,
+                })
+            },
+        },
+    })
+}
+
+fn decode_option_values(
+    raw: &[RawOptionValue; OPTION_VALUE_CAPACITY],
+    count: usize,
+) -> Result<Vec<DeviceOptionValue>, RuntimeError> {
+    raw[..count.min(raw.len())]
+        .iter()
+        .map(|item| {
+            Ok(DeviceOptionValue {
+                code: item.code as i16,
+                label: decode_fixed_string(&item.label)?,
+            })
+        })
+        .collect()
+}
+
+fn decode_channel_mode_groups(
+    raw: &[RawChannelModeGroup; CHANNEL_MODE_GROUP_CAPACITY],
+    count: usize,
+) -> Result<Vec<DeviceOptionChannelModeGroup>, RuntimeError> {
+    raw[..count.min(raw.len())]
+        .iter()
+        .map(|group| {
+            Ok(DeviceOptionChannelModeGroup {
+                operation_mode_code: group.operation_mode_code as i16,
+                channel_modes: group.channel_modes[..(group.channel_mode_count as usize)
+                    .min(group.channel_modes.len())]
+                    .iter()
+                    .map(|mode| {
+                        Ok(DeviceOptionChannelMode {
+                            code: mode.id as i16,
+                            label: decode_fixed_string(&mode.name)?,
+                            max_enabled_channels: mode.max_enabled_channels,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, RuntimeError>>()?,
+            })
+        })
+        .collect()
+}
+
+fn decode_fixed_string<const N: usize>(bytes: &[u8; N]) -> Result<String, RuntimeError> {
+    let nul = bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len());
+    std::str::from_utf8(&bytes[..nul])
+        .map(|value| value.to_string())
+        .map_err(|_| RuntimeError::InvalidDeviceName)
+}
+
+fn decode_optional_code(flag: c_int, value: i32) -> Option<i16> {
+    (flag != 0).then_some(value as i16)
 }
 
 fn path_to_cstring(path: &Path) -> Result<CString, RuntimeError> {
