@@ -1,23 +1,25 @@
 ---
 phase: 10-device-option-bridge-and-discovery
 verified: 2026-04-10T10:51:57Z
-status: human_needed
+status: passed
 score: 8/8 must-haves verified
 overrides_applied: 0
 human_verification:
   - test: "Connect a DSLogic Plus, run `devices list`, then run `devices options --handle <HANDLE> --format json` and `--format text`."
     expected: "The reported operation modes, stop options, filters, threshold voltage-range facts, and channel-mode groups match the live DSView-backed device state."
     why_human: "The automated suite uses mocks and pure renderer tests; it cannot prove the live hardware/runtime integration reflects a real connected device."
+    result: "passed on 2026-04-10 via live DSLogic Plus"
   - test: "After live option inspection, run the existing capture flow with a known-good DSLogic Plus setup."
     expected: "Capture still succeeds and the Phase 9/`v1.0` artifact path remains unchanged after using `devices options`."
     why_human: "This requires real hardware state and end-to-end runtime behavior that local unit/integration tests do not exercise."
+    result: "passed on 2026-04-10 via clean_success capture to .tmp/manual-uat-phase10/after-options.vcd"
 ---
 
 # Phase 10: Device Option Bridge and Discovery Verification Report
 
 **Phase Goal:** Expose the DSView-backed `DSLogic Plus` option surface through the Rust boundary and make the supported values inspectable from the CLI.
 **Verified:** 2026-04-10T10:51:57Z
-**Status:** human_needed
+**Status:** passed
 **Re-verification:** No - initial verification
 
 ## Goal Achievement
@@ -97,23 +99,23 @@ Orphaned requirements: none. `OPT-01` is the only Phase 10 requirement mapped in
 | --- | --- | --- | --- | --- |
 | none | - | No blocker or warning anti-patterns detected in the phase-owned source/test files reviewed for verification. | - | No automated gap found. |
 
-### Human Verification Required
+### Human Verification Completed
 
 ### 1. Live DSLogic Plus option discovery
 
-**Test:** Connect a `DSLogic Plus`, run `cargo run -q -p dsview-cli -- devices list`, pick a returned handle, then run `cargo run -q -p dsview-cli -- devices options --handle <HANDLE> --format json` and `cargo run -q -p dsview-cli -- devices options --handle <HANDLE> --format text`.
-**Expected:** Operation modes, stop options, filters, channel-mode groups, threshold voltage-range facts, and current selections match the live DSView/device state.
-**Why human:** Automated coverage uses bridge mocks and pure renderer tests; it cannot confirm a real device/runtime combination.
+**Command:** `cargo run -q -p dsview-cli -- devices options --resource-dir DSView/DSView/res --format json --handle 1` and `cargo run -q -p dsview-cli -- devices options --resource-dir DSView/DSView/res --format text --handle 1`
+**Observed:** Both commands succeeded against the connected `DSLogic PLus` device. Reported operation modes (`Buffer Mode`, `Stream Mode`, `Internal Test`), stop options, filters, threshold voltage-range facts, and grouped channel modes matched the live DSView-backed device state.
+**Result:** ✓ PASS
 
 ### 2. Existing capture flow after option inspection
 
-**Test:** After the live `devices options` run, execute the existing known-good capture flow for a `DSLogic Plus`.
-**Expected:** Capture still succeeds and the exported VCD/metadata behavior matches the shipped Phase 9 baseline.
-**Why human:** This requires real hardware timing and end-to-end DSView runtime behavior.
+**Command:** `cargo run -q -p dsview-cli -- capture --resource-dir DSView/DSView/res --handle 1 --sample-rate-hz 1000000 --sample-limit 1024 --channels 0 --wait-timeout-ms 10000 --poll-interval-ms 50 --format json --output .tmp/manual-uat-phase10/after-options.vcd`
+**Observed:** Capture returned `clean_success`, saw logic/end packets, cleanup succeeded, and wrote `.tmp/manual-uat-phase10/after-options.vcd` plus `.tmp/manual-uat-phase10/after-options.json`.
+**Result:** ✓ PASS
 
 ### Gaps Summary
 
-No automated gaps were found in Phase 10's sys/core/cli implementation. The remaining work is the live-device confirmation already called out by `10-VALIDATION.md`, so the phase is `human_needed` rather than `passed`.
+No automated or human-verification gaps remain for Phase 10. The live-device checks completed successfully, so the phase is fully passed.
 
 ---
 

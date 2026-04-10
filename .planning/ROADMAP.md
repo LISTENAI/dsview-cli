@@ -32,7 +32,7 @@ This roadmap defines milestone `v1.1 DSLogic Plus device options`. It builds dir
 Plans:
 - [x] `10-01-PLAN.md` - Map the DSView/libsigrok option IDs and current-value access needed for `DSLogic Plus` device options.
 - [x] `10-02-PLAN.md` - Implement sys-bridge and core typed structures for DSLogic option discovery and current-value reporting.
-- [ ] `10-03-PLAN.md` - Add CLI discovery output plus automated coverage for stable option-list reporting.
+- [x] `10-03-PLAN.md` - Add CLI discovery output plus automated coverage for stable option-list reporting.
 
 ### Phase 11: Device Option Validation Model
 **Goal**: Define and enforce the DSLogic Plus device-option rules before any acquisition begins.
@@ -86,7 +86,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 10. Device Option Bridge and Discovery | 3/3 | Complete   | 2026-04-10 |
+| 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
 | 11. Device Option Validation Model | 0/3 | Pending | - |
 | 12. CLI Device Option Surface | 0/3 | Pending | - |
 | 13. Option-Aware Capture Reporting | 0/3 | Pending | - |
@@ -106,5 +106,5 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 ## Status
 
 - Active milestone: `v1.1 DSLogic Plus device options`
-- Planning date: `2026-04-10`
-- Next action: Run `/gsd-verify-work` for Phase 10, then begin Phase 11 device-option validation work
+- Phase 10 completed and live-verified on: `2026-04-10`
+- Next action: `/gsd-plan-phase 11`
