@@ -4,7 +4,8 @@ use dsview_core::{
 };
 use dsview_sys::{
     DeviceOptionChannelMode, DeviceOptionChannelModeGroup, DeviceOptionValue,
-    DeviceOptionsSnapshot as NativeDeviceOptionsSnapshot, ThresholdVoltageRange,
+    DeviceOptionsSnapshot as NativeDeviceOptionsSnapshot,
+    LegacyThresholdMetadata as NativeLegacyThresholdMetadata, ThresholdVoltageRange,
 };
 
 fn supported_device() -> SupportedDevice {
@@ -97,6 +98,24 @@ fn native_snapshot() -> NativeDeviceOptionsSnapshot {
     }
 }
 
+fn native_snapshot_with_legacy_threshold() -> NativeDeviceOptionsSnapshot {
+    let mut snapshot = native_snapshot();
+    snapshot.threshold.legacy = Some(NativeLegacyThresholdMetadata {
+        current_code: Some(3),
+        options: vec![
+            DeviceOptionValue {
+                code: 7,
+                label: "TTL".to_string(),
+            },
+            DeviceOptionValue {
+                code: 3,
+                label: "CMOS".to_string(),
+            },
+        ],
+    });
+    snapshot
+}
+
 #[test]
 fn normalizes_option_ids_without_label_parsing() {
     // Contract: operation-mode:<code>, stop-option:<code>, filter:<code>, channel-mode:<code>.
@@ -183,5 +202,41 @@ fn selected_device_snapshot_preserves_channel_mode_groups() {
     assert_eq!(
         snapshot.channel_modes_by_operation_mode[1].current_channel_mode_code,
         Some(22)
+    );
+}
+
+#[test]
+fn threshold_snapshot_uses_voltage_range_contract_and_keeps_legacy_metadata_raw() {
+    let snapshot = normalize_device_options_snapshot(
+        &supported_device(),
+        native_snapshot_with_legacy_threshold(),
+    );
+
+    assert_eq!(snapshot.threshold.id, "threshold:vth-range");
+    assert_eq!(snapshot.threshold.kind, "voltage-range");
+    assert_eq!(snapshot.threshold.current_volts, Some(1.8));
+    assert_eq!(snapshot.threshold.min_volts, 0.7);
+    assert_eq!(snapshot.threshold.max_volts, 4.0);
+    assert_eq!(snapshot.threshold.step_volts, 0.1);
+    assert_eq!(
+        snapshot
+            .threshold
+            .legacy_metadata
+            .as_ref()
+            .unwrap()
+            .current_native_code,
+        Some(3)
+    );
+    assert_eq!(
+        snapshot
+            .threshold
+            .legacy_metadata
+            .as_ref()
+            .unwrap()
+            .options
+            .iter()
+            .map(|option| option.native_code)
+            .collect::<Vec<_>>(),
+        vec![3, 7]
     );
 }
