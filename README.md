@@ -4,11 +4,31 @@ Command-line tool for using DSLogic Plus devices without the DSView GUI. Capture
 
 ## Quick Start
 
+### One-line install (macOS/Linux)
+
+Install the latest published release bundle into `~/.local/opt/dsview-cli` and add a launcher in `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/main/scripts/install.sh | sh
+```
+
+Install a specific version instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/main/scripts/install.sh | sh -s -- --version v0.1.0
+```
+
+The installer keeps the release bundle intact so the executable can still find its sibling `runtime/` and `resources/` directories.
+
+Supported installer targets:
+- Linux x86_64, ARM64
+- macOS x86_64 (Intel), ARM64 (Apple Silicon)
+
 ### Build from source
 
 ```bash
 # Clone with submodules
-git clone --recursive https://github.com/yourusername/dsview-cli.git
+git clone --recursive https://github.com/LISTENAI/dsview-cli.git
 cd dsview-cli
 
 # Build release binary
@@ -20,7 +40,7 @@ cargo build --release
 ### List connected devices
 
 ```bash
-./target/release/dsview-cli devices list --format text
+dsview-cli devices list --format text
 ```
 
 Example output:
@@ -34,7 +54,7 @@ Device 1 (handle: 1)
 ### Capture waveform data
 
 ```bash
-./target/release/dsview-cli capture \
+dsview-cli capture \
   --handle 1 \
   --sample-rate-hz 100000000 \
   --sample-limit 2048 \
@@ -72,7 +92,7 @@ dsview-cli-v0.1.0-x86_64-unknown-linux-gnu/
 Use `--resource-dir` to point to a different resource directory:
 
 ```bash
-./dsview-cli devices list --resource-dir /path/to/custom/resources
+dsview-cli devices list --resource-dir /path/to/custom/resources
 ```
 
 This is the only resource-related flag. The CLI no longer exposes runtime library selection.
@@ -85,13 +105,18 @@ The v1.0 milestone validates the capture-and-export workflow for DSLogic Plus. F
 
 ## Platform Support
 
-Pre-built release bundles are available for:
+Source builds are supported for:
 
 - **Linux**: x86_64, ARM64
 - **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
 - **Windows**: x86_64, ARM64
 
-All platforms use the same CLI interface and bundle structure.
+Published release bundles and the one-line installer currently target:
+
+- **Linux**: x86_64, ARM64
+- **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
+
+Windows users should currently build from source.
 
 ## Build Prerequisites
 
@@ -105,6 +130,14 @@ sudo apt-get install \
   libglib2.0-dev \
   libusb-1.0-0-dev \
   libfftw3-dev
+```
+
+If `devices list` cannot see your hardware as a non-root user, install the bundled udev rule and replug the device:
+
+```bash
+sudo cp DSView/DSView/DreamSourceLab.rules /etc/udev/rules.d/99-dsview-cli.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
 ```
 
 ### macOS
