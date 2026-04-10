@@ -30,9 +30,9 @@ This roadmap defines milestone `v1.1 DSLogic Plus device options`. It builds dir
 **Plans**: 3 plans
 
 Plans:
-- [ ] 10-01: Map the DSView/libsigrok option IDs and current-value access needed for `DSLogic Plus` device options.
-- [ ] 10-02: Implement sys-bridge and core typed structures for DSLogic option discovery and current-value reporting.
-- [ ] 10-03: Add CLI discovery output plus automated coverage for stable option-list reporting.
+- [ ] `10-01-PLAN.md` - Map the DSView/libsigrok option IDs and current-value access needed for `DSLogic Plus` device options.
+- [ ] `10-02-PLAN.md` - Implement sys-bridge and core typed structures for DSLogic option discovery and current-value reporting.
+- [ ] `10-03-PLAN.md` - Add CLI discovery output plus automated coverage for stable option-list reporting.
 
 ### Phase 11: Device Option Validation Model
 **Goal**: Define and enforce the DSLogic Plus device-option rules before any acquisition begins.
