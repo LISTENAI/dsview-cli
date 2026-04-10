@@ -9,13 +9,13 @@ Command-line tool for using DSLogic Plus devices without the DSView GUI. Capture
 Install the latest published release bundle into `~/.local/opt/dsview-cli` and add a launcher in `~/.local/bin`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh
 ```
 
 Install a specific version instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/main/scripts/install.sh | sh -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v0.1.0
 ```
 
 The installer keeps the release bundle intact so the executable can still find its sibling `runtime/` and `resources/` directories.
