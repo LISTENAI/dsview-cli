@@ -99,6 +99,7 @@ fn native_snapshot() -> NativeDeviceOptionsSnapshot {
 
 #[test]
 fn normalizes_option_ids_without_label_parsing() {
+    // Contract: operation-mode:<code>, stop-option:<code>, filter:<code>, channel-mode:<code>.
     let snapshot = normalize_device_options_snapshot(&supported_device(), native_snapshot());
 
     assert_eq!(

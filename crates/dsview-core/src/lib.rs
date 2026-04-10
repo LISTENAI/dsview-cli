@@ -7,10 +7,17 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 mod capture_config;
+mod device_options;
 
 pub use capture_config::{
     CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
     ValidatedCaptureConfig,
+};
+pub use device_options::{
+    ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
+    DeviceIdentitySnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot,
+    LegacyThresholdMetadataSnapshot, RawOptionMetadataSnapshot, ThresholdCapabilitySnapshot,
+    normalize_device_options_snapshot,
 };
 pub use dsview_sys::{
     AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, ExportErrorCode,
@@ -577,6 +584,20 @@ impl Discovery {
         request: &CaptureConfigRequest,
     ) -> Result<ValidatedCaptureConfig, CaptureConfigError> {
         self.dslogic_plus_capabilities()?.validate_request(request)
+    }
+
+    pub fn inspect_device_options(
+        &self,
+        selection_handle: SelectionHandle,
+    ) -> Result<DeviceOptionsSnapshot, BringUpError> {
+        let opened = self.open_device(selection_handle)?;
+        let native = self
+            .runtime
+            .device_options()
+            .map_err(BringUpError::Runtime)?;
+        let snapshot = normalize_device_options_snapshot(opened.device(), native);
+        opened.release()?;
+        Ok(snapshot)
     }
 
     pub fn apply_capture_config(
