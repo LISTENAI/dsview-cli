@@ -8,7 +8,7 @@ use dsview_core::{
     CaptureExportFailureKind, CaptureExportRequest, CaptureRunSummary, ChannelModeGroupSnapshot,
     ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DeviceIdentitySnapshot,
     DeviceOptionsSnapshot, EnumOptionSnapshot, NativeErrorCode, ThresholdCapabilitySnapshot,
-    ValidatedCaptureConfig, ValidatedDeviceOptionRequest,
+    ValidatedCaptureConfig, ValidatedDeviceOptionRequest, EffectiveDeviceOptionState,
 };
 use dsview_sys::{
     AcquisitionPacketStatus, ExportErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest,
@@ -180,6 +180,16 @@ fn validated_device_options() -> ValidatedDeviceOptionRequest {
 fn export_request(completion: CaptureCompletion) -> CaptureExportRequest {
     let mut capture = clean_capture();
     capture.completion = completion;
+    capture.effective_device_options = Some(EffectiveDeviceOptionState {
+        operation_mode_code: Some(1),
+        stop_option_code: None,
+        channel_mode_code: Some(30),
+        threshold_volts: Some(2.4),
+        filter_code: Some(1),
+        enabled_channels: vec![0, 2, 4, 6],
+        sample_limit: Some(4096),
+        sample_rate_hz: Some(200_000_000),
+    });
     CaptureExportRequest {
         capture,
         validated_config: validated_config(),

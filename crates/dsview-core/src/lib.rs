@@ -266,6 +266,24 @@ pub struct EffectiveDeviceOptionState {
     pub sample_rate_hz: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CaptureDeviceOptionSnapshot {
+    pub operation_mode_id: String,
+    pub stop_option_id: Option<String>,
+    pub channel_mode_id: String,
+    pub enabled_channels: Vec<u16>,
+    pub threshold_volts: Option<f64>,
+    pub filter_id: Option<String>,
+    pub sample_rate_hz: u64,
+    pub sample_limit: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CaptureDeviceOptionFacts {
+    pub requested: CaptureDeviceOptionSnapshot,
+    pub effective: CaptureDeviceOptionSnapshot,
+}
+
 #[derive(Debug, Error)]
 #[error("device option apply failed at {failed_step}: {runtime_error}")]
 pub struct DeviceOptionApplyFailure {
@@ -315,6 +333,8 @@ pub struct CaptureExportRequest {
     pub device_model: String,
     pub device_stable_id: String,
     pub selected_handle: SelectionHandle,
+    pub validated_device_options: Option<ValidatedDeviceOptionRequest>,
+    pub device_options_snapshot: DeviceOptionsSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -350,16 +370,17 @@ pub struct MetadataArtifactInfo {
     pub metadata_path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaptureMetadata {
     pub schema_version: u32,
     pub tool: MetadataToolInfo,
     pub capture: MetadataCaptureInfo,
     pub acquisition: MetadataAcquisitionInfo,
     pub artifacts: MetadataArtifactInfo,
+    pub device_options: CaptureDeviceOptionFacts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CaptureExportSuccess {
     pub vcd_path: PathBuf,
     pub metadata_path: PathBuf,
@@ -1329,13 +1350,177 @@ fn completion_name(completion: CaptureCompletion) -> String {
     }
 }
 
+fn required_code(field: &str, value: Option<i16>) -> Result<i16, String> {
+    value.ok_or_else(|| format!("missing `{field}` for capture device option reporting"))
+}
+
+fn required_u64(field: &str, value: Option<u64>) -> Result<u64, String> {
+    value.ok_or_else(|| format!("missing `{field}` for capture device option reporting"))
+}
+
+fn resolve_enum_option_id(
+    field: &str,
+    options: &[EnumOptionSnapshot],
+    code: i16,
+) -> Result<String, String> {
+    options
+        .iter()
+        .find(|option| option.native_code == code)
+        .map(|option| option.id.clone())
+        .ok_or_else(|| format!("missing `{field}` id for native code {code}"))
+}
+
+fn resolve_optional_enum_option_id(
+    field: &str,
+    options: &[EnumOptionSnapshot],
+    code: Option<i16>,
+) -> Result<Option<String>, String> {
+    code.map(|value| resolve_enum_option_id(field, options, value))
+        .transpose()
+}
+
+fn resolve_channel_mode_option_id(
+    snapshot: &DeviceOptionsSnapshot,
+    channel_mode_code: i16,
+    operation_mode_code: Option<i16>,
+) -> Result<String, String> {
+    let scoped_match = operation_mode_code.and_then(|mode_code| {
+        snapshot
+            .channel_modes_by_operation_mode
+            .iter()
+            .find(|group| group.operation_mode_code == mode_code)
+            .and_then(|group| {
+                group.channel_modes
+                    .iter()
+                    .find(|mode| mode.native_code == channel_mode_code)
+            })
+    });
+    if let Some(mode) = scoped_match {
+        return Ok(mode.id.clone());
+    }
+
+    snapshot
+        .channel_modes_by_operation_mode
+        .iter()
+        .flat_map(|group| group.channel_modes.iter())
+        .find(|mode| mode.native_code == channel_mode_code)
+        .map(|mode| mode.id.clone())
+        .ok_or_else(|| format!("missing `channel_mode_id` for native code {channel_mode_code}"))
+}
+
+fn capture_device_option_snapshot_from_validated_request(
+    request: &ValidatedDeviceOptionRequest,
+) -> CaptureDeviceOptionSnapshot {
+    CaptureDeviceOptionSnapshot {
+        operation_mode_id: request.operation_mode_id.clone(),
+        stop_option_id: request.stop_option_id.clone(),
+        channel_mode_id: request.channel_mode_id.clone(),
+        enabled_channels: request.enabled_channels.clone(),
+        threshold_volts: request.threshold_volts,
+        filter_id: request.filter_id.clone(),
+        sample_rate_hz: request.sample_rate_hz,
+        sample_limit: request.requested_sample_limit,
+    }
+}
+
+fn capture_device_option_snapshot_from_effective_state(
+    effective: &EffectiveDeviceOptionState,
+    snapshot: &DeviceOptionsSnapshot,
+) -> Result<CaptureDeviceOptionSnapshot, String> {
+    let operation_mode_code = required_code("operation_mode_code", effective.operation_mode_code)?;
+    let channel_mode_code = required_code("channel_mode_code", effective.channel_mode_code)?;
+    Ok(CaptureDeviceOptionSnapshot {
+        operation_mode_id: resolve_enum_option_id(
+            "operation_mode_id",
+            &snapshot.operation_modes,
+            operation_mode_code,
+        )?,
+        stop_option_id: resolve_optional_enum_option_id(
+            "stop_option_id",
+            &snapshot.stop_options,
+            effective.stop_option_code,
+        )?,
+        channel_mode_id: resolve_channel_mode_option_id(
+            snapshot,
+            channel_mode_code,
+            Some(operation_mode_code),
+        )?,
+        enabled_channels: effective.enabled_channels.clone(),
+        threshold_volts: effective.threshold_volts,
+        filter_id: resolve_optional_enum_option_id(
+            "filter_id",
+            &snapshot.filters,
+            effective.filter_code,
+        )?,
+        sample_rate_hz: required_u64("sample_rate_hz", effective.sample_rate_hz)?,
+        sample_limit: required_u64("sample_limit", effective.sample_limit)?,
+    })
+}
+
+fn inherited_capture_device_option_snapshot(
+    snapshot: &DeviceOptionsSnapshot,
+    validated_config: &ValidatedCaptureConfig,
+) -> Result<CaptureDeviceOptionSnapshot, String> {
+    Ok(CaptureDeviceOptionSnapshot {
+        operation_mode_id: snapshot
+            .current
+            .operation_mode_id
+            .clone()
+            .ok_or_else(|| "missing `operation_mode_id` for baseline capture reporting".to_string())?,
+        stop_option_id: snapshot.current.stop_option_id.clone(),
+        channel_mode_id: snapshot
+            .current
+            .channel_mode_id
+            .clone()
+            .ok_or_else(|| "missing `channel_mode_id` for baseline capture reporting".to_string())?,
+        enabled_channels: validated_config.enabled_channels.clone(),
+        threshold_volts: snapshot.threshold.current_volts,
+        filter_id: snapshot.current.filter_id.clone(),
+        sample_rate_hz: validated_config.sample_rate_hz,
+        sample_limit: validated_config.effective_sample_limit,
+    })
+}
+
+pub fn build_capture_device_option_facts(
+    request: &CaptureExportRequest,
+) -> Result<CaptureDeviceOptionFacts, String> {
+    if let Some(validated_device_options) = request.validated_device_options.as_ref() {
+        let effective = request
+            .capture
+            .effective_device_options
+            .as_ref()
+            .ok_or_else(|| {
+                "missing effective device option state for validated capture export".to_string()
+            })?;
+        Ok(CaptureDeviceOptionFacts {
+            requested: capture_device_option_snapshot_from_validated_request(
+                validated_device_options,
+            ),
+            effective: capture_device_option_snapshot_from_effective_state(
+                effective,
+                &request.device_options_snapshot,
+            )?,
+        })
+    } else {
+        let inherited = inherited_capture_device_option_snapshot(
+            &request.device_options_snapshot,
+            &request.validated_config,
+        )?;
+        Ok(CaptureDeviceOptionFacts {
+            requested: inherited.clone(),
+            effective: inherited,
+        })
+    }
+}
+
 fn build_capture_metadata(
     request: &CaptureExportRequest,
     metadata_path: &Path,
     export: &VcdExportFacts,
 ) -> Result<CaptureMetadata, String> {
+    let device_options = build_capture_device_option_facts(request)?;
     Ok(CaptureMetadata {
-        schema_version: 1,
+        schema_version: 2,
         tool: MetadataToolInfo {
             name: request.tool_name.clone(),
             version: request.tool_version.clone(),
@@ -1361,6 +1546,7 @@ fn build_capture_metadata(
             vcd_path: request.vcd_path.display().to_string(),
             metadata_path: metadata_path.display().to_string(),
         },
+        device_options,
     })
 }
 
@@ -1786,6 +1972,62 @@ mod tests {
             device_model: "DSLogic Plus".to_string(),
             device_stable_id: "dslogic-plus".to_string(),
             selected_handle: SelectionHandle::new(7).unwrap(),
+            validated_device_options: None,
+            device_options_snapshot: DeviceOptionsSnapshot {
+                device: DeviceIdentitySnapshot {
+                    selection_handle: 7,
+                    native_handle: 77,
+                    stable_id: "dslogic-plus".to_string(),
+                    kind: "DSLogic Plus".to_string(),
+                    name: "DSLogic Plus".to_string(),
+                },
+                current: CurrentDeviceOptionValues {
+                    operation_mode_id: Some("operation-mode:0".to_string()),
+                    operation_mode_code: Some(0),
+                    stop_option_id: Some("stop-option:1".to_string()),
+                    stop_option_code: Some(1),
+                    filter_id: Some("filter:0".to_string()),
+                    filter_code: Some(0),
+                    channel_mode_id: Some("channel-mode:20".to_string()),
+                    channel_mode_code: Some(20),
+                },
+                operation_modes: vec![EnumOptionSnapshot {
+                    id: "operation-mode:0".to_string(),
+                    native_code: 0,
+                    label: "Buffer Mode".to_string(),
+                }],
+                stop_options: vec![EnumOptionSnapshot {
+                    id: "stop-option:1".to_string(),
+                    native_code: 1,
+                    label: "Stop after samples".to_string(),
+                }],
+                filters: vec![EnumOptionSnapshot {
+                    id: "filter:0".to_string(),
+                    native_code: 0,
+                    label: "Off".to_string(),
+                }],
+                channel_modes_by_operation_mode: vec![ChannelModeGroupSnapshot {
+                    operation_mode_id: "operation-mode:0".to_string(),
+                    operation_mode_code: 0,
+                    current_channel_mode_id: Some("channel-mode:20".to_string()),
+                    current_channel_mode_code: Some(20),
+                    channel_modes: vec![ChannelModeOptionSnapshot {
+                        id: "channel-mode:20".to_string(),
+                        native_code: 20,
+                        label: "Buffer 100x16".to_string(),
+                        max_enabled_channels: 16,
+                    }],
+                }],
+                threshold: ThresholdCapabilitySnapshot {
+                    id: "threshold:vth-range".to_string(),
+                    kind: "voltage-range".to_string(),
+                    current_volts: Some(1.8),
+                    min_volts: 0.0,
+                    max_volts: 5.0,
+                    step_volts: 0.1,
+                    legacy_metadata: None,
+                },
+            },
         }
     }
 

@@ -363,6 +363,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
     let mut validated_device_options = None;
+    let mut device_options_snapshot = None;
     if uses_device_option_validation(&args) {
         let (snapshot, capabilities) = if let Some((snapshot, capabilities)) =
             capture_test_fixture(handle)
@@ -378,6 +379,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
                 .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
             (snapshot, capabilities)
         };
+        device_options_snapshot = Some(snapshot.clone());
         let request = resolve_capture_device_option_request(
             &snapshot,
             &capabilities,
@@ -422,6 +424,13 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     let result = discovery
         .run_capture(&run_request)
         .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
+    let device_options_snapshot = if let Some(snapshot) = device_options_snapshot {
+        snapshot
+    } else {
+        discovery
+            .inspect_device_options(handle)
+            .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?
+    };
     let export = discovery
         .export_clean_capture_vcd(&dsview_core::CaptureExportRequest {
             capture: result.clone(),
@@ -434,6 +443,8 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
             device_model: "DSLogic Plus".to_string(),
             device_stable_id: "dslogic-plus".to_string(),
             selected_handle: handle,
+            validated_device_options: validated_device_options.clone(),
+            device_options_snapshot,
         })
         .map_err(|error| command_error(args.runtime.format, classify_export_error(&error)))?;
 
