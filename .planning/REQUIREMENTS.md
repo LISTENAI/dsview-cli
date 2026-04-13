@@ -21,8 +21,8 @@
 
 ### Validation and Execution
 
-- [ ] **VAL-01**: CLI rejects unsupported combinations of operation mode, channel mode, sample rate, sample limit, and enabled channels before acquisition starts.
-- [ ] **VAL-02**: CLI rejects unsupported threshold, filter, or mode-incompatible stop-option values before acquisition starts.
+- [x] **VAL-01**: CLI rejects unsupported combinations of operation mode, channel mode, sample rate, sample limit, and enabled channels before acquisition starts.
+- [x] **VAL-02**: CLI rejects unsupported threshold, filter, or mode-incompatible stop-option values before acquisition starts.
 - [ ] **RUN-04**: Capture applies the selected DSView-compatible device options before acquisition begins.
 - [ ] **RUN-05**: CLI success output and machine-readable metadata record the effective device option values used for the run.
 
@@ -58,8 +58,8 @@
 | OPT-05 | Phase 12 | Pending |
 | OPT-06 | Phase 12 | Pending |
 | OPT-07 | Phase 12 | Pending |
-| VAL-01 | Phase 11 | Pending |
-| VAL-02 | Phase 11 | Pending |
+| VAL-01 | Phase 11 | Complete |
+| VAL-02 | Phase 11 | Complete |
 | RUN-04 | Phase 13 | Pending |
 | RUN-05 | Phase 13 | Pending |
 

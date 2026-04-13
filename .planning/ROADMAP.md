@@ -45,9 +45,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 11-01: Define the Rust request and capability models for DSLogic Plus device options.
-- [ ] 11-02: Implement mode-aware validation and stable error taxonomy for invalid option combinations.
-- [ ] 11-03: Add tests covering valid and invalid DSLogic Plus option combinations from DSView rules.
+- [ ] `11-01-PLAN.md` - Define the internal validation request/capability model and selected-device capability loader without changing Phase 10 discovery output.
+- [ ] `11-02-PLAN.md` - Implement pure mode-aware validation plus stable machine-readable validation error codes.
+- [ ] `11-03-PLAN.md` - Lock DSView-rule coverage and CLI validation-code regressions.
 
 ### Phase 12: CLI Device Option Surface
 **Goal**: Let users choose the relevant DSView-compatible `DSLogic Plus` device options directly from the CLI without relying on GUI profiles.
@@ -87,7 +87,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
-| 11. Device Option Validation Model | 0/3 | Pending | - |
+| 11. Device Option Validation Model | 1/3 | In Progress|  |
 | 12. CLI Device Option Surface | 0/3 | Pending | - |
 | 13. Option-Aware Capture Reporting | 0/3 | Pending | - |
 

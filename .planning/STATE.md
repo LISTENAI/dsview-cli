@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: planning
-last_updated: "2026-04-10T13:06:36.602Z"
-last_activity: 2026-04-10
+status: executing
+last_updated: "2026-04-13T04:48:50.760Z"
+last_activity: 2026-04-13
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 100
+  total_plans: 6
+  completed_plans: 4
+  percent: 67
 ---
 
 # Session State
@@ -20,14 +20,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 11 planning — device-option-validation-model
+**Current focus:** Phase 11 — device-option-validation-model
 
 ## Current Position
 
-Phase: 11
-Plan: Not started
-Status: Ready to plan Phase 11
-Last activity: 2026-04-10
+Phase: 11 (device-option-validation-model) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-04-13
 
 ## Accumulated Context
 
@@ -47,6 +47,9 @@ Last activity: 2026-04-10
 - [Phase 10]: Build a dedicated CLI response type from the normalized core snapshot so JSON stays authoritative while text formatting stays testable.
 - [Phase 10]: Validate devices options --handle before runtime setup so invalid_selector remains available without hardware or resource files.
 - [Phase 10]: Keep discovery rendering isolated to the new command so shipped devices and capture flows remain unchanged.
+- [Phase 11]: Keep Phase 11 validation capabilities additive and internal instead of extending the shipped Phase 10 discovery schema.
+- [Phase 11]: Probe validation facts entirely inside dsview-sys and restore original operation/channel modes on every exit path.
+- [Phase 11]: Advertise stop-option compatibility only for Buffer Mode in the internal validation model.
 
 ## Performance Metrics
 
@@ -55,15 +58,16 @@ Last activity: 2026-04-10
 | 10 | 01 | 8 min | 2 | 4 |
 | 10 | 02 | 6 min | 2 | 3 |
 | 10 | 03 | 3 min | 2 | 4 |
+| Phase 11 P01 | 45 min | 2 tasks | 8 files |
 
 ## Session Continuity
 
-- Last session: 2026-04-10T10:40:32.061Z
-- Stopped at: Phase 10 live verification complete
-- Resume from: `/gsd-plan-phase 11`
+- Last session: 2026-04-13T04:47:43Z
+- Stopped at: Completed 11-01-PLAN.md
+- Resume from: `/gsd-execute-phase 11`
 
 ## Immediate Next Steps
 
-- Start `/gsd-plan-phase 11` for device-option validation work on top of the stable discovery schema from Phase 10.
-- Carry Phase 10's stable discovery contract forward into validation without changing the public option-discovery schema.
-- Preserve the shipped `v1.0` capture/export behavior while adding option-validation rules.
+- Execute `11-02-PLAN.md` to implement the pure validator against the new request/capability contracts from `11-01`.
+- Preserve the Phase 10 public discovery schema while wiring stable validation failures into CLI-visible machine-readable codes.
+- Keep the shipped `v1.0` capture/export path stable while finishing Phase 11 validation coverage.
