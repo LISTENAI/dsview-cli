@@ -837,7 +837,7 @@ fn render_error(format: OutputFormat, error: &ErrorResponse) {
 mod tests {
     use super::*;
 
-    use dsview_core::{AcquisitionSummary, AcquisitionTerminalEvent};
+    use dsview_core::{AcquisitionSummary, AcquisitionTerminalEvent, CaptureConfigError};
 
     #[test]
     fn invalid_handle_maps_to_stable_error_code() {
@@ -1001,7 +1001,7 @@ mod tests {
                 DeviceOptionValidationError::UnknownOperationMode {
                     operation_mode_id: "operation-mode:404".to_string(),
                 },
-                "invalid_operation_mode",
+                "operation_mode_unsupported",
             ),
             (
                 DeviceOptionValidationError::StopOptionIncompatibleWithMode {
@@ -1014,7 +1014,7 @@ mod tests {
                 DeviceOptionValidationError::UnknownChannelMode {
                     channel_mode_id: "channel-mode:404".to_string(),
                 },
-                "invalid_channel_mode",
+                "channel_mode_unsupported",
             ),
             (
                 DeviceOptionValidationError::UnsupportedSampleRate {
@@ -1035,7 +1035,7 @@ mod tests {
                 DeviceOptionValidationError::UnknownFilter {
                     filter_id: "filter:404".to_string(),
                 },
-                "invalid_filter",
+                "filter_unsupported",
             ),
         ];
 
@@ -1044,6 +1044,86 @@ mod tests {
             assert_eq!(response.code, expected_code);
             assert!(response.message.contains('`') || !response.message.is_empty());
         }
+    }
+
+    #[test]
+    fn sample_rate_unsupported_maps_to_stable_validation_error_code() {
+        let response =
+            classify_validation_error(&DeviceOptionValidationError::UnsupportedSampleRate {
+                sample_rate_hz: 200_000_000,
+                channel_mode_id: "channel-mode:11".to_string(),
+            });
+
+        assert_eq!(response.code, "sample_rate_unsupported");
+        assert!(response.message.contains("200000000"));
+        assert_eq!(response.native_error, None);
+        assert_eq!(response.terminal_event, None);
+        assert_eq!(response.cleanup, None);
+    }
+
+    #[test]
+    fn enabled_channels_exceed_mode_limit_maps_to_stable_validation_error_code() {
+        let response =
+            classify_validation_error(&DeviceOptionValidationError::TooManyEnabledChannels {
+                enabled_channel_count: 5,
+                max_enabled_channels: 4,
+            });
+
+        assert_eq!(response.code, "enabled_channels_exceed_mode_limit");
+    }
+
+    #[test]
+    fn sample_limit_exceeds_capacity_maps_to_stable_validation_error_code() {
+        let response =
+            classify_validation_error(&DeviceOptionValidationError::SampleLimitExceedsCapacity {
+                effective_sample_limit: 4096,
+                maximum_sample_limit: 3072,
+                enabled_channel_count: 4,
+            });
+
+        assert_eq!(response.code, "sample_limit_exceeds_capacity");
+    }
+
+    #[test]
+    fn threshold_out_of_range_maps_to_stable_validation_error_code() {
+        let response =
+            classify_validation_error(&DeviceOptionValidationError::ThresholdOutOfRange {
+                threshold_volts: 6.0,
+                min_volts: 0.0,
+                max_volts: 5.0,
+            });
+
+        assert_eq!(response.code, "threshold_out_of_range");
+    }
+
+    #[test]
+    fn filter_unsupported_maps_to_stable_validation_error_code() {
+        let response = classify_validation_error(&DeviceOptionValidationError::UnknownFilter {
+            filter_id: "filter:404".to_string(),
+        });
+
+        assert_eq!(response.code, "filter_unsupported");
+    }
+
+    #[test]
+    fn stop_option_incompatible_maps_to_stable_validation_error_code() {
+        let response =
+            classify_validation_error(&DeviceOptionValidationError::StopOptionIncompatibleWithMode {
+                stop_option_id: "stop-option:1".to_string(),
+                operation_mode_id: "operation-mode:202".to_string(),
+            });
+
+        assert_eq!(response.code, "stop_option_incompatible");
+    }
+
+    #[test]
+    fn capture_config_sample_rate_validation_maps_to_stable_validation_error_code() {
+        let response = classify_capture_config_error(&CaptureConfigError::UnsupportedSampleRate {
+            sample_rate_hz: 200_000_000,
+            mode_name: "Buffer 100x16".to_string(),
+        });
+
+        assert_eq!(response.code, "sample_rate_unsupported");
     }
 
     #[test]
