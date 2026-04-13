@@ -338,3 +338,87 @@ fn sample_limit_alignment_can_push_request_over_capacity() {
         }
     );
 }
+
+#[test]
+fn threshold_value_must_stay_within_vth_range() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        threshold_volts: Some(5.1),
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert_eq!(
+        error,
+        DeviceOptionValidationError::ThresholdOutOfRange {
+            threshold_volts: 5.1,
+            min_volts: 0.0,
+            max_volts: 5.0,
+        }
+    );
+    assert_eq!(error.code(), "threshold_out_of_range");
+}
+
+#[test]
+fn threshold_value_must_follow_point_one_volt_steps() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        threshold_volts: Some(1.85),
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert_eq!(
+        error,
+        DeviceOptionValidationError::ThresholdStepInvalid {
+            threshold_volts: 1.85,
+            min_volts: 0.0,
+            step_volts: 0.1,
+        }
+    );
+    assert_eq!(error.code(), "threshold_step_invalid");
+}
+
+#[test]
+fn filter_id_must_exist_in_supported_list() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        filter_id: Some("filter:99".to_string()),
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert_eq!(
+        error,
+        DeviceOptionValidationError::UnknownFilter {
+            filter_id: "filter:99".to_string(),
+        }
+    );
+    assert_eq!(error.code(), "filter_unsupported");
+}
+
+#[test]
+fn stream_mode_rejects_buffer_only_stop_option() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        operation_mode_id: "operation-mode:202".to_string(),
+        channel_mode_id: "channel-mode:21".to_string(),
+        stop_option_id: Some("stop-option:1".to_string()),
+        sample_rate_hz: 25_000_000,
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert_eq!(
+        error,
+        DeviceOptionValidationError::StopOptionIncompatibleWithMode {
+            stop_option_id: "stop-option:1".to_string(),
+            operation_mode_id: "operation-mode:202".to_string(),
+        }
+    );
+    assert_eq!(error.code(), "stop_option_incompatible");
+}
