@@ -5,13 +5,14 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
-    DeviceOptionsResponse, build_device_options_response, render_device_options_text,
+    build_device_options_response, render_device_options_text, DeviceOptionsResponse,
 };
 use dsview_core::{
-    AcquisitionSummary, AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError,
-    CaptureCleanup, CaptureCompletion, CaptureConfigRequest, CaptureExportError, CaptureRunError,
-    CaptureRunRequest, DeviceOptionValidationError, Discovery, NativeErrorCode, RuntimeError,
-    SelectionHandle, SupportedDevice, describe_native_error, resolve_capture_artifact_paths,
+    describe_native_error, resolve_capture_artifact_paths, AcquisitionSummary,
+    AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError, CaptureCleanup,
+    CaptureCompletion, CaptureConfigError, CaptureConfigRequest, CaptureExportError,
+    CaptureRunError, CaptureRunRequest, DeviceOptionValidationError, Discovery, NativeErrorCode,
+    RuntimeError, SelectionHandle, SupportedDevice,
 };
 use serde::Serialize;
 
@@ -296,10 +297,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     let validated_config = discovery
         .validate_capture_config(&run_request.config)
         .map_err(|error| {
-            command_error(
-                args.runtime.format,
-                classify_runtime_error(&RuntimeError::InvalidArgument(error.to_string())),
-            )
+            command_error(args.runtime.format, classify_capture_config_error(&error))
         })?;
     let result = discovery
         .run_capture(&run_request)
@@ -566,6 +564,69 @@ fn classify_runtime_error(error: &RuntimeError) -> ErrorResponse {
 fn classify_validation_error(error: &DeviceOptionValidationError) -> ErrorResponse {
     ErrorResponse {
         code: error.code(),
+        message: error.to_string(),
+        detail: None,
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    }
+}
+
+fn classify_capture_config_error(error: &CaptureConfigError) -> ErrorResponse {
+    let validation_code = match error {
+        CaptureConfigError::Runtime(_) => {
+            DeviceOptionValidationError::Runtime(error.to_string()).code()
+        }
+        CaptureConfigError::EmptySampleRate => DeviceOptionValidationError::EmptySampleRate.code(),
+        CaptureConfigError::EmptySampleLimit => {
+            DeviceOptionValidationError::EmptySampleLimit.code()
+        }
+        CaptureConfigError::NoEnabledChannels => {
+            DeviceOptionValidationError::NoEnabledChannels.code()
+        }
+        CaptureConfigError::ChannelOutOfRange { channel } => {
+            DeviceOptionValidationError::ChannelOutOfRange {
+                channel: *channel,
+                total_channel_count: channel.saturating_add(1),
+            }
+            .code()
+        }
+        CaptureConfigError::UnknownChannelMode { mode } => {
+            DeviceOptionValidationError::UnknownChannelMode {
+                channel_mode_id: format!("channel-mode:{mode}"),
+            }
+            .code()
+        }
+        CaptureConfigError::UnsupportedSampleRate {
+            sample_rate_hz,
+            mode_name,
+        } => DeviceOptionValidationError::UnsupportedSampleRate {
+            sample_rate_hz: *sample_rate_hz,
+            channel_mode_id: mode_name.clone(),
+        }
+        .code(),
+        CaptureConfigError::TooManyEnabledChannels {
+            enabled_channel_count,
+            max_enabled_channels,
+        } => DeviceOptionValidationError::TooManyEnabledChannels {
+            enabled_channel_count: *enabled_channel_count,
+            max_enabled_channels: *max_enabled_channels,
+        }
+        .code(),
+        CaptureConfigError::SampleLimitExceedsCapacity {
+            effective_sample_limit,
+            maximum_sample_limit,
+            enabled_channel_count,
+        } => DeviceOptionValidationError::SampleLimitExceedsCapacity {
+            effective_sample_limit: *effective_sample_limit,
+            maximum_sample_limit: *maximum_sample_limit,
+            enabled_channel_count: *enabled_channel_count,
+        }
+        .code(),
+    };
+
+    ErrorResponse {
+        code: validation_code,
         message: error.to_string(),
         detail: None,
         native_error: None,
@@ -1107,11 +1168,12 @@ mod tests {
 
     #[test]
     fn stop_option_incompatible_maps_to_stable_validation_error_code() {
-        let response =
-            classify_validation_error(&DeviceOptionValidationError::StopOptionIncompatibleWithMode {
+        let response = classify_validation_error(
+            &DeviceOptionValidationError::StopOptionIncompatibleWithMode {
                 stop_option_id: "stop-option:1".to_string(),
                 operation_mode_id: "operation-mode:202".to_string(),
-            });
+            },
+        );
 
         assert_eq!(response.code, "stop_option_incompatible");
     }
