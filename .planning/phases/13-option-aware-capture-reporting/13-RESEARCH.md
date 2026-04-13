@@ -333,17 +333,13 @@ The codebase already uses `BTreeSet` for channel selection, and Rust’s `BTreeS
 | A1 | Adding a required requested/effective device-option block to metadata should probably bump `schema_version` from `1` to `2` even if the change is additive. [ASSUMED] | Open Questions | Medium; if the project treats additive metadata fields as schema-compatible, the planner should avoid unnecessary consumer churn. |
 | A2 | The cleanest implementation will introduce one new shared core facts struct for requested/effective option reporting rather than threading many loose fields through CLI and export APIs. [ASSUMED] | Summary / Architecture Patterns | Low; naming and shape can change without changing the underlying work. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should the metadata schema version bump when the new device-option block is added?**
-   - What we know: `CaptureMetadata` already carries `schema_version: 1`, and Phase 13 will add new required reporting content for automation. [VERIFIED: crates/dsview-core/src/lib.rs] [VERIFIED: crates/dsview-core/tests/export_artifacts.rs] [VERIFIED: .planning/REQUIREMENTS.md]
-   - What's unclear: The project does not yet document whether additive required fields require a schema-version increment. [VERIFIED: rg]
-   - Recommendation: Decide this before implementation starts; if downstream consumers treat the sidecar as versioned schema, a bump is safer. [ASSUMED]
+1. **Should the metadata schema version bump when the new device-option block is added?**  
+   **RESOLVED:** Yes. Phase 13 should bump `CaptureMetadata.schema_version` from `1` to `2` because the metadata sidecar gains a required `device_options` reporting contract that automation consumers must understand explicitly. [VERIFIED: crates/dsview-core/src/lib.rs] [VERIFIED: crates/dsview-core/tests/export_artifacts.rs] [VERIFIED: .planning/REQUIREMENTS.md]
 
-2. **How much of the effective fact set should be read back from the runtime versus trusted from successful setters?**
-   - What we know: The current bridge can read back operation mode, stop option, filter, channel mode, threshold volts, sample rate, and sample limit, but it does not expose enabled-channel readback as a first-class API. [VERIFIED: crates/dsview-sys/src/lib.rs] [VERIFIED: crates/dsview-sys/bridge_runtime.c] [VERIFIED: crates/dsview-core/src/lib.rs]
-   - What's unclear: Whether the planner wants to add a new enabled-channel getter now or report enabled channels from the successfully applied validated request. [VERIFIED: crates/dsview-sys/src/lib.rs] [VERIFIED: crates/dsview-sys/bridge_runtime.c]
-   - Recommendation: Read back the fields the bridge already exposes and use the applied validated channel list for enabled channels unless a new getter is explicitly planned. [VERIFIED: crates/dsview-sys/src/lib.rs] [VERIFIED: crates/dsview-core/src/device_option_validation.rs] [ASSUMED]
+2. **How much of the effective fact set should be read back from the runtime versus trusted from successful setters?**  
+   **RESOLVED:** Read back operation mode, stop option, channel mode, threshold volts, filter, sample rate, and sample limit from the runtime, then derive the stable-ID form from those readback codes through the validated capability catalog/current snapshot. Use the successfully applied validated channel list as `effective.enabled_channels` instead of adding a new enabled-channel getter in Phase 13. Also, when no validated device-option request exists, build inherited effective facts from the current device snapshot plus current runtime sample settings so the baseline path still reports effective values. [VERIFIED: crates/dsview-sys/src/lib.rs] [VERIFIED: crates/dsview-sys/bridge_runtime.c] [VERIFIED: crates/dsview-core/src/device_option_validation.rs] [VERIFIED: .planning/phases/13-option-aware-capture-reporting/13-CONTEXT.md]
 
 ## Environment Availability
 
