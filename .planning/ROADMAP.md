@@ -45,9 +45,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] `11-01-PLAN.md` - Define the internal validation request/capability model and selected-device capability loader without changing Phase 10 discovery output.
-- [ ] `11-02-PLAN.md` - Implement pure mode-aware validation plus stable machine-readable validation error codes.
-- [ ] `11-03-PLAN.md` - Lock DSView-rule coverage and CLI validation-code regressions.
+- [x] `11-01-PLAN.md` - Define the internal validation request/capability model and selected-device capability loader without changing Phase 10 discovery output.
+- [x] `11-02-PLAN.md` - Implement pure mode-aware validation plus stable machine-readable validation error codes.
+- [x] `11-03-PLAN.md` - Lock DSView-rule coverage and CLI validation-code regressions.
 
 ### Phase 12: CLI Device Option Surface
 **Goal**: Let users choose the relevant DSView-compatible `DSLogic Plus` device options directly from the CLI without relying on GUI profiles.
@@ -87,7 +87,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
-| 11. Device Option Validation Model | 3/3 | Complete   | 2026-04-13 |
+| 11. Device Option Validation Model | 3/3 | Complete    | 2026-04-13 |
 | 12. CLI Device Option Surface | 0/3 | Pending | - |
 | 13. Option-Aware Capture Reporting | 0/3 | Pending | - |
 
@@ -107,4 +107,4 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 
 - Active milestone: `v1.1 DSLogic Plus device options`
 - Phase 10 completed and live-verified on: `2026-04-10`
-- Next action: `/gsd-plan-phase 11`
+- Next action: `/gsd-discuss-phase 12`

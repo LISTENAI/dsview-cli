@@ -49,6 +49,7 @@ completed: 2026-04-13
 - Kept the Phase 11 success path proving that validated requests preserve both stable IDs and native codes.
 - Extended CLI validation coverage to include the capture-config adapter path while retaining the direct typed validation code assertions.
 - Re-ran the existing `capture_cli` and `device_options_cli` suites unchanged to prove the shipped CLI baseline still passes.
+- Fixed review-discovered correctness gaps before phase verification, including overflow-safe sample-limit alignment, non-finite threshold rejection, selected-handle capture validation, and fail-closed mode probing.
 
 ## Task Commits
 
@@ -56,6 +57,12 @@ Each task was committed atomically:
 
 1. **Task 1: Add the DSView-rule validation matrix in `dsview-core`** - `6482b4e` (test)
 2. **Task 2: Expand CLI validation-code coverage and rerun the baseline CLI suites** - `ca9531c` (test)
+
+Additional correctness fixes landed before phase verification:
+
+- `442b87f` (fix) - address initial Phase 11 review findings in the validation loader and alignment helper
+- `d21d864` (fix) - harden non-finite threshold handling and unrelated `SR_ERR_NA` capture errors
+- `d8caf09` (fix) - validate capture requests against the selected handle and fail closed when restore-safe mode probing cannot be guaranteed
 
 ## Files Created/Modified
 
@@ -69,7 +76,36 @@ Each task was committed atomically:
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+### Auto-fixed Issues
+
+**1. [Rule 1 - Bug] Removed label-based stop-option inference**
+- **Found during:** Phase 11 code review after Task 2
+- **Issue:** Validation compatibility depended on the operation-mode label instead of native stop-option data.
+- **Fix:** Made the sys bridge advertise buffer-mode stop options by native operation code and normalized stop-option IDs directly from the native payload.
+- **Files modified:** `crates/dsview-sys/bridge_runtime.c`, `crates/dsview-core/src/device_option_validation.rs`, `crates/dsview-sys/tests/device_options.rs`
+- **Verification:** `cargo test -p dsview-sys --test device_options -- --nocapture`
+- **Committed in:** `442b87f`
+
+**2. [Rule 1 - Bug] Hardened threshold and sample-limit edge cases**
+- **Found during:** Follow-up code review after Task 2
+- **Issue:** Sample-limit alignment could overflow on extreme `u64` inputs, and `NaN` thresholds passed validation.
+- **Fix:** Made `align_sample_limit()` overflow-safe, rejected non-finite thresholds, and added regression coverage for both cases.
+- **Files modified:** `crates/dsview-core/src/capture_config.rs`, `crates/dsview-core/src/device_option_validation.rs`, `crates/dsview-core/tests/device_option_validation.rs`
+- **Verification:** `cargo test -p dsview-core --lib -- --nocapture && cargo test -p dsview-core --test device_option_validation -- --nocapture`
+- **Committed in:** `d21d864`
+
+**3. [Rule 1 - Bug] Selected-handle capture validation and restore-safe failure closure**
+- **Found during:** Final Phase 11 review refresh
+- **Issue:** Capture validation still used the first supported device instead of the selected handle, and read-only mode discovery could mutate device state when original modes were unavailable.
+- **Fix:** Routed capture validation through the selected handle and made native mode discovery fail closed when restore-safe probing cannot restore the original mode pair.
+- **Files modified:** `crates/dsview-core/src/lib.rs`, `crates/dsview-cli/src/main.rs`, `crates/dsview-sys/bridge_runtime.c`
+- **Verification:** `cargo test --workspace -- --nocapture`
+- **Committed in:** `d8caf09`
+
+---
+
+**Total deviations:** 3 auto-fixed (3 Rule 1 bug fixes)
+**Impact on plan:** All fixes were direct correctness issues in the Phase 11 implementation path. No scope creep beyond making the shipped validation behavior safe and deterministic.
 
 ## Issues Encountered
 

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: verifying
-last_updated: "2026-04-13T05:08:43.676Z"
-last_activity: 2026-04-13
+last_updated: "2026-04-13T06:10:07.666Z"
+last_activity: 2026-04-13 -- Phase 11 verification passed
 progress:
   total_phases: 4
   completed_phases: 2
@@ -20,14 +20,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 11 — device-option-validation-model
+**Current focus:** Phase 12 — cli-device-option-surface
 
 ## Current Position
 
-Phase: 11 (device-option-validation-model) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-04-13
+Phase: 12 (cli-device-option-surface) — READY
+Plan: Not started
+Status: Phase 11 complete and verified
+Last activity: 2026-04-13 -- Phase 11 verification passed
 
 ## Accumulated Context
 
@@ -67,12 +67,12 @@ Last activity: 2026-04-13
 
 ## Session Continuity
 
-- Last session: 2026-04-13T05:00:59Z
-- Stopped at: Completed 11-02-PLAN.md
-- Resume from: `/gsd-execute-phase 11`
+- Last session: 2026-04-13T06:10:07Z
+- Stopped at: Completed Phase 11
+- Resume from: `/gsd-discuss-phase 12`
 
 ## Immediate Next Steps
 
-- Execute `11-03-PLAN.md` to lock the validator and CLI taxonomy with broader DSView-rule regression coverage.
-- Expand regression coverage without changing the shipped `v1.0` capture/export baseline or the Phase 10 discovery schema.
-- Keep the stable validation taxonomy intact while broadening the option matrix and CLI regression assertions.
+- Discuss Phase 12 CLI option selection ergonomics before planning the new flag surface.
+- Plan Phase 12 to wire validated device-option arguments into the CLI without destabilizing the shipped `v1.0` path.
+- Preserve the completed Phase 11 validation taxonomy and selected-device loading behavior as Phase 12 inputs.
