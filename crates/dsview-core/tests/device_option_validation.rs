@@ -42,19 +42,43 @@ fn validation_capabilities() -> DeviceOptionValidationCapabilities {
         total_channel_count: 16,
         hardware_sample_capacity: 268_435_456,
         sample_limit_alignment: 1024,
-        operation_modes: vec![OperationModeValidationCapabilities {
-            id: "operation-mode:101".to_string(),
-            native_code: 101,
-            label: "Buffer Mode".to_string(),
-            stop_option_ids: vec!["stop-option:1".to_string(), "stop-option:2".to_string()],
-            channel_modes: vec![ChannelModeValidationCapabilities {
-                id: "channel-mode:11".to_string(),
-                native_code: 11,
-                label: "Buffer wide lanes".to_string(),
-                max_enabled_channels: 16,
-                supported_sample_rates: vec![50_000_000, 100_000_000],
-            }],
-        }],
+        operation_modes: vec![
+            OperationModeValidationCapabilities {
+                id: "operation-mode:101".to_string(),
+                native_code: 101,
+                label: "Buffer Mode".to_string(),
+                stop_option_ids: vec!["stop-option:1".to_string(), "stop-option:2".to_string()],
+                channel_modes: vec![
+                    ChannelModeValidationCapabilities {
+                        id: "channel-mode:11".to_string(),
+                        native_code: 11,
+                        label: "Buffer 100x16".to_string(),
+                        max_enabled_channels: 16,
+                        supported_sample_rates: vec![50_000_000, 100_000_000],
+                    },
+                    ChannelModeValidationCapabilities {
+                        id: "channel-mode:13".to_string(),
+                        native_code: 13,
+                        label: "Buffer 400x4".to_string(),
+                        max_enabled_channels: 4,
+                        supported_sample_rates: vec![100_000_000, 200_000_000, 400_000_000],
+                    },
+                ],
+            },
+            OperationModeValidationCapabilities {
+                id: "operation-mode:202".to_string(),
+                native_code: 202,
+                label: "Stream Mode".to_string(),
+                stop_option_ids: Vec::new(),
+                channel_modes: vec![ChannelModeValidationCapabilities {
+                    id: "channel-mode:21".to_string(),
+                    native_code: 21,
+                    label: "Stream 20x16".to_string(),
+                    max_enabled_channels: 16,
+                    supported_sample_rates: vec![20_000_000, 25_000_000],
+                }],
+            },
+        ],
         filters: vec![
             EnumOptionSnapshot {
                 id: "filter:0".to_string(),
@@ -142,13 +166,13 @@ fn validation_error_codes_are_stable() {
             DeviceOptionValidationError::UnknownOperationMode {
                 operation_mode_id: "operation-mode:404".to_string(),
             },
-            "invalid_operation_mode",
+            "operation_mode_unsupported",
         ),
         (
             DeviceOptionValidationError::UnknownStopOption {
                 stop_option_id: "stop-option:404".to_string(),
             },
-            "invalid_stop_option",
+            "stop_option_unsupported",
         ),
         (
             DeviceOptionValidationError::StopOptionIncompatibleWithMode {
@@ -161,7 +185,26 @@ fn validation_error_codes_are_stable() {
             DeviceOptionValidationError::UnknownChannelMode {
                 channel_mode_id: "channel-mode:404".to_string(),
             },
-            "invalid_channel_mode",
+            "channel_mode_unsupported",
+        ),
+        (
+            DeviceOptionValidationError::ChannelModeIncompatibleWithOperationMode {
+                operation_mode_id: "operation-mode:202".to_string(),
+                channel_mode_id: "channel-mode:11".to_string(),
+            },
+            "channel_mode_incompatible",
+        ),
+        (
+            DeviceOptionValidationError::EmptySampleRate,
+            "sample_rate_missing",
+        ),
+        (
+            DeviceOptionValidationError::EmptySampleLimit,
+            "sample_limit_missing",
+        ),
+        (
+            DeviceOptionValidationError::NoEnabledChannels,
+            "enabled_channels_empty",
         ),
         (
             DeviceOptionValidationError::UnsupportedSampleRate {
@@ -205,11 +248,93 @@ fn validation_error_codes_are_stable() {
             DeviceOptionValidationError::UnknownFilter {
                 filter_id: "filter:404".to_string(),
             },
-            "invalid_filter",
+            "filter_unsupported",
         ),
     ];
 
     for (error, expected_code) in cases {
         assert_eq!(error.code(), expected_code);
     }
+}
+
+#[test]
+fn buffer_100x16_accepts_100mhz_and_four_channels() {
+    let capabilities = validation_capabilities();
+    let request = validation_request();
+
+    let validated = capabilities.validate_request(&request).unwrap();
+
+    assert_eq!(validated.operation_mode_id, "operation-mode:101");
+    assert_eq!(validated.operation_mode_code, 101);
+    assert_eq!(validated.channel_mode_id, "channel-mode:11");
+    assert_eq!(validated.channel_mode_code, 11);
+    assert_eq!(validated.sample_rate_hz, 100_000_000);
+    assert_eq!(validated.requested_sample_limit, 4096);
+    assert_eq!(validated.effective_sample_limit, 4096);
+    assert_eq!(validated.enabled_channels, vec![0, 1, 2, 3]);
+    assert_eq!(validated.stop_option_code, Some(1));
+    assert_eq!(validated.filter_code, Some(1));
+}
+
+#[test]
+fn buffer_400x4_rejects_five_enabled_channels() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        channel_mode_id: "channel-mode:13".to_string(),
+        enabled_channels: [0_u16, 1, 2, 3, 4].into_iter().collect(),
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert_eq!(
+        error,
+        DeviceOptionValidationError::TooManyEnabledChannels {
+            enabled_channel_count: 5,
+            max_enabled_channels: 4,
+        }
+    );
+    assert_eq!(error.code(), "enabled_channels_exceed_mode_limit");
+}
+
+#[test]
+fn buffer_100x16_rejects_200mhz_samplerate() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        sample_rate_hz: 200_000_000,
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert_eq!(
+        error,
+        DeviceOptionValidationError::UnsupportedSampleRate {
+            sample_rate_hz: 200_000_000,
+            channel_mode_id: "channel-mode:11".to_string(),
+        }
+    );
+    assert_eq!(error.code(), "sample_rate_unsupported");
+}
+
+#[test]
+fn sample_limit_alignment_can_push_request_over_capacity() {
+    let mut capabilities = validation_capabilities();
+    capabilities.hardware_sample_capacity = 14_336;
+    let request = DeviceOptionValidationRequest {
+        sample_limit: 3_073,
+        enabled_channels: [0_u16, 1, 2, 3].into_iter().collect(),
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert_eq!(
+        error,
+        DeviceOptionValidationError::SampleLimitExceedsCapacity {
+            effective_sample_limit: 4_096,
+            maximum_sample_limit: 3_072,
+            enabled_channel_count: 4,
+        }
+    );
 }
