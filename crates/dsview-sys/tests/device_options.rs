@@ -72,6 +72,21 @@ unsafe extern "C" {
         count: i32,
         status: i32,
     );
+    fn dsview_test_mock_set_apply_failure(key: i32, status: i32);
+    fn dsview_test_mock_set_channel_enable_failure(channel_index: i32, enable: i32, status: i32);
+    fn dsview_test_mock_get_current_double(
+        key: i32,
+        out_has_value: *mut i32,
+        out_value: *mut f64,
+    ) -> i32;
+    fn dsview_test_mock_get_current_u64(
+        key: i32,
+        out_has_value: *mut i32,
+        out_value: *mut u64,
+    ) -> i32;
+    fn dsview_test_mock_get_apply_call(index: i32, out_key: *mut i32, out_value: *mut i64) -> i32;
+    fn dsview_test_mock_get_apply_call_count() -> i32;
+    fn dsview_test_mock_reset_apply_log();
     fn dsview_test_mock_get_current_int(
         key: i32,
         out_has_value: *mut i32,
@@ -230,6 +245,178 @@ fn read_current_int(key: i32) -> (bool, i32) {
     let status = unsafe { dsview_test_mock_get_current_int(key, &mut has_value, &mut value) };
     assert_eq!(status, SR_OK);
     (has_value != 0, value)
+}
+
+fn read_current_double(key: i32) -> (bool, f64) {
+    let mut has_value = 0;
+    let mut value = 0.0;
+    let status = unsafe { dsview_test_mock_get_current_double(key, &mut has_value, &mut value) };
+    assert_eq!(status, SR_OK);
+    (has_value != 0, value)
+}
+
+fn read_current_u64(key: i32) -> (bool, u64) {
+    let mut has_value = 0;
+    let mut value = 0;
+    let status = unsafe { dsview_test_mock_get_current_u64(key, &mut has_value, &mut value) };
+    assert_eq!(status, SR_OK);
+    (has_value != 0, value)
+}
+
+fn apply_log() -> Vec<(i32, i64)> {
+    let count = unsafe { dsview_test_mock_get_apply_call_count() };
+    let mut calls = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        let mut key = 0;
+        let mut value = 0_i64;
+        let status = unsafe { dsview_test_mock_get_apply_call(index, &mut key, &mut value) };
+        assert_eq!(status, SR_OK);
+        calls.push((key, value));
+    }
+    calls
+}
+
+#[test]
+fn apply_device_options_exposes_all_required_runtime_setters() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    runtime
+        .set_operation_mode(STREAM_MODE as i16)
+        .expect("operation mode setter should apply through the runtime");
+    runtime
+        .set_stop_option(UPLOAD_WHEN_FULL as i16)
+        .expect("stop option setter should apply through the runtime");
+    runtime
+        .set_channel_mode(STREAM_COMPACT_MODE as i16)
+        .expect("channel mode setter should apply through the runtime");
+    runtime
+        .set_threshold_volts(2.5)
+        .expect("threshold setter should apply through the runtime");
+    runtime
+        .set_filter(FILTER_NONE as i16)
+        .expect("filter setter should apply through the runtime");
+    runtime
+        .set_enabled_channels(&[0, 2, 4], 6)
+        .expect("channel setter should apply through the runtime");
+    runtime
+        .set_sample_limit(4096)
+        .expect("sample-limit setter should apply through the runtime");
+    runtime
+        .set_samplerate(50_000_000)
+        .expect("sample-rate setter should apply through the runtime");
+
+    assert_eq!(runtime.current_operation_mode_code().unwrap(), Some(STREAM_MODE as i16));
+    assert_eq!(
+        runtime.current_stop_option_code().unwrap(),
+        Some(UPLOAD_WHEN_FULL as i16)
+    );
+    assert_eq!(
+        runtime.current_channel_mode_code().unwrap(),
+        Some(STREAM_COMPACT_MODE as i16)
+    );
+    assert_eq!(runtime.current_threshold_volts().unwrap(), Some(2.5));
+    assert_eq!(runtime.current_filter_code().unwrap(), Some(FILTER_NONE as i16));
+    assert_eq!(runtime.current_sample_limit().unwrap(), Some(4096));
+    assert_eq!(runtime.current_samplerate().unwrap(), Some(50_000_000));
+}
+
+#[test]
+fn mock_apply_sequence_records_d05_order_and_stops_after_first_failure() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    unsafe {
+        dsview_test_mock_reset_apply_log();
+        dsview_test_mock_set_apply_failure(SR_CONF_FILTER, SR_ERR_ARG);
+        dsview_test_mock_set_channel_enable_failure(5, 1, SR_ERR_ARG);
+    }
+
+    runtime
+        .set_operation_mode(STREAM_MODE as i16)
+        .expect("operation mode setter should succeed");
+    runtime
+        .set_stop_option(UPLOAD_WHEN_FULL as i16)
+        .expect("stop option setter should succeed");
+    runtime
+        .set_channel_mode(STREAM_COMPACT_MODE as i16)
+        .expect("channel mode setter should succeed");
+    runtime
+        .set_threshold_volts(2.5)
+        .expect("threshold setter should succeed");
+    let error = runtime
+        .set_filter(FILTER_NONE as i16)
+        .expect_err("configured filter failure should stop the apply sequence");
+
+    assert!(matches!(
+        error,
+        dsview_sys::RuntimeError::NativeCall {
+            operation: "ds_set_filter",
+            code: dsview_sys::NativeErrorCode::Arg,
+        }
+    ));
+    assert_eq!(
+        apply_log(),
+        vec![
+            (SR_CONF_OPERATION_MODE, STREAM_MODE as i64),
+            (SR_CONF_BUFFER_OPTIONS, UPLOAD_WHEN_FULL as i64),
+            (SR_CONF_CHANNEL_MODE, STREAM_COMPACT_MODE as i64),
+            (SR_CONF_VTH, 2),
+            (SR_CONF_FILTER, FILTER_NONE as i64),
+        ]
+    );
+}
+
+#[test]
+fn current_option_readback_reports_effective_values_after_apply() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    unsafe {
+        dsview_test_mock_reset_apply_log();
+    }
+
+    runtime
+        .set_operation_mode(STREAM_MODE as i16)
+        .expect("operation mode setter should succeed");
+    runtime
+        .set_stop_option(UPLOAD_WHEN_FULL as i16)
+        .expect("stop option setter should succeed");
+    runtime
+        .set_channel_mode(STREAM_COMPACT_MODE as i16)
+        .expect("channel mode setter should succeed");
+    runtime
+        .set_threshold_volts(2.5)
+        .expect("threshold setter should succeed");
+    runtime
+        .set_filter(FILTER_NONE as i16)
+        .expect("filter setter should succeed");
+    runtime
+        .set_enabled_channels(&[0, 2, 4], 6)
+        .expect("enabled channels should apply");
+    runtime
+        .set_sample_limit(16_384)
+        .expect("sample limit setter should succeed");
+    runtime
+        .set_samplerate(100_000_000)
+        .expect("sample rate setter should succeed");
+
+    assert_eq!(read_current_int(SR_CONF_OPERATION_MODE), (true, STREAM_MODE));
+    assert_eq!(read_current_int(SR_CONF_BUFFER_OPTIONS), (true, UPLOAD_WHEN_FULL));
+    assert_eq!(read_current_int(SR_CONF_CHANNEL_MODE), (true, STREAM_COMPACT_MODE));
+    assert_eq!(read_current_double(SR_CONF_VTH), (true, 2.5));
+    assert_eq!(read_current_int(SR_CONF_FILTER), (true, FILTER_NONE));
+    assert_eq!(read_current_u64(SR_CONF_HW_DEPTH), (true, 16_384));
+    assert_eq!(runtime.current_samplerate().unwrap(), Some(100_000_000));
 }
 
 #[test]
