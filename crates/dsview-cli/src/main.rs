@@ -4,13 +4,15 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use dsview_core::{
-    describe_native_error, resolve_capture_artifact_paths, AcquisitionSummary,
-    AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError, CaptureCleanup,
-    CaptureCompletion, CaptureConfigRequest, CaptureExportError, CaptureRunError,
-    CaptureRunRequest, Discovery, NativeErrorCode, RuntimeError, SelectionHandle, SupportedDevice,
+use dsview_cli::{
+    DeviceOptionsResponse, build_device_options_response, render_device_options_text,
 };
-use dsview_cli::{DeviceOptionsResponse, build_device_options_response, render_device_options_text};
+use dsview_core::{
+    AcquisitionSummary, AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError,
+    CaptureCleanup, CaptureCompletion, CaptureConfigRequest, CaptureExportError, CaptureRunError,
+    CaptureRunRequest, DeviceOptionValidationError, Discovery, NativeErrorCode, RuntimeError,
+    SelectionHandle, SupportedDevice, describe_native_error, resolve_capture_artifact_paths,
+};
 use serde::Serialize;
 
 const BUILD_VERSION: &str = match option_env!("DSVIEW_BUILD_VERSION") {
@@ -561,6 +563,17 @@ fn classify_runtime_error(error: &RuntimeError) -> ErrorResponse {
     }
 }
 
+fn classify_validation_error(error: &DeviceOptionValidationError) -> ErrorResponse {
+    ErrorResponse {
+        code: error.code(),
+        message: error.to_string(),
+        detail: None,
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    }
+}
+
 pub(crate) fn classify_capture_error(error: &CaptureRunError) -> ErrorResponse {
     match error {
         CaptureRunError::BringUp(error) => classify_error(error),
@@ -979,6 +992,58 @@ mod tests {
         let error = classify_capture_error(&CaptureRunError::EnvironmentNotReady);
         assert_eq!(error.code, "capture_environment_not_ready");
         assert_eq!(error.cleanup, None);
+    }
+
+    #[test]
+    fn stable_validation_error_codes() {
+        let cases = [
+            (
+                DeviceOptionValidationError::UnknownOperationMode {
+                    operation_mode_id: "operation-mode:404".to_string(),
+                },
+                "invalid_operation_mode",
+            ),
+            (
+                DeviceOptionValidationError::StopOptionIncompatibleWithMode {
+                    stop_option_id: "stop-option:1".to_string(),
+                    operation_mode_id: "operation-mode:202".to_string(),
+                },
+                "stop_option_incompatible",
+            ),
+            (
+                DeviceOptionValidationError::UnknownChannelMode {
+                    channel_mode_id: "channel-mode:404".to_string(),
+                },
+                "invalid_channel_mode",
+            ),
+            (
+                DeviceOptionValidationError::UnsupportedSampleRate {
+                    sample_rate_hz: 123,
+                    channel_mode_id: "channel-mode:11".to_string(),
+                },
+                "sample_rate_unsupported",
+            ),
+            (
+                DeviceOptionValidationError::ThresholdStepInvalid {
+                    threshold_volts: 1.85,
+                    min_volts: 0.0,
+                    step_volts: 0.1,
+                },
+                "threshold_step_invalid",
+            ),
+            (
+                DeviceOptionValidationError::UnknownFilter {
+                    filter_id: "filter:404".to_string(),
+                },
+                "invalid_filter",
+            ),
+        ];
+
+        for (error, expected_code) in cases {
+            let response = classify_validation_error(&error);
+            assert_eq!(response.code, expected_code);
+            assert!(response.message.contains('`') || !response.message.is_empty());
+        }
     }
 
     #[test]

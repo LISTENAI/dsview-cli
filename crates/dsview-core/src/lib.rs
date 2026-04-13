@@ -7,11 +7,17 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 mod capture_config;
+mod device_option_validation;
 mod device_options;
 
 pub use capture_config::{
     CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
     ValidatedCaptureConfig,
+};
+pub use device_option_validation::{
+    ChannelModeValidationCapabilities, DeviceOptionValidationCapabilities,
+    DeviceOptionValidationError, DeviceOptionValidationRequest,
+    OperationModeValidationCapabilities, ValidatedDeviceOptionRequest,
 };
 pub use device_options::{
     ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
@@ -19,16 +25,16 @@ pub use device_options::{
     LegacyThresholdMetadataSnapshot, RawOptionMetadataSnapshot, ThresholdCapabilitySnapshot,
     normalize_device_options_snapshot,
 };
+use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
 pub use dsview_sys::{
     AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, ExportErrorCode,
     NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest, runtime_library_name,
     source_runtime_library_path,
 };
-use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
 use serde::Serialize;
 use thiserror::Error;
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 const DSLOGIC_PLUS_MODELS: &[&str] = &["DSLogic PLus"];
 const DSLOGIC_PLUS_PRIMARY_FIRMWARES: &[&str] = &["DSLogicPlus.fw"];
@@ -102,16 +108,16 @@ pub struct RuntimeDiscoveryPaths {
 
 impl RuntimeDiscoveryPaths {
     pub fn discover(resource_override: Option<impl AsRef<Path>>) -> Result<Self, BringUpError> {
-        let executable = env::current_exe().map_err(|error| {
-            BringUpError::CurrentExecutableUnavailable {
+        let executable =
+            env::current_exe().map_err(|error| BringUpError::CurrentExecutableUnavailable {
                 detail: error.to_string(),
-            }
-        })?;
-        let executable_dir = executable.parent().ok_or_else(|| {
-            BringUpError::CurrentExecutableUnavailable {
-                detail: format!("path `{}` has no parent directory", executable.display()),
-            }
-        })?;
+            })?;
+        let executable_dir =
+            executable
+                .parent()
+                .ok_or_else(|| BringUpError::CurrentExecutableUnavailable {
+                    detail: format!("path `{}` has no parent directory", executable.display()),
+                })?;
         Self::from_executable_dir(executable_dir, resource_override)
     }
 
@@ -1140,7 +1146,8 @@ impl Discovery {
         }
 
         let export_request = build_vcd_export_request(&request.validated_config);
-        let artifact_paths = resolve_capture_artifact_paths(&request.vcd_path, request.metadata_path.as_ref())?;
+        let artifact_paths =
+            resolve_capture_artifact_paths(&request.vcd_path, request.metadata_path.as_ref())?;
         let vcd_path = artifact_paths.vcd_path;
         let metadata_path = artifact_paths.metadata_path;
         let export = self
@@ -1151,19 +1158,19 @@ impl Discovery {
                 kind: export_failure_kind(&error),
                 detail: error.to_string(),
             })?;
-        let metadata = build_capture_metadata(request, &metadata_path, &export).map_err(|detail| {
-            CaptureExportError::MetadataSerializationFailed {
-                path: metadata_path.clone(),
-                detail,
-            }
-        })?;
-        let metadata_bytes =
-            serde_json::to_vec_pretty(&metadata).map_err(|error| {
+        let metadata =
+            build_capture_metadata(request, &metadata_path, &export).map_err(|detail| {
                 CaptureExportError::MetadataSerializationFailed {
                     path: metadata_path.clone(),
-                    detail: error.to_string(),
+                    detail,
                 }
             })?;
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata).map_err(|error| {
+            CaptureExportError::MetadataSerializationFailed {
+                path: metadata_path.clone(),
+                detail: error.to_string(),
+            }
+        })?;
         write_metadata_atomically(&metadata_path, &metadata_bytes).map_err(|detail| {
             CaptureExportError::MetadataWriteFailed {
                 path: metadata_path.clone(),
@@ -1391,9 +1398,12 @@ mod tests {
         fs::write(resource_dir.join("DSLogicPlus.bin"), b"bin").unwrap();
         fs::write(resource_dir.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
 
-        let discovered = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, None::<&Path>)
-            .unwrap();
-        assert_eq!(discovered.runtime_library, runtime_dir.join(runtime_library_name()));
+        let discovered =
+            RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, None::<&Path>).unwrap();
+        assert_eq!(
+            discovered.runtime_library,
+            runtime_dir.join(runtime_library_name())
+        );
         assert_eq!(discovered.resource_dir, resource_dir);
     }
 
@@ -1416,7 +1426,10 @@ mod tests {
         let discovered =
             RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, Some(&override_resources))
                 .unwrap();
-        assert_eq!(discovered.runtime_library, runtime_dir.join(runtime_library_name()));
+        assert_eq!(
+            discovered.runtime_library,
+            runtime_dir.join(runtime_library_name())
+        );
         assert_eq!(discovered.resource_dir, override_resources);
     }
 
@@ -1429,7 +1442,8 @@ mod tests {
 
         if source_runtime_library_path().is_none() {
             let exe_dir = temp_dir("missing-runtime");
-            let error = RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, Some(&dir)).unwrap_err();
+            let error =
+                RuntimeDiscoveryPaths::from_executable_dir(&exe_dir, Some(&dir)).unwrap_err();
             assert!(matches!(error, BringUpError::BundledRuntimeMissing { .. }));
         }
     }
@@ -1568,7 +1582,10 @@ mod tests {
         summary.terminal_event = AcquisitionTerminalEvent::EndByDetached;
         summary.saw_terminal_normal_end = false;
         summary.saw_terminal_end_by_detached = true;
-        assert_eq!(classify_capture_completion(&summary), CaptureCompletion::Detached);
+        assert_eq!(
+            classify_capture_completion(&summary),
+            CaptureCompletion::Detached
+        );
     }
 
     #[test]
@@ -1619,9 +1636,18 @@ mod tests {
 
         assert_eq!(fs::read(&vcd_path).unwrap(), vcd_bytes);
         assert_eq!(metadata_path_for_vcd(&vcd_path), metadata_path);
-        assert_eq!(metadata_json["artifacts"]["vcd_path"], vcd_path.display().to_string());
-        assert_eq!(metadata_json["artifacts"]["metadata_path"], metadata_path.display().to_string());
-        assert_eq!(metadata_json["capture"]["actual_sample_count"], export.sample_count);
+        assert_eq!(
+            metadata_json["artifacts"]["vcd_path"],
+            vcd_path.display().to_string()
+        );
+        assert_eq!(
+            metadata_json["artifacts"]["metadata_path"],
+            metadata_path.display().to_string()
+        );
+        assert_eq!(
+            metadata_json["capture"]["actual_sample_count"],
+            export.sample_count
+        );
         assert!(metadata_meta.modified().unwrap() >= vcd_meta.modified().unwrap());
     }
 
@@ -1655,7 +1681,10 @@ mod tests {
         assert_eq!(metadata.capture.enabled_channels, vec![0, 1, 2, 3]);
         assert_eq!(metadata.acquisition.completion, "clean_success");
         assert_eq!(metadata.acquisition.terminal_event, "normal_end");
-        assert_eq!(metadata.acquisition.end_packet_status.as_deref(), Some("ok"));
+        assert_eq!(
+            metadata.acquisition.end_packet_status.as_deref(),
+            Some("ok")
+        );
         assert_eq!(metadata.artifacts.vcd_path, "/tmp/capture.vcd");
         assert_eq!(metadata.artifacts.metadata_path, "/tmp/capture.json");
     }
