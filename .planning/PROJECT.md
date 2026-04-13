@@ -2,7 +2,7 @@
 
 ## What This Is
 
-DSView CLI is a Rust-based command-line tool for using `DSLogic Plus` devices without the DSView GUI. The shipped `v1.0` milestone proved a stable non-interactive capture-and-export workflow, and `v1.1` now focuses on bringing the core DSView logic-mode device options into that CLI surface without breaking the validated baseline.
+DSView CLI is a Rust-based command-line tool for using `DSLogic Plus` logic analyzers without the DSView GUI. Shipped milestones now cover device discovery, bounded capture/export, DSView-backed device-option discovery, pre-acquisition validation, option-aware runtime apply, and requested/effective reporting for automation-friendly capture workflows.
 
 ## Core Value
 
@@ -12,20 +12,21 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 
 ### Validated
 
-- [x] User can connect to a `DSLogic Plus` device from the CLI using the existing DSView/libsigrok4DSL stack. Shipped in `v1.0`.
-- [x] User can configure core capture parameters from the CLI, including the options needed for a basic acquisition workflow. Shipped in `v1.0`.
-- [x] User can start a capture from the CLI and export machine-readable waveform output for downstream analysis. Shipped in `v1.0`.
-- [x] User can run the full capture-and-export workflow non-interactively from a single CLI command. Shipped in `v1.0`.
-- [x] User can choose artifact output locations and receive clear artifact path reporting after a successful run. Shipped in `v1.0`.
-- [x] User can validate DSLogic Plus option combinations before capture so the shipped `v1.0` capture/export path remains stable. Validated in Phase 11.
-- [x] User can expose and choose DSView-style `DSLogic Plus` device options from the CLI, including operation mode, stop option, channel mode, enabled channels, threshold voltage, and filter selection. Validated in Phase 12.
-- [x] User can use a discoverable non-interactive CLI surface to inspect supported device-option values before a run. Validated across Phases 10 and 12.
-- [x] User can apply the selected DSView-compatible device options before acquisition begins. Validated in Phase 13.
-- [x] User can report the effective option values used for the run in CLI output and metadata. Validated in Phase 13.
+- [x] User can connect to a `DSLogic Plus` device from the CLI using the existing DSView/libsigrok4DSL stack. - `v1.0`
+- [x] User can configure core capture parameters from the CLI, including the options needed for a basic acquisition workflow. - `v1.0`
+- [x] User can start a capture from the CLI and export machine-readable waveform output for downstream analysis. - `v1.0`
+- [x] User can run the full capture-and-export workflow non-interactively from a single CLI command. - `v1.0`
+- [x] User can choose artifact output locations and receive clear artifact path reporting after a successful run. - `v1.0`
+- [x] User can inspect the supported `DSLogic Plus` device-option values for operation mode, stop option, channel mode, threshold voltage, and filter selection from the CLI. - `v1.1`
+- [x] User can choose DSView-style `DSLogic Plus` device options from the CLI, including operation mode, stop option, channel mode, enabled channels, threshold voltage, and filter selection. - `v1.1`
+- [x] User can validate DSLogic Plus option combinations before capture so unsupported requests fail before acquisition begins. - `v1.1`
+- [x] User can apply the selected DSView-compatible device options before acquisition begins. - `v1.1`
+- [x] User can report requested and effective option values in CLI output and metadata. - `v1.1`
 
 ### Active
 
-None - milestone `v1.1` requirements are now fully validated.
+- [ ] Define the next milestone after `v1.1` and recreate `.planning/REQUIREMENTS.md` via `/gsd-new-milestone`.
+- [ ] Decide whether the next shipped increment should prioritize presets, collect-mode control, trigger programming, protocol decode, or broader DSLogic-family support.
 
 ### Out of Scope
 
@@ -33,42 +34,31 @@ None - milestone `v1.1` requirements are now fully validated.
 - Full DSView GUI feature parity - future milestones should extend the workflow intentionally instead of mirroring the whole desktop app.
 - Modifying the upstream `DSView/` codebase or libraries - the integration strategy still depends on consuming that stack as a read-only dependency.
 - Terminal waveform rendering or a TUI viewer - the product direction stays focused on export-first automation.
-- Preset persistence and reusable named capture profiles - defer until the raw option semantics are stable in the CLI.
-- `CollectMode` repeat/loop behavior, advanced trigger programming, and protocol decode - not part of the `v1.1` device-option milestone.
 
 ## Context
 
-The workspace contains the upstream `DSView/` project, which remains the read-only native dependency for hardware communication through its modified `libsigrok4DSL` stack. The shipped `v1.0` milestone proved that a separate Rust CLI can sit on top of that stack, drive a bounded `DSLogic Plus` acquisition, and emit a reusable `VCD` plus JSON metadata sidecar without requiring the DSView GUI.
-
-Milestone `v1.1` is grounded in direct DSView source inspection rather than greenfield feature guessing. The DSView device-session surface for `DSLogic Plus` includes operation mode, stop options, channel mode, threshold voltage, filter selection, and related trigger-facing settings. The current Rust bridge only exposes sample rate, sample limit, and enabled-channel application, so this milestone needs to widen the sys/core/cli boundary while keeping the proven capture/export contract intact.
+The workspace keeps the upstream `DSView/` project as a read-only native dependency while the Rust workspace owns the CLI, orchestration, validation, and reporting layers. `v1.0` proved that this split could deliver a stable non-interactive capture/export workflow for `DSLogic Plus`, and `v1.1` extended that same baseline with truthful DSView-backed device-option discovery and execution rather than inventing a parallel configuration model.
 
 ## Current State
 
-- `v1.0 MVP` shipped on `2026-04-09` and is archived in `.planning/milestones/`.
-- The validated DSLogic Plus capture/export path is the baseline that `v1.1` must preserve.
-- Phase 11 validation modeling completed on `2026-04-13`, including selected-device capability loading, pure validation, and stable CLI validation codes.
-- Phase 12 CLI device-option surface completed on `2026-04-13`, including friendly capture flags, tokenized inspection output, and spawned CLI contract regressions.
-- Phase 13 option-aware capture reporting completed on `2026-04-13`, including deterministic runtime option application, requested/effective reporting, and successful hardware verification.
-- The next milestone is now defined around device-option parity for the existing `DSLogic Plus` target rather than broader hardware support or decode work.
+- `v1.1 DSLogic Plus device options` shipped on `2026-04-13` and is archived at `.planning/milestones/v1.1-ROADMAP.md`.
+- The CLI now exposes `devices list`, `devices options`, and option-aware `capture` flows for `DSLogic Plus`.
+- Real-hardware verification passed for discovery on `2026-04-10` and for option-aware capture/reporting on `2026-04-13`.
+- No next milestone is defined yet; live requirements will be recreated when `/gsd-new-milestone` starts the next planning cycle.
 
-## Current Milestone: v1.1 DSLogic Plus device options
+## Next Milestone Goals
 
-**Goal:** Bring the core DSView logic-mode device options for `DSLogic Plus` into the CLI while preserving the shipped non-interactive capture/export workflow.
-
-**Target features:**
-- Operation mode selection for `Buffer Mode` and `Stream Mode`
-- Stop-option selection where the selected mode supports it
-- Channel-mode selection plus explicit enabled-channel control
-- Threshold-voltage and filter selection
-- Mode-aware validation and effective-option reporting in CLI output and metadata
+- Choose the next smallest shipped increment that extends the proven `DSLogic Plus` workflow without weakening the `v1.0` and `v1.1` baseline.
+- Prefer work that builds on the validated option model: reusable presets, collect-mode control, trigger configuration, protocol decode, or broadened hardware support.
+- Keep hardware verification part of phase exit criteria whenever new runtime behavior is added.
 
 ## Constraints
 
-- **Device scope**: `DSLogic Plus` only - this milestone does not expand support to other hardware.
+- **Device scope**: `DSLogic Plus` is the only shipped target today; broader hardware support remains future work.
 - **Dependency boundary**: Reuse `DSView/` and its modified `libsigrok4DSL` stack without modifying that repository.
 - **Workflow**: Optimize for scriptable CLI usage, not GUI, TUI, or profile-driven interaction.
-- **Baseline stability**: Preserve the shipped `v1.0` capture/export behavior while adding richer option control.
-- **Scope discipline**: Focus on DSView device options first; presets, collect-mode automation, trigger programming, and decode remain deferred.
+- **Baseline stability**: Preserve the shipped `v1.0` capture/export path and the shipped `v1.1` device-option workflow.
+- **Scope discipline**: Future milestones should extend the validated workflow incrementally rather than chasing full DSView feature parity.
 
 ## Key Decisions
 
@@ -76,9 +66,10 @@ Milestone `v1.1` is grounded in direct DSView source inspection rather than gree
 |----------|-----------|---------|
 | Build the tool in Rust | User explicitly wants Rust for the CLI implementation | Adopted - implemented across `dsview-cli`, `dsview-core`, and `dsview-sys` |
 | Keep `DSView/` unchanged and integrate with its existing libraries | Reuse proven device communication behavior while avoiding upstream modifications | Adopted - native integration stays behind the Rust boundary and `DSView/` remains read-only |
-| Scope `v1.0` to `DSLogic Plus` only | Narrower device scope reduced risk for the first usable release | Adopted - `v1.0` validated the DSLogic Plus capture/export workflow |
-| Start `v1.1` with DSView device options instead of presets or decode | The current blocker is missing parity for real device configuration, not artifact post-processing | Adopted for milestone definition |
-| Defer presets until option semantics are clear in CLI | DSView persists these settings, but CLI should first prove the raw option model and validation surface | Adopted for `v1.1` scope |
+| Scope initial releases to `DSLogic Plus` | Narrow device scope keeps hardware/runtime risk bounded while the CLI contract matures | Adopted across `v1.0` and `v1.1` |
+| Layer friendly CLI tokens on top of stable core IDs | Automation needs stable identifiers while humans need copy-pasteable command tokens | Adopted in `v1.1` discovery and capture surfaces |
+| Keep device-option apply order and failure reporting in Rust core instead of C | Ordered execution, partial-apply facts, and output reuse need one typed source of truth | Adopted in `v1.1` runtime apply/reporting |
+| Report requested and effective device-option facts separately | Devices can align or adjust runtime values, so outputs must preserve both intent and outcome | Adopted in `v1.1` JSON, text, and metadata reporting |
 
 ## Evolution
 
@@ -98,4 +89,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-13 after completing Phase 13 option-aware capture reporting*
+*Last updated: 2026-04-13 after completing the v1.1 milestone*

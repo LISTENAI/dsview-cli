@@ -1,5 +1,20 @@
 # Milestones
 
+## v1.1 DSLogic Plus device options (Shipped: 2026-04-13)
+
+**Phases completed:** 4 phases, 12 plans, 24 tasks
+
+**Key accomplishments:**
+
+- Exposed DSView-backed `DSLogic Plus` device-option discovery through owned sys/core snapshots and the new `devices options` CLI command.
+- Added a mode-aware validation model that rejects invalid stop-option, channel-mode, sample-rate, threshold, and filter combinations before acquisition starts.
+- Introduced script-friendly `capture` option tokens for operation mode, stop option, channel mode, enabled channels, threshold volts, and filter selection.
+- Applied validated device options in deterministic order during capture and surfaced truthful partial-apply failures with `applied_steps` and `failed_step`.
+- Unified requested/effective device-option reporting across capture JSON, text output, and schema-v2 metadata sidecars.
+- Passed real-hardware DSLogic Plus verification for discovery, option-aware capture success, failure honesty, and metadata reporting on 2026-04-13.
+
+---
+
 ## v1.0 MVP (Shipped: 2026-04-09)
 
 **Phases completed:** 9 phases, 24 plans, 44 tasks

@@ -1,14 +1,14 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1
-milestone_name: milestone
+milestone_name: DSLogic Plus device options
 current_phase: 13
-current_phase_name: option aware capture reporting
-current_plan: Not started
+current_phase_name: milestone closeout
+current_plan: complete
 status: completed
-stopped_at: Completed Phase 13 with human verification
-last_updated: "2026-04-13T12:35:52Z"
-last_activity: 2026-04-13 -- Phase 13 human verification passed
+stopped_at: Completed v1.1 milestone archival
+last_updated: "2026-04-13T12:47:51Z"
+last_activity: 2026-04-13 -- v1.1 milestone archived and ready for next planning cycle
 progress:
   total_phases: 4
   completed_phases: 4
@@ -21,28 +21,27 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-10)
+See: `.planning/PROJECT.md` (updated 2026-04-13)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Milestone v1.1 complete
+**Current focus:** Planning the next milestone on top of the shipped `v1.1` baseline
 
 ## Current Position
 
-Current Phase: 13
-Current Phase Name: option aware capture reporting
-Current Plan: Not started
-Total Plans in Phase: 3
-Phase: 13 (option-aware-capture-reporting) — COMPLETE
-Plan: 3 of 3
-Status: Phase complete and human-verified
-Last activity: 2026-04-13 -- Phase 13 human verification passed
+Current Phase: milestone closeout
+Current Phase Name: `v1.1` archived
+Current Plan: complete
+Total Plans in Milestone: 12
+Milestone: `v1.1 DSLogic Plus device options` - COMPLETE AND ARCHIVED
+Status: Milestone archived, requirements reset, and release tag pending/ready
+Last activity: 2026-04-13 -- archived `v1.1` milestone and prepared the next planning cycle
 
 ## Accumulated Context
 
-- `v1.0 MVP` shipped on 2026-04-09 and remains the baseline that new work must preserve.
-- DSView source inspection confirms the relevant `DSLogic Plus` logic-mode options include operation mode, stop options, channel mode, threshold voltage, filter selection, and mode-dependent channel limits.
-- `dsview-sys` now exposes an owned device-option snapshot with grouped channel modes, truthful VTH threshold facts, and restore-on-exit discovery semantics.
-- Presets, repeat/loop collect behavior, advanced trigger configuration, protocol decode, and broader device support are explicitly deferred out of this milestone.
+- `v1.0 MVP` shipped on 2026-04-09 and remains the baseline for the non-interactive capture/export workflow.
+- `v1.1` shipped on 2026-04-13 and added DSView-backed device-option discovery, validation, selection, apply-time reporting, and schema-v2 requested/effective metadata for `DSLogic Plus`.
+- The Rust layer now owns stable IDs, friendly capture tokens, deterministic option apply order, partial-apply diagnostics, and output reporting while `DSView/` stays read-only.
+- Presets, repeat/loop collect behavior, advanced trigger configuration, protocol decode, and broader device support remain candidate future work rather than shipped scope.
 
 ## Decisions
 
@@ -75,7 +74,7 @@ Last activity: 2026-04-13 -- Phase 13 human verification passed
 - [Phase 13]: Core now builds requested/effective device-option facts once and reuses that block across metadata and CLI JSON.
 - [Phase 13]: Baseline captures mirror inherited current option state into both requested and effective reporting blocks so automation always sees explicit facts.
 - [Phase 13]: Reused DSVIEW_CLI_TEST_DEVICE_OPTIONS_FIXTURE for full spawned capture success and failure coverage instead of adding a second fixture flag.
-- [Phase 13]: Kept Phase 13 hardware verification as an explicit DSLogic Plus follow-up in 13-VALIDATION.md because this machine still lacks trustworthy libusb-backed capture access.
+- [Phase 13]: Phase 13 hardware verification completed successfully on a real DSLogic Plus and closed the final live-runtime gap for `v1.1`.
 
 ## Performance Metrics
 
@@ -98,12 +97,12 @@ Last activity: 2026-04-13 -- Phase 13 human verification passed
 
 Last session: 2026-04-13T12:35:52Z
 
-Stopped At: Completed Phase 13 with human verification
+Stopped At: Completed v1.1 milestone archival
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Milestone `v1.1` is functionally complete.
-- Review the final milestone state and archive/transition with the next milestone workflow when ready.
-- Preserve the validated `v1.0` baseline plus Phases 10-13 option workflow as the reference for future milestone planning.
+- Start the next milestone definition flow with `/gsd-new-milestone`.
+- Recreate `.planning/REQUIREMENTS.md` only as part of that next milestone setup.
+- Preserve the shipped `v1.1` DSLogic Plus option workflow as the baseline for any new runtime work.
