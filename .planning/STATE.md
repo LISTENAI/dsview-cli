@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: verifying
-last_updated: "2026-04-10T10:40:32.061Z"
+status: planning
+last_updated: "2026-04-10T13:06:36.602Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 4
@@ -20,13 +20,13 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 10 verification and the next option-validation phase
+**Current focus:** Phase 11 planning — device-option-validation-model
 
 ## Current Position
 
-Phase: 10 (device-option-bridge-and-discovery) — VERIFYING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 11
+Plan: Not started
+Status: Ready to plan Phase 11
 Last activity: 2026-04-10
 
 ## Accumulated Context
@@ -59,11 +59,11 @@ Last activity: 2026-04-10
 ## Session Continuity
 
 - Last session: 2026-04-10T10:40:32.061Z
-- Stopped at: Completed 10-03-PLAN.md
-- Resume from: `/gsd-verify-work` for Phase 10 or the next planned Phase 11 work
+- Stopped at: Phase 10 live verification complete
+- Resume from: `/gsd-plan-phase 11`
 
 ## Immediate Next Steps
 
-- Run manual `/gsd-verify-work` against a real `DSLogic Plus` using `devices options` in `json` and `text` modes.
-- Start Phase 11 device-option validation work on top of the stable discovery schema from Phase 10.
+- Start `/gsd-plan-phase 11` for device-option validation work on top of the stable discovery schema from Phase 10.
+- Carry Phase 10's stable discovery contract forward into validation without changing the public option-discovery schema.
 - Preserve the shipped `v1.0` capture/export behavior while adding option-validation rules.
