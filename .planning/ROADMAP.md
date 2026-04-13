@@ -75,9 +75,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 13-01: Apply validated device options through the sys/core runtime layer before capture start.
-- [ ] 13-02: Extend capture output and metadata with effective DSLogic Plus option facts.
-- [ ] 13-03: Add regression coverage and manual validation for the default baseline plus option-aware runs.
+- [ ] `13-01-PLAN.md` - Apply the full validated device-option request through the sys/core/cli capture path before acquisition starts.
+- [ ] `13-02-PLAN.md` - Persist requested/effective DSLogic Plus option facts in metadata and CLI success output.
+- [ ] `13-03-PLAN.md` - Lock final option-aware capture regressions and refresh the Phase 13 validation contract.
 
 ## Progress
 
