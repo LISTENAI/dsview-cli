@@ -5,7 +5,11 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
-    build_device_options_response, render_device_options_text, DeviceOptionsResponse,
+    build_device_options_response, render_device_options_text,
+    capture_device_options::{
+        CaptureDeviceOptionParseError, resolve_capture_device_option_request,
+    },
+    DeviceOptionsResponse,
 };
 use dsview_core::{
     describe_native_error, resolve_capture_artifact_paths, AcquisitionSummary,
@@ -210,6 +214,16 @@ impl dsview_cli::capture_device_options::CaptureDeviceOptionInput for CaptureDev
     }
 }
 
+impl CaptureDeviceOptionArgs {
+    fn has_overrides(&self) -> bool {
+        self.operation_mode.is_some()
+            || self.stop_option.is_some()
+            || self.channel_mode.is_some()
+            || self.threshold_volts.is_some()
+            || self.filter.is_some()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
     Json,
@@ -342,6 +356,31 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     let discovery = connect_runtime(&args.runtime)?;
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
+    if uses_device_option_validation(&args) {
+        let snapshot = discovery
+            .inspect_device_options(handle)
+            .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+        let capabilities = discovery
+            .load_device_option_validation_capabilities(handle)
+            .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+        let request = resolve_capture_device_option_request(
+            &snapshot,
+            &capabilities,
+            &args.device_options,
+            args.sample_rate_hz,
+            args.sample_limit,
+            &args.channels,
+        )
+        .map_err(|error| {
+            command_error(
+                args.runtime.format,
+                classify_capture_device_option_parse_error(&error),
+            )
+        })?;
+        discovery
+            .validate_device_option_request(handle, &request)
+            .map_err(|error| command_error(args.runtime.format, classify_validation_error(&error)))?;
+    }
     let config_request = CaptureConfigRequest {
         sample_rate_hz: args.sample_rate_hz,
         sample_limit: args.sample_limit,
@@ -416,6 +455,10 @@ fn device_record(device: &SupportedDevice) -> DeviceRecord {
         model: device.kind.display_name(),
         native_name: device.name.clone(),
     }
+}
+
+fn uses_device_option_validation(args: &CaptureArgs) -> bool {
+    !args.channels.is_empty() || args.device_options.has_overrides()
 }
 
 fn classify_artifact_path_error(error: &CaptureArtifactPathError) -> ErrorResponse {
@@ -629,6 +672,84 @@ fn classify_validation_error(error: &DeviceOptionValidationError) -> ErrorRespon
         native_error: None,
         terminal_event: None,
         cleanup: None,
+    }
+}
+
+fn classify_capture_device_option_parse_error(
+    error: &CaptureDeviceOptionParseError,
+) -> ErrorResponse {
+    match error {
+        CaptureDeviceOptionParseError::UnsupportedOperationModeToken { token } => ErrorResponse {
+            code: "operation_mode_unsupported",
+            message: format!(
+                "operation mode token `{token}` is not supported by the selected device"
+            ),
+            detail: Some(
+                "Use `devices options --handle <HANDLE>` to inspect supported tokens and compatibility.".to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureDeviceOptionParseError::UnsupportedStopOptionToken { token } => ErrorResponse {
+            code: "stop_option_unsupported",
+            message: format!(
+                "stop option token `{token}` is not supported by the selected device"
+            ),
+            detail: Some(
+                "Use `devices options --handle <HANDLE>` to inspect supported tokens and compatibility.".to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureDeviceOptionParseError::UnsupportedChannelModeToken { token }
+        | CaptureDeviceOptionParseError::AmbiguousChannelModeToken { token } => ErrorResponse {
+            code: "channel_mode_unsupported",
+            message: format!(
+                "channel mode token `{token}` is not supported without a unique parent operation mode"
+            ),
+            detail: Some(
+                "Use `devices options --handle <HANDLE>` to inspect supported tokens and pass `--operation-mode` when a channel mode token is ambiguous.".to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureDeviceOptionParseError::UnsupportedFilterToken { token } => ErrorResponse {
+            code: "filter_unsupported",
+            message: format!("filter token `{token}` is not supported by the selected device"),
+            detail: Some(
+                "Use `devices options --handle <HANDLE>` to inspect supported tokens and compatibility.".to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureDeviceOptionParseError::MissingCurrentOperationMode
+        | CaptureDeviceOptionParseError::MissingCurrentChannelMode => ErrorResponse {
+            code: "validation_runtime_error",
+            message: "the selected device did not report enough current option state to validate the capture request".to_string(),
+            detail: Some(
+                "Re-run `devices options --handle <HANDLE>` to confirm the current device-option snapshot.".to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        CaptureDeviceOptionParseError::ConflictingOperationModeInference { sources } => ErrorResponse {
+            code: "operation_mode_required",
+            message: format!(
+                "the provided child option tokens imply conflicting operation modes via {}",
+                sources.join(" and ")
+            ),
+            detail: Some(
+                "Pass `--operation-mode` explicitly or inspect `devices options --handle <HANDLE>` for compatible token combinations.".to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
     }
 }
 
@@ -1475,7 +1596,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_channels_exceed_mode_limit_maps_to_stable_validation_error_code() {
+    fn capture_reports_stable_validation_error_for_channel_limit_exceeded() {
         let response =
             classify_validation_error(&DeviceOptionValidationError::TooManyEnabledChannels {
                 enabled_channel_count: 5,
