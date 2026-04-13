@@ -1815,6 +1815,97 @@ mod tests {
         }
     }
 
+    fn sample_capture_device_option_facts() -> dsview_core::CaptureDeviceOptionFacts {
+        dsview_core::CaptureDeviceOptionFacts {
+            requested: dsview_core::CaptureDeviceOptionSnapshot {
+                operation_mode_id: "operation-mode:0".to_string(),
+                stop_option_id: Some("stop-option:1".to_string()),
+                channel_mode_id: "channel-mode:20".to_string(),
+                enabled_channels: vec![0, 1, 2, 3],
+                threshold_volts: Some(1.8),
+                filter_id: Some("filter:0".to_string()),
+                sample_rate_hz: 100_000_000,
+                sample_limit: 4097,
+            },
+            effective: dsview_core::CaptureDeviceOptionSnapshot {
+                operation_mode_id: "operation-mode:1".to_string(),
+                stop_option_id: None,
+                channel_mode_id: "channel-mode:30".to_string(),
+                enabled_channels: vec![0, 2, 4, 6],
+                threshold_volts: Some(2.4),
+                filter_id: Some("filter:1".to_string()),
+                sample_rate_hz: 200_000_000,
+                sample_limit: 4096,
+            },
+        }
+    }
+
+    #[test]
+    fn capture_response_json_includes_requested_and_effective_device_options() {
+        let response = CaptureResponse {
+            selected_handle: 7,
+            completion: "clean_success",
+            saw_logic_packet: true,
+            saw_end_packet: true,
+            saw_terminal_normal_end: true,
+            cleanup_succeeded: true,
+            artifacts: CaptureArtifactsResponse {
+                vcd_path: "/tmp/run.vcd".to_string(),
+                metadata_path: "/tmp/run.json".to_string(),
+            },
+            device_options: sample_capture_device_option_facts(),
+        };
+
+        let payload = serde_json::to_value(response).unwrap();
+
+        assert_eq!(
+            payload["device_options"]["requested"]["sample_limit"],
+            4097
+        );
+        assert_eq!(
+            payload["device_options"]["effective"]["operation_mode_id"],
+            "operation-mode:1"
+        );
+        assert_eq!(
+            payload["device_options"]["effective"]["enabled_channels"],
+            serde_json::json!([0, 2, 4, 6])
+        );
+    }
+
+    #[test]
+    fn render_capture_success_text_lists_effective_device_options() {
+        let response = CaptureResponse {
+            selected_handle: 7,
+            completion: "clean_success",
+            saw_logic_packet: true,
+            saw_end_packet: true,
+            saw_terminal_normal_end: true,
+            cleanup_succeeded: true,
+            artifacts: CaptureArtifactsResponse {
+                vcd_path: "/tmp/run.vcd".to_string(),
+                metadata_path: "/tmp/run.json".to_string(),
+            },
+            device_options: sample_capture_device_option_facts(),
+        };
+
+        let text = capture_success_text(&response);
+
+        assert!(text.contains("capture clean_success"));
+        assert!(text.contains("effective options:"));
+        assert!(text.contains("operation mode: operation-mode:1"));
+        assert!(text.contains("stop option: none"));
+        assert!(text.contains("channel mode: channel-mode:30"));
+        assert!(text.contains("enabled channels: 0,2,4,6"));
+        assert!(text.contains("threshold volts: 2.4"));
+        assert!(text.contains("filter: filter:1"));
+        assert!(text.contains("sample rate: 200000000"));
+        assert!(text.contains("sample limit: 4096"));
+        assert!(text.contains("vcd /tmp/run.vcd"));
+        assert!(text.contains("metadata /tmp/run.json"));
+        assert!(!text.contains("requested options:"));
+        assert!(!text.contains("operation-mode:0"));
+    }
+
     #[test]
     fn stable_validation_error_codes() {
         let cases = [
