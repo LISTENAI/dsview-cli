@@ -125,6 +125,35 @@ fn sample_snapshot() -> DeviceOptionsSnapshot {
     }
 }
 
+struct CaptureAcceptanceTokens {
+    operation_mode: &'static str,
+    stop_option: &'static str,
+    channel_mode: &'static str,
+    threshold_volts: f64,
+    filter: &'static str,
+}
+
+fn capture_acceptance_tokens() -> CaptureAcceptanceTokens {
+    CaptureAcceptanceTokens {
+        operation_mode: "buffer",
+        stop_option: "stop-after-samples",
+        channel_mode: "buffer-100x16",
+        threshold_volts: 1.8,
+        filter: "off",
+    }
+}
+
+fn capture_flag_examples() -> [&'static str; 6] {
+    [
+        "  --operation-mode buffer",
+        "  --stop-option stop-after-samples",
+        "  --channel-mode buffer-100x16",
+        "  --threshold-volts 1.8",
+        "  --filter off",
+        "  --channels IDX[,IDX...]",
+    ]
+}
+
 #[test]
 fn device_options_json_exposes_capture_tokens_and_stable_ids() {
     let response = build_device_options_response(&sample_snapshot());
@@ -373,12 +402,47 @@ fn device_options_json_uses_same_tokens_as_capture_flags() {
     let response = build_device_options_response(&sample_snapshot());
     let actual = serde_json::to_value(&response).expect("response should serialize");
     let tokens = capture_acceptance_tokens();
+    let operation_mode_tokens: Vec<_> = actual["operation_modes"]
+        .as_array()
+        .expect("operation modes should be an array")
+        .iter()
+        .map(|option| option["token"].as_str().expect("token should be a string"))
+        .collect();
+    let stop_option_tokens: Vec<_> = actual["stop_options"]
+        .as_array()
+        .expect("stop options should be an array")
+        .iter()
+        .map(|option| option["token"].as_str().expect("token should be a string"))
+        .collect();
+    let filter_tokens: Vec<_> = actual["filters"]
+        .as_array()
+        .expect("filters should be an array")
+        .iter()
+        .map(|option| option["token"].as_str().expect("token should be a string"))
+        .collect();
+    let channel_mode_tokens: Vec<_> = actual["channel_modes_by_operation_mode"]
+        .as_array()
+        .expect("channel mode groups should be an array")
+        .iter()
+        .flat_map(|group| {
+            group["channel_modes"]
+                .as_array()
+                .expect("channel modes should be an array")
+                .iter()
+                .map(|mode| mode["token"].as_str().expect("token should be a string"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
 
     assert_eq!(actual["current"]["operation_mode_token"], tokens.operation_mode);
     assert_eq!(actual["current"]["stop_option_token"], tokens.stop_option);
     assert_eq!(actual["current"]["channel_mode_token"], tokens.channel_mode);
-    assert_eq!(actual["threshold"]["current_volts"], tokens.threshold_volts);
+    assert_eq!(actual["threshold"]["current_volts"], json!(tokens.threshold_volts));
     assert_eq!(actual["current"]["filter_token"], tokens.filter);
+    assert!(operation_mode_tokens.contains(&tokens.operation_mode));
+    assert!(stop_option_tokens.contains(&tokens.stop_option));
+    assert!(filter_tokens.contains(&tokens.filter));
+    assert!(channel_mode_tokens.contains(&tokens.channel_mode));
     assert_eq!(
         actual["capture_guide"]["operation_mode_flag"],
         "--operation-mode"
