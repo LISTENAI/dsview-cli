@@ -561,6 +561,7 @@ fn classify_runtime_error(error: &RuntimeError) -> ErrorResponse {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn classify_validation_error(error: &DeviceOptionValidationError) -> ErrorResponse {
     ErrorResponse {
         code: error.code(),
@@ -1186,6 +1187,30 @@ mod tests {
         });
 
         assert_eq!(response.code, "sample_rate_unsupported");
+    }
+
+    #[test]
+    fn capture_config_enabled_channel_limit_maps_to_stable_validation_error_code() {
+        let response = classify_capture_config_error(&CaptureConfigError::TooManyEnabledChannels {
+            enabled_channel_count: 5,
+            max_enabled_channels: 4,
+        });
+
+        assert_eq!(response.code, "enabled_channels_exceed_mode_limit");
+        assert!(response.message.contains("exceeds"));
+    }
+
+    #[test]
+    fn capture_config_sample_limit_maps_to_stable_validation_error_code() {
+        let response =
+            classify_capture_config_error(&CaptureConfigError::SampleLimitExceedsCapacity {
+                effective_sample_limit: 4096,
+                maximum_sample_limit: 3072,
+                enabled_channel_count: 4,
+            });
+
+        assert_eq!(response.code, "sample_limit_exceeds_capacity");
+        assert!(response.message.contains("effective sample limit"));
     }
 
     #[test]
