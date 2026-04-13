@@ -19,7 +19,7 @@ created: 2026-04-13
 |----------|-------|
 | **Framework** | Rust `cargo test` with unit tests, integration tests via `assert_cmd` + `predicates`, and existing `dsview-sys` C mock-backed tests |
 | **Config file** | none — Cargo defaults |
-| **Quick run command** | `cargo test -p dsview-core --lib -- --nocapture` |
+| **Quick run command** | `cargo test -p dsview-core --test acquisition -- --nocapture` |
 | **Full suite command** | `cargo test --workspace -- --nocapture` |
 | **Estimated runtime** | ~90 seconds |
 
@@ -27,10 +27,10 @@ created: 2026-04-13
 
 ## Sampling Rate
 
-- **After every task commit:** Run `cargo test -p dsview-core --lib -- --nocapture`
+- **After every task commit:** Run `cargo test -p dsview-core --test acquisition -- --nocapture`
 - **After every plan wave:** Run `cargo test -p dsview-cli --test capture_cli -- --nocapture && cargo test -p dsview-sys --test device_options -- --nocapture`
 - **Before `/gsd-verify-work`:** Full suite must be green
-- **Max feedback latency:** 90 seconds
+- **Max feedback latency:** 45 seconds
 
 ---
 
