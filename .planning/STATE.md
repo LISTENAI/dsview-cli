@@ -4,17 +4,17 @@ milestone: v1.1
 milestone_name: milestone
 current_phase: 13
 current_phase_name: option aware capture reporting
-current_plan: Not started
+current_plan: 02
 status: executing
-stopped_at: Completed Phase 12
-last_updated: "2026-04-13T10:43:33.044Z"
-last_activity: 2026-04-13 -- Phase 13 planning complete
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-04-13T11:06:43.300Z"
+last_activity: 2026-04-13 -- Completed Plan 13-01
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 12
-  completed_plans: 9
-  percent: 75
+  completed_plans: 10
+  percent: 83
 ---
 
 # Session State
@@ -30,12 +30,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 Current Phase: 13
 Current Phase Name: option aware capture reporting
-Current Plan: Not started
+Current Plan: 02
 Total Plans in Phase: 3
 Phase: 13 (option-aware-capture-reporting) — READY
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-13 -- Phase 13 planning complete
+Plan: 02
+Status: Executing
+Last activity: 2026-04-13 -- Completed Plan 13-01
 
 ## Accumulated Context
 
@@ -69,6 +69,9 @@ Last activity: 2026-04-13 -- Phase 13 planning complete
 - [Phase 12]: Route --channels through the same selected-device validation preflight as the new flags so channel-count limits stay aligned with the resolved channel mode before capture begins.
 - [Phase 12]: Keep the selected-device integration-test seam debug-only and env-gated so release behavior stays unchanged while spawned CLI tests remain deterministic.
 - [Phase 12]: Pin devices options token assertions to the same acceptance tokens used by capture_cli so discovery and execution cannot drift independently.
+- [Phase 13]: Keep the D-05 setter sequence in Rust so core owns apply order, fail-fast behavior, and typed reporting instead of hiding sequencing in C.
+- [Phase 13]: Reuse the Phase 11 validated request directly during capture execution and derive export validation config from it, rather than re-validating against the current active mode.
+- [Phase 13]: Treat effective enabled channels as the successfully applied validated request after channel-enable setters succeed, while reading the other effective values back from runtime getters.
 
 ## Performance Metrics
 
@@ -83,17 +86,18 @@ Last activity: 2026-04-13 -- Phase 13 planning complete
 | Phase 12-cli-device-option-surface P01 | 12m | 2 tasks | 4 files |
 | Phase 12 P02 | 6m | 2 tasks | 2 files |
 | Phase 12 P03 | 6m | 2 tasks | 3 files |
+| Phase 13 P01 | 16m | 2 tasks | 7 files |
 
 ## Session Continuity
 
-Last session: 2026-04-13T09:05:25Z
+Last session: 2026-04-13T11:06:43.295Z
 
-Stopped At: Completed Phase 12
+Stopped At: Completed 13-01-PLAN.md
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Plan Phase 13 to apply the already validated device-option selections at runtime and report effective values.
-- Preserve the completed Phase 12 help, token, and `devices options` contracts while Phase 13 adds apply-time behavior.
-- Keep the shipped `v1.0` capture/export baseline stable while introducing option-aware runtime application and reporting.
+- Execute `13-02-PLAN.md` to surface requested and effective option facts in CLI output and metadata.
+- Preserve the completed option-aware apply path while Phase 13-02 builds reporting on top of `EffectiveDeviceOptionState`.
+- Keep the shipped `v1.0` capture/export baseline stable while Phase 13-02 adds reporting behavior.
