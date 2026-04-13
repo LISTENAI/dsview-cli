@@ -60,9 +60,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 12-01: Design the CLI command and flag shape for DSLogic Plus option selection and inspection.
-- [ ] 12-02: Wire parsed option arguments into the core validation and open-device flow.
-- [ ] 12-03: Add CLI tests for valid option usage, parse failures, and user-facing diagnostics.
+- [ ] `12-01-PLAN.md` - Define the friendly token contract and capture-oriented `devices options` inspection surface.
+- [ ] `12-02-PLAN.md` - Add optional `capture` device-option flags and validate resolved selections against the Phase 11 model.
+- [ ] `12-03-PLAN.md` - Lock help, parser behavior, and inspection output with spawned CLI regression tests.
 
 ### Phase 13: Option-Aware Capture Reporting
 **Goal**: Apply the selected options during capture and preserve the effective option facts in the final capture artifacts.
