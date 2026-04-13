@@ -1,14 +1,40 @@
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use assert_cmd::Command;
 use predicates::prelude::*;
+use serde_json::Value;
 
 fn cli_command() -> Command {
     Command::cargo_bin("dsview-cli").expect("dsview-cli binary should build for CLI tests")
 }
 
-fn mock_cli_command() -> Command {
+fn fixture_cli_command(fixture: &str) -> Command {
     let mut command = cli_command();
-    command.env("DSVIEW_CLI_TEST_DEVICE_OPTIONS_FIXTURE", "1");
+    command.env("DSVIEW_CLI_TEST_DEVICE_OPTIONS_FIXTURE", fixture);
     command
+}
+
+fn mock_cli_command() -> Command {
+    fixture_cli_command("1")
+}
+
+fn unique_capture_paths(stem: &str) -> (PathBuf, PathBuf) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "dsview-cli-capture-{stem}-{}-{timestamp}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("temporary capture dir should be created");
+    (dir.join("capture.vcd"), dir.join("capture.json"))
+}
+
+fn parse_json(bytes: &[u8]) -> Value {
+    serde_json::from_slice(bytes).expect("stdout should contain valid JSON")
 }
 
 #[test]
@@ -415,4 +441,231 @@ fn capture_missing_resource_files_reports_bundle_relative_guidance() {
         .stdout(predicate::str::contains("required DSLogic Plus files"))
         .stdout(predicate::str::contains("resources/"))
         .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn capture_json_success_reports_requested_and_effective_device_options() {
+    let (vcd_path, metadata_path) = unique_capture_paths("json-success");
+    let output = mock_cli_command()
+        .args([
+            "capture",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "200000000",
+            "--sample-limit",
+            "4097",
+            "--channels",
+            "0,1,2,3,4,5,6,7",
+            "--operation-mode",
+            "buffer",
+            "--stop-option",
+            "stop-after-samples",
+            "--channel-mode",
+            "buffer-200x8",
+            "--threshold-volts",
+            "2.4",
+            "--filter",
+            "off",
+            "--output",
+            vcd_path.to_str().unwrap(),
+            "--metadata-output",
+            metadata_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let payload = parse_json(&output);
+    assert_eq!(payload["completion"], "clean_success");
+    assert_eq!(payload["artifacts"]["vcd_path"], vcd_path.display().to_string());
+    assert_eq!(
+        payload["artifacts"]["metadata_path"],
+        metadata_path.display().to_string()
+    );
+    assert_eq!(
+        payload["device_options"]["requested"]["operation_mode_id"],
+        "operation-mode:0"
+    );
+    assert_eq!(
+        payload["device_options"]["requested"]["sample_limit"],
+        4097
+    );
+    assert_eq!(
+        payload["device_options"]["effective"]["channel_mode_id"],
+        "channel-mode:21"
+    );
+    assert_eq!(
+        payload["device_options"]["effective"]["sample_limit"],
+        4096
+    );
+
+    let metadata = parse_json(&fs::read(metadata_path).expect("metadata should be written"));
+    assert_eq!(metadata["schema_version"], 2);
+    assert_eq!(
+        metadata["device_options"]["requested"]["sample_limit"],
+        4097
+    );
+    assert_eq!(
+        metadata["device_options"]["effective"]["sample_limit"],
+        4096
+    );
+}
+
+#[test]
+fn capture_text_success_reports_effective_device_options_concisely() {
+    let (vcd_path, metadata_path) = unique_capture_paths("text-success");
+    let output = mock_cli_command()
+        .args([
+            "capture",
+            "--format",
+            "text",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "200000000",
+            "--sample-limit",
+            "4097",
+            "--channels",
+            "0,1,2,3,4,5,6,7",
+            "--operation-mode",
+            "buffer",
+            "--stop-option",
+            "stop-after-samples",
+            "--channel-mode",
+            "buffer-200x8",
+            "--threshold-volts",
+            "2.4",
+            "--filter",
+            "off",
+            "--output",
+            vcd_path.to_str().unwrap(),
+            "--metadata-output",
+            metadata_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).expect("text output should be utf-8");
+    assert!(text.contains("capture clean_success"));
+    assert!(text.contains("effective options:"));
+    assert!(text.contains("operation mode: operation-mode:0"));
+    assert!(text.contains("stop option: stop-option:1"));
+    assert!(text.contains("channel mode: channel-mode:21"));
+    assert!(text.contains("enabled channels: 0,1,2,3,4,5,6,7"));
+    assert!(text.contains("threshold volts: 2.4"));
+    assert!(text.contains("filter: filter:1"));
+    assert!(text.contains("sample rate: 200000000"));
+    assert!(text.contains("sample limit: 4096"));
+    assert!(text.contains(&format!("vcd {}", vcd_path.display())));
+    assert!(text.contains(&format!("metadata {}", metadata_path.display())));
+    assert!(!text.contains("requested options:"));
+    assert!(!text.contains("4097"));
+}
+
+#[test]
+fn capture_apply_failure_reports_applied_steps_and_failed_step() {
+    let (vcd_path, metadata_path) = unique_capture_paths("apply-failure");
+    let output = fixture_cli_command("apply-failure-filter")
+        .args([
+            "capture",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "200000000",
+            "--sample-limit",
+            "4097",
+            "--channels",
+            "0,1,2,3,4,5,6,7",
+            "--operation-mode",
+            "buffer",
+            "--stop-option",
+            "stop-after-samples",
+            "--channel-mode",
+            "buffer-200x8",
+            "--threshold-volts",
+            "2.4",
+            "--filter",
+            "off",
+            "--output",
+            vcd_path.to_str().unwrap(),
+            "--metadata-output",
+            metadata_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let payload = parse_json(&output);
+    assert_eq!(payload["code"], "device_option_apply_failed");
+    assert_eq!(payload["native_error"], "SR_ERR_ARG");
+    let detail = payload["detail"]
+        .as_str()
+        .expect("apply failure should include detail");
+    assert!(detail.contains("applied_steps=operation_mode,stop_option,channel_mode,threshold_volts"));
+    assert!(detail.contains("failed_step=filter"));
+}
+
+#[test]
+fn capture_without_overrides_reports_inherited_effective_device_options() {
+    let (vcd_path, metadata_path) = unique_capture_paths("baseline");
+    let output = mock_cli_command()
+        .args([
+            "capture",
+            "--handle",
+            "7",
+            "--sample-rate-hz",
+            "100000000",
+            "--sample-limit",
+            "2048",
+            "--channels",
+            "0,1,2,3",
+            "--output",
+            vcd_path.to_str().unwrap(),
+            "--metadata-output",
+            metadata_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let payload = parse_json(&output);
+    assert_eq!(payload["completion"], "clean_success");
+    assert_eq!(payload["artifacts"]["vcd_path"], vcd_path.display().to_string());
+    assert_eq!(
+        payload["artifacts"]["metadata_path"],
+        metadata_path.display().to_string()
+    );
+    assert_eq!(
+        payload["device_options"]["requested"],
+        payload["device_options"]["effective"]
+    );
+    assert_eq!(
+        payload["device_options"]["effective"]["operation_mode_id"],
+        "operation-mode:0"
+    );
+    assert_eq!(
+        payload["device_options"]["effective"]["channel_mode_id"],
+        "channel-mode:20"
+    );
+    assert_eq!(
+        payload["device_options"]["effective"]["enabled_channels"],
+        serde_json::json!([0, 1, 2, 3])
+    );
+
+    let metadata = parse_json(&fs::read(metadata_path).expect("metadata should be written"));
+    assert_eq!(metadata["schema_version"], 2);
+    assert_eq!(
+        metadata["device_options"]["requested"],
+        metadata["device_options"]["effective"]
+    );
 }
