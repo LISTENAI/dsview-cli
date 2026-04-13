@@ -41,6 +41,7 @@ fn clean_capture() -> CaptureRunSummary {
             release_succeeded: true,
             ..CaptureCleanup::default()
         },
+        effective_device_options: None,
     }
 }
 

@@ -221,11 +221,65 @@ impl CaptureCleanup {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum DeviceOptionApplyStep {
+    OperationMode,
+    StopOption,
+    ChannelMode,
+    ThresholdVolts,
+    Filter,
+    EnabledChannels,
+    SampleLimit,
+    SampleRate,
+}
+
+impl DeviceOptionApplyStep {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OperationMode => "operation_mode",
+            Self::StopOption => "stop_option",
+            Self::ChannelMode => "channel_mode",
+            Self::ThresholdVolts => "threshold_volts",
+            Self::Filter => "filter",
+            Self::EnabledChannels => "enabled_channels",
+            Self::SampleLimit => "sample_limit",
+            Self::SampleRate => "sample_rate",
+        }
+    }
+}
+
+impl fmt::Display for DeviceOptionApplyStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EffectiveDeviceOptionState {
+    pub operation_mode_code: Option<i16>,
+    pub stop_option_code: Option<i16>,
+    pub channel_mode_code: Option<i16>,
+    pub threshold_volts: Option<f64>,
+    pub filter_code: Option<i16>,
+    pub enabled_channels: Vec<u16>,
+    pub sample_limit: Option<u64>,
+    pub sample_rate_hz: Option<u64>,
+}
+
+#[derive(Debug, Error, Clone, PartialEq)]
+#[error("device option apply failed at {failed_step}: {runtime_error}")]
+pub struct DeviceOptionApplyFailure {
+    pub applied_steps: Vec<DeviceOptionApplyStep>,
+    pub failed_step: DeviceOptionApplyStep,
+    pub runtime_error: RuntimeError,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CaptureRunSummary {
     pub completion: CaptureCompletion,
     pub summary: AcquisitionSummary,
     pub cleanup: CaptureCleanup,
+    pub effective_device_options: Option<EffectiveDeviceOptionState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,7 +303,7 @@ pub enum CaptureArtifactPathError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CaptureExportRequest {
     pub capture: CaptureRunSummary,
     pub validated_config: ValidatedCaptureConfig,
@@ -337,10 +391,11 @@ pub enum CaptureExportError {
     MetadataWriteFailed { path: PathBuf, detail: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CaptureRunRequest {
     pub selection_handle: SelectionHandle,
     pub config: CaptureConfigRequest,
+    pub validated_device_options: Option<ValidatedDeviceOptionRequest>,
     pub wait_timeout: Duration,
     pub poll_interval: Duration,
 }
@@ -349,6 +404,8 @@ pub struct CaptureRunRequest {
 pub enum CaptureRunError {
     #[error(transparent)]
     BringUp(#[from] BringUpError),
+    #[error(transparent)]
+    DeviceOptionApply(#[from] DeviceOptionApplyFailure),
     #[error("capture preflight is not ready for execution")]
     EnvironmentNotReady,
     #[error("capture start failed with {code:?}")]
@@ -506,6 +563,125 @@ impl Drop for Discovery {
     fn drop(&mut self) {
         let _ = self.runtime.exit();
     }
+}
+
+pub fn validated_capture_config_from_device_options(
+    request: &ValidatedDeviceOptionRequest,
+) -> ValidatedCaptureConfig {
+    ValidatedCaptureConfig {
+        sample_rate_hz: request.sample_rate_hz,
+        requested_sample_limit: request.requested_sample_limit,
+        effective_sample_limit: request.effective_sample_limit,
+        enabled_channels: request.enabled_channels.iter().copied().collect(),
+        channel_mode_id: request.channel_mode_code,
+    }
+}
+
+pub fn apply_capture_request_device_options(
+    runtime: &RuntimeBridge,
+    request: &CaptureRunRequest,
+    total_channel_count: u16,
+) -> Result<Option<EffectiveDeviceOptionState>, DeviceOptionApplyFailure> {
+    request
+        .validated_device_options
+        .as_ref()
+        .map(|validated_device_options| {
+            apply_validated_device_options(runtime, validated_device_options, total_channel_count)
+        })
+        .transpose()
+}
+
+fn effective_device_option_state(
+    runtime: &RuntimeBridge,
+    enabled_channels: &[u16],
+) -> Result<EffectiveDeviceOptionState, RuntimeError> {
+    Ok(EffectiveDeviceOptionState {
+        operation_mode_code: runtime.current_operation_mode_code()?,
+        stop_option_code: runtime.current_stop_option_code()?,
+        channel_mode_code: runtime.current_channel_mode_code()?,
+        threshold_volts: runtime.current_threshold_volts()?,
+        filter_code: runtime.current_filter_code()?,
+        enabled_channels: enabled_channels.to_vec(),
+        sample_limit: runtime.current_sample_limit()?,
+        sample_rate_hz: runtime.current_samplerate()?,
+    })
+}
+
+fn apply_device_option_step<F>(
+    applied_steps: &mut Vec<DeviceOptionApplyStep>,
+    step: DeviceOptionApplyStep,
+    action: F,
+) -> Result<(), DeviceOptionApplyFailure>
+where
+    F: FnOnce() -> Result<(), RuntimeError>,
+{
+    action().map_err(|runtime_error| DeviceOptionApplyFailure {
+        applied_steps: applied_steps.clone(),
+        failed_step: step,
+        runtime_error,
+    })?;
+    applied_steps.push(step);
+    Ok(())
+}
+
+pub fn apply_validated_device_options(
+    runtime: &RuntimeBridge,
+    request: &ValidatedDeviceOptionRequest,
+    total_channel_count: u16,
+) -> Result<EffectiveDeviceOptionState, DeviceOptionApplyFailure> {
+    let mut applied_steps = Vec::new();
+
+    apply_device_option_step(
+        &mut applied_steps,
+        DeviceOptionApplyStep::OperationMode,
+        || runtime.set_operation_mode(request.operation_mode_code),
+    )?;
+
+    if let Some(stop_option_code) = request.stop_option_code {
+        apply_device_option_step(&mut applied_steps, DeviceOptionApplyStep::StopOption, || {
+            runtime.set_stop_option(stop_option_code)
+        })?;
+    }
+
+    apply_device_option_step(
+        &mut applied_steps,
+        DeviceOptionApplyStep::ChannelMode,
+        || runtime.set_channel_mode(request.channel_mode_code),
+    )?;
+
+    if let Some(threshold_volts) = request.threshold_volts {
+        apply_device_option_step(
+            &mut applied_steps,
+            DeviceOptionApplyStep::ThresholdVolts,
+            || runtime.set_threshold_volts(threshold_volts),
+        )?;
+    }
+
+    if let Some(filter_code) = request.filter_code {
+        apply_device_option_step(&mut applied_steps, DeviceOptionApplyStep::Filter, || {
+            runtime.set_filter(filter_code)
+        })?;
+    }
+
+    apply_device_option_step(
+        &mut applied_steps,
+        DeviceOptionApplyStep::EnabledChannels,
+        || runtime.set_enabled_channels(&request.enabled_channels, total_channel_count),
+    )?;
+    apply_device_option_step(&mut applied_steps, DeviceOptionApplyStep::SampleLimit, || {
+        runtime.set_sample_limit(request.effective_sample_limit)
+    })?;
+    apply_device_option_step(&mut applied_steps, DeviceOptionApplyStep::SampleRate, || {
+        runtime.set_samplerate(request.sample_rate_hz)
+    })?;
+
+    effective_device_option_state(runtime, &request.enabled_channels).map_err(|runtime_error| {
+        DeviceOptionApplyFailure {
+            applied_steps,
+            failed_step: DeviceOptionApplyStep::SampleRate,
+            runtime_error,
+        }
+    })
 }
 
 #[derive(Debug)]
@@ -750,18 +926,53 @@ impl Discovery {
         Ok(CaptureSession { opened })
     }
 
-    pub fn run_capture(
+    fn prepare_option_aware_capture_session(
         &self,
         request: &CaptureRunRequest,
-    ) -> Result<CaptureRunSummary, CaptureRunError> {
-        let validated = self
-            .validate_capture_config(request.selection_handle, &request.config)
+    ) -> Result<(CaptureSession<'_>, EffectiveDeviceOptionState), CaptureRunError> {
+        let opened = self.open_device(request.selection_handle)?;
+        let total_channel_count = self
+            .dslogic_plus_capabilities_for_opened(&opened)
             .map_err(|error| {
                 CaptureRunError::BringUp(BringUpError::Runtime(RuntimeError::InvalidArgument(
                     error.to_string(),
                 )))
-            })?;
-        let session = self.prepare_capture_session(request.selection_handle, &validated)?;
+            })?
+            .total_channel_count;
+        let effective_device_options = apply_capture_request_device_options(
+            &self.runtime,
+            request,
+            total_channel_count,
+        )?
+        .expect("option-aware session requires validated device options");
+        self.runtime
+            .reset_acquisition_summary()
+            .map_err(BringUpError::Runtime)?;
+        self.runtime
+            .register_acquisition_callbacks()
+            .map_err(BringUpError::Runtime)?;
+        Ok((CaptureSession { opened }, effective_device_options))
+    }
+
+    pub fn run_capture(
+        &self,
+        request: &CaptureRunRequest,
+    ) -> Result<CaptureRunSummary, CaptureRunError> {
+        let (session, effective_device_options) = if request.validated_device_options.is_some() {
+                let (session, effective_device_options) =
+                    self.prepare_option_aware_capture_session(request)?;
+                (session, Some(effective_device_options))
+            } else {
+                let validated = self
+                    .validate_capture_config(request.selection_handle, &request.config)
+                    .map_err(|error| {
+                        CaptureRunError::BringUp(BringUpError::Runtime(
+                            RuntimeError::InvalidArgument(error.to_string()),
+                        ))
+                    })?;
+                let session = self.prepare_capture_session(request.selection_handle, &validated)?;
+                (session, None)
+            };
 
         let started = self
             .runtime
@@ -823,6 +1034,7 @@ impl Discovery {
                 completion,
                 summary,
                 cleanup,
+                effective_device_options,
             }),
             CaptureCompletion::StartFailure => Err(CaptureRunError::StartFailed {
                 code: NativeErrorCode::from_raw(summary.start_status),
@@ -1557,6 +1769,7 @@ mod tests {
                     release_succeeded: true,
                     ..CaptureCleanup::default()
                 },
+                effective_device_options: None,
             },
             validated_config: ValidatedCaptureConfig {
                 sample_rate_hz: 100_000_000,

@@ -17,9 +17,10 @@ use dsview_core::{
     CaptureCompletion, CaptureConfigError, CaptureConfigRequest, CaptureExportError,
     CaptureRunError, CaptureRunRequest, ChannelModeGroupSnapshot, ChannelModeOptionSnapshot,
     CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionValidationCapabilities,
-    DeviceOptionValidationError, DeviceOptionsSnapshot, Discovery, EnumOptionSnapshot,
-    NativeErrorCode, OperationModeValidationCapabilities, RuntimeError, SelectionHandle,
-    SupportedDevice, ThresholdCapabilitySnapshot,
+    DeviceOptionApplyFailure, DeviceOptionValidationError, DeviceOptionsSnapshot, Discovery,
+    EnumOptionSnapshot, NativeErrorCode, OperationModeValidationCapabilities, RuntimeError,
+    SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
+    validated_capture_config_from_device_options,
 };
 use serde::Serialize;
 
@@ -361,6 +362,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         )?;
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
+    let mut validated_device_options = None;
     if uses_device_option_validation(&args) {
         let (snapshot, capabilities) = if let Some((snapshot, capabilities)) =
             capture_test_fixture(handle)
@@ -390,9 +392,10 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
                 classify_capture_device_option_parse_error(&error),
             )
         })?;
-        capabilities
+        let validated = capabilities
             .validate_request(&request)
             .map_err(|error| command_error(args.runtime.format, classify_validation_error(&error)))?;
+        validated_device_options = Some(validated);
     }
     let discovery = connect_runtime(&args.runtime)?;
     let config_request = CaptureConfigRequest {
@@ -403,14 +406,19 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     let run_request = CaptureRunRequest {
         selection_handle: handle,
         config: config_request,
+        validated_device_options: validated_device_options.clone(),
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
-    let validated_config = discovery
-        .validate_capture_config(handle, &run_request.config)
-        .map_err(|error| {
-            command_error(args.runtime.format, classify_capture_config_error(&error))
-        })?;
+    let validated_config = if let Some(validated_device_options) = validated_device_options.as_ref() {
+        validated_capture_config_from_device_options(validated_device_options)
+    } else {
+        discovery
+            .validate_capture_config(handle, &run_request.config)
+            .map_err(|error| {
+                command_error(args.runtime.format, classify_capture_config_error(&error))
+            })?
+    };
     let result = discovery
         .run_capture(&run_request)
         .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
@@ -1035,6 +1043,7 @@ fn classify_capture_config_error(error: &CaptureConfigError) -> ErrorResponse {
 pub(crate) fn classify_capture_error(error: &CaptureRunError) -> ErrorResponse {
     match error {
         CaptureRunError::BringUp(error) => classify_error(error),
+        CaptureRunError::DeviceOptionApply(error) => classify_device_option_apply_failure(error),
         CaptureRunError::EnvironmentNotReady => ErrorResponse {
             code: "capture_environment_not_ready",
             message: "capture preflight did not confirm USB permissions, runtime resources, and open/config readiness".to_string(),
@@ -1129,6 +1138,35 @@ pub(crate) fn classify_capture_error(error: &CaptureRunError) -> ErrorResponse {
             terminal_event: Some(terminal_event_name(summary)),
             cleanup: Some(capture_cleanup_response(cleanup)),
         },
+    }
+}
+
+fn classify_device_option_apply_failure(error: &DeviceOptionApplyFailure) -> ErrorResponse {
+    let applied_steps = error
+        .applied_steps
+        .iter()
+        .map(|step| step.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let native_error = match &error.runtime_error {
+        RuntimeError::NativeCall { code, .. } => Some(code.name()),
+        _ => None,
+    };
+
+    ErrorResponse {
+        code: "device_option_apply_failed",
+        message: format!(
+            "device option apply failed before acquisition started at {}",
+            error.failed_step.as_str()
+        ),
+        detail: Some(format!(
+            "applied_steps={applied_steps}; failed_step={}; runtime_error={}",
+            error.failed_step.as_str(),
+            error.runtime_error
+        )),
+        native_error,
+        terminal_event: None,
+        cleanup: None,
     }
 }
 
@@ -1575,6 +1613,28 @@ mod tests {
         let error = classify_capture_error(&CaptureRunError::EnvironmentNotReady);
         assert_eq!(error.code, "capture_environment_not_ready");
         assert_eq!(error.cleanup, None);
+    }
+
+    #[test]
+    fn classify_device_option_apply_failure_includes_applied_and_failed_steps() {
+        let error = classify_capture_error(&CaptureRunError::DeviceOptionApply(
+            DeviceOptionApplyFailure {
+                applied_steps: vec![
+                    dsview_core::DeviceOptionApplyStep::OperationMode,
+                    dsview_core::DeviceOptionApplyStep::StopOption,
+                ],
+                failed_step: dsview_core::DeviceOptionApplyStep::Filter,
+                runtime_error: RuntimeError::NativeCall {
+                    operation: "ds_set_filter",
+                    code: NativeErrorCode::Arg,
+                },
+            },
+        ));
+
+        assert_eq!(error.code, "device_option_apply_failed");
+        assert_eq!(error.native_error, Some("SR_ERR_ARG"));
+        assert!(error.detail.as_deref().unwrap().contains("applied_steps=operation_mode,stop_option"));
+        assert!(error.detail.as_deref().unwrap().contains("failed_step=filter"));
     }
 
     fn sample_device_options_snapshot() -> dsview_core::DeviceOptionsSnapshot {
