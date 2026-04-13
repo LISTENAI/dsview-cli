@@ -41,7 +41,10 @@ impl CaptureConfigError {
     pub fn from_runtime_error(error: RuntimeError) -> Self {
         match error {
             RuntimeError::NativeCall {
-                operation: _,
+                operation:
+                    "ds_get_current_channel_mode"
+                    | "ds_get_channel_modes"
+                    | "ds_get_valid_channel_count",
                 code: NativeErrorCode::NotApplicable,
             } => Self::UnknownChannelMode { mode: -1 },
             other => Self::Runtime(other.to_string()),
@@ -353,5 +356,15 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn unrelated_not_applicable_errors_stay_runtime_errors() {
+        let error = CaptureConfigError::from_runtime_error(RuntimeError::NativeCall {
+            operation: "ds_get_hw_depth",
+            code: NativeErrorCode::NotApplicable,
+        });
+
+        assert!(matches!(error, CaptureConfigError::Runtime(_)));
     }
 }

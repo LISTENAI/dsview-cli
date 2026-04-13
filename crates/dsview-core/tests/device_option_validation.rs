@@ -382,6 +382,27 @@ fn threshold_value_must_follow_point_one_volt_steps() {
 }
 
 #[test]
+fn threshold_value_must_reject_nan() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        threshold_volts: Some(f64::NAN),
+        ..validation_request()
+    };
+
+    let error = capabilities.validate_request(&request).unwrap_err();
+
+    assert!(matches!(
+        error,
+        DeviceOptionValidationError::ThresholdOutOfRange {
+            threshold_volts,
+            min_volts: 0.0,
+            max_volts: 5.0,
+        } if threshold_volts.is_nan()
+    ));
+    assert_eq!(error.code(), "threshold_out_of_range");
+}
+
+#[test]
 fn filter_id_must_exist_in_supported_list() {
     let capabilities = validation_capabilities();
     let request = DeviceOptionValidationRequest {

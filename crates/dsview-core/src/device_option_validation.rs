@@ -353,6 +353,14 @@ impl DeviceOptionValidationCapabilities {
     }
 
     fn validate_threshold(&self, threshold_volts: f64) -> Result<(), DeviceOptionValidationError> {
+        if !threshold_volts.is_finite() {
+            return Err(DeviceOptionValidationError::ThresholdOutOfRange {
+                threshold_volts,
+                min_volts: self.threshold.min_volts,
+                max_volts: self.threshold.max_volts,
+            });
+        }
+
         if threshold_volts < self.threshold.min_volts || threshold_volts > self.threshold.max_volts
         {
             return Err(DeviceOptionValidationError::ThresholdOutOfRange {
