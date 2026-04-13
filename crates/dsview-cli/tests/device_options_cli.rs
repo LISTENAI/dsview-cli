@@ -348,6 +348,49 @@ fn device_options_text_shows_copy_paste_capture_flags() {
 }
 
 #[test]
+fn device_options_text_lists_capture_flag_examples_in_flag_order() {
+    let response = build_device_options_response(&sample_snapshot());
+    let rendered = render_device_options_text(&response);
+    let expected_lines = capture_flag_examples();
+
+    let mut previous_index = None;
+    for expected_line in expected_lines {
+        let index = rendered
+            .find(expected_line)
+            .unwrap_or_else(|| panic!("expected line `{expected_line}` in rendered text"));
+        if let Some(previous_index) = previous_index {
+            assert!(
+                index > previous_index,
+                "expected `{expected_line}` after the previous capture flag example"
+            );
+        }
+        previous_index = Some(index);
+    }
+}
+
+#[test]
+fn device_options_json_uses_same_tokens_as_capture_flags() {
+    let response = build_device_options_response(&sample_snapshot());
+    let actual = serde_json::to_value(&response).expect("response should serialize");
+    let tokens = capture_acceptance_tokens();
+
+    assert_eq!(actual["current"]["operation_mode_token"], tokens.operation_mode);
+    assert_eq!(actual["current"]["stop_option_token"], tokens.stop_option);
+    assert_eq!(actual["current"]["channel_mode_token"], tokens.channel_mode);
+    assert_eq!(actual["threshold"]["current_volts"], tokens.threshold_volts);
+    assert_eq!(actual["current"]["filter_token"], tokens.filter);
+    assert_eq!(
+        actual["capture_guide"]["operation_mode_flag"],
+        "--operation-mode"
+    );
+    assert_eq!(actual["capture_guide"]["stop_option_flag"], "--stop-option");
+    assert_eq!(actual["capture_guide"]["channel_mode_flag"], "--channel-mode");
+    assert_eq!(actual["capture_guide"]["threshold_flag"], "--threshold-volts");
+    assert_eq!(actual["capture_guide"]["filter_flag"], "--filter");
+    assert_eq!(actual["capture_guide"]["channels_flag"], "--channels");
+}
+
+#[test]
 fn devices_options_help_mentions_handle_and_output_contract() {
     cli_command()
         .args(["devices", "options", "--help"])
