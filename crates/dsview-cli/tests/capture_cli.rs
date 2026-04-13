@@ -73,7 +73,8 @@ fn capture_help_lists_device_option_flags_and_points_to_devices_options() {
         .stdout(predicate::str::contains("--channels <IDX[,IDX...]>"))
         .stdout(predicate::str::contains("Comma-separated logic channel indexes to enable"))
         .stdout(predicate::str::contains("devices options --handle <HANDLE>"))
-        .stdout(predicate::str::contains("possible values").not());
+        .stdout(predicate::str::contains("stop-option:").not())
+        .stdout(predicate::str::contains("buffer-100x16").not());
 }
 
 #[test]
@@ -262,6 +263,8 @@ fn capture_reports_stable_validation_error_for_incompatible_device_option_combin
             "0,1,2,3",
             "--operation-mode",
             "stream",
+            "--channel-mode",
+            "stream-100x16",
             "--stop-option",
             "stop-after-samples",
             "--output",

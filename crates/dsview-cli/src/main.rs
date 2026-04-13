@@ -15,8 +15,11 @@ use dsview_core::{
     describe_native_error, resolve_capture_artifact_paths, AcquisitionSummary,
     AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError, CaptureCleanup,
     CaptureCompletion, CaptureConfigError, CaptureConfigRequest, CaptureExportError,
-    CaptureRunError, CaptureRunRequest, DeviceOptionValidationError, Discovery, NativeErrorCode,
-    RuntimeError, SelectionHandle, SupportedDevice,
+    CaptureRunError, CaptureRunRequest, ChannelModeGroupSnapshot, ChannelModeOptionSnapshot,
+    CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionValidationCapabilities,
+    DeviceOptionValidationError, DeviceOptionsSnapshot, Discovery, EnumOptionSnapshot,
+    NativeErrorCode, OperationModeValidationCapabilities, RuntimeError, SelectionHandle,
+    SupportedDevice, ThresholdCapabilitySnapshot,
 };
 use serde::Serialize;
 
@@ -24,6 +27,9 @@ const BUILD_VERSION: &str = match option_env!("DSVIEW_BUILD_VERSION") {
     Some(version) => version,
     None => env!("CARGO_PKG_VERSION"),
 };
+
+#[cfg(debug_assertions)]
+const TEST_DEVICE_OPTIONS_FIXTURE_ENV: &str = "DSVIEW_CLI_TEST_DEVICE_OPTIONS_FIXTURE";
 
 #[derive(Parser, Debug)]
 #[command(version = BUILD_VERSION)]
@@ -353,16 +359,23 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         resolve_capture_artifact_paths(&args.output, args.metadata_output.as_ref()).map_err(
             |error| command_error(args.runtime.format, classify_artifact_path_error(&error)),
         )?;
-    let discovery = connect_runtime(&args.runtime)?;
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
     if uses_device_option_validation(&args) {
-        let snapshot = discovery
-            .inspect_device_options(handle)
-            .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
-        let capabilities = discovery
-            .load_device_option_validation_capabilities(handle)
-            .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+        let (snapshot, capabilities) = if let Some((snapshot, capabilities)) =
+            capture_test_fixture(handle)
+        {
+            (snapshot, capabilities)
+        } else {
+            let discovery = connect_runtime(&args.runtime)?;
+            let snapshot = discovery
+                .inspect_device_options(handle)
+                .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+            let capabilities = discovery
+                .load_device_option_validation_capabilities(handle)
+                .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+            (snapshot, capabilities)
+        };
         let request = resolve_capture_device_option_request(
             &snapshot,
             &capabilities,
@@ -377,10 +390,11 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
                 classify_capture_device_option_parse_error(&error),
             )
         })?;
-        discovery
-            .validate_device_option_request(handle, &request)
+        capabilities
+            .validate_request(&request)
             .map_err(|error| command_error(args.runtime.format, classify_validation_error(&error)))?;
     }
+    let discovery = connect_runtime(&args.runtime)?;
     let config_request = CaptureConfigRequest {
         sample_rate_hz: args.sample_rate_hz,
         sample_limit: args.sample_limit,
@@ -459,6 +473,208 @@ fn device_record(device: &SupportedDevice) -> DeviceRecord {
 
 fn uses_device_option_validation(args: &CaptureArgs) -> bool {
     !args.channels.is_empty() || args.device_options.has_overrides()
+}
+
+#[cfg(debug_assertions)]
+fn capture_test_fixture(
+    handle: SelectionHandle,
+) -> Option<(DeviceOptionsSnapshot, DeviceOptionValidationCapabilities)> {
+    if std::env::var_os(TEST_DEVICE_OPTIONS_FIXTURE_ENV).is_none() || handle.raw() != 7 {
+        return None;
+    }
+
+    Some((
+        capture_test_device_options_snapshot(),
+        capture_test_validation_capabilities(),
+    ))
+}
+
+#[cfg(not(debug_assertions))]
+fn capture_test_fixture(
+    _handle: SelectionHandle,
+) -> Option<(DeviceOptionsSnapshot, DeviceOptionValidationCapabilities)> {
+    None
+}
+
+fn capture_test_device_options_snapshot() -> DeviceOptionsSnapshot {
+    DeviceOptionsSnapshot {
+        device: DeviceIdentitySnapshot {
+            selection_handle: 7,
+            native_handle: 42,
+            stable_id: "dslogic-plus".to_string(),
+            kind: "DSLogic Plus".to_string(),
+            name: "DSLogic Plus".to_string(),
+        },
+        current: CurrentDeviceOptionValues {
+            operation_mode_id: Some("operation-mode:0".to_string()),
+            operation_mode_code: Some(0),
+            stop_option_id: Some("stop-option:1".to_string()),
+            stop_option_code: Some(1),
+            filter_id: Some("filter:1".to_string()),
+            filter_code: Some(1),
+            channel_mode_id: Some("channel-mode:20".to_string()),
+            channel_mode_code: Some(20),
+        },
+        operation_modes: vec![
+            EnumOptionSnapshot {
+                id: "operation-mode:0".to_string(),
+                native_code: 0,
+                label: "Buffer Mode".to_string(),
+            },
+            EnumOptionSnapshot {
+                id: "operation-mode:1".to_string(),
+                native_code: 1,
+                label: "Stream Mode".to_string(),
+            },
+        ],
+        stop_options: vec![
+            EnumOptionSnapshot {
+                id: "stop-option:0".to_string(),
+                native_code: 0,
+                label: "Immediate".to_string(),
+            },
+            EnumOptionSnapshot {
+                id: "stop-option:1".to_string(),
+                native_code: 1,
+                label: "Stop after samples".to_string(),
+            },
+        ],
+        filters: vec![
+            EnumOptionSnapshot {
+                id: "filter:1".to_string(),
+                native_code: 1,
+                label: "Off".to_string(),
+            },
+            EnumOptionSnapshot {
+                id: "filter:2".to_string(),
+                native_code: 2,
+                label: "1 Sample".to_string(),
+            },
+        ],
+        channel_modes_by_operation_mode: vec![
+            ChannelModeGroupSnapshot {
+                operation_mode_id: "operation-mode:0".to_string(),
+                operation_mode_code: 0,
+                current_channel_mode_id: Some("channel-mode:20".to_string()),
+                current_channel_mode_code: Some(20),
+                channel_modes: vec![
+                    ChannelModeOptionSnapshot {
+                        id: "channel-mode:20".to_string(),
+                        native_code: 20,
+                        label: "Buffer 100x16".to_string(),
+                        max_enabled_channels: 16,
+                    },
+                    ChannelModeOptionSnapshot {
+                        id: "channel-mode:21".to_string(),
+                        native_code: 21,
+                        label: "Buffer 200x8".to_string(),
+                        max_enabled_channels: 8,
+                    },
+                ],
+            },
+            ChannelModeGroupSnapshot {
+                operation_mode_id: "operation-mode:1".to_string(),
+                operation_mode_code: 1,
+                current_channel_mode_id: None,
+                current_channel_mode_code: None,
+                channel_modes: vec![ChannelModeOptionSnapshot {
+                    id: "channel-mode:30".to_string(),
+                    native_code: 30,
+                    label: "Stream 100x16".to_string(),
+                    max_enabled_channels: 16,
+                }],
+            },
+        ],
+        threshold: ThresholdCapabilitySnapshot {
+            id: "threshold:vth-range".to_string(),
+            kind: "voltage-range".to_string(),
+            current_volts: Some(1.8),
+            min_volts: 0.7,
+            max_volts: 5.0,
+            step_volts: 0.1,
+            legacy_metadata: None,
+        },
+    }
+}
+
+fn capture_test_validation_capabilities() -> DeviceOptionValidationCapabilities {
+    DeviceOptionValidationCapabilities {
+        device: capture_test_device_options_snapshot().device,
+        current: CurrentDeviceOptionValues {
+            operation_mode_id: Some("operation-mode:0".to_string()),
+            operation_mode_code: Some(0),
+            stop_option_id: Some("stop-option:1".to_string()),
+            stop_option_code: Some(1),
+            filter_id: Some("filter:1".to_string()),
+            filter_code: Some(1),
+            channel_mode_id: Some("channel-mode:20".to_string()),
+            channel_mode_code: Some(20),
+        },
+        total_channel_count: 16,
+        hardware_sample_capacity: 16 * 4096,
+        sample_limit_alignment: 1024,
+        operation_modes: vec![
+            OperationModeValidationCapabilities {
+                id: "operation-mode:0".to_string(),
+                native_code: 0,
+                label: "Buffer Mode".to_string(),
+                stop_option_ids: vec![
+                    "stop-option:0".to_string(),
+                    "stop-option:1".to_string(),
+                ],
+                channel_modes: vec![
+                    dsview_core::ChannelModeValidationCapabilities {
+                        id: "channel-mode:20".to_string(),
+                        native_code: 20,
+                        label: "Buffer 100x16".to_string(),
+                        max_enabled_channels: 16,
+                        supported_sample_rates: vec![100_000_000],
+                    },
+                    dsview_core::ChannelModeValidationCapabilities {
+                        id: "channel-mode:21".to_string(),
+                        native_code: 21,
+                        label: "Buffer 200x8".to_string(),
+                        max_enabled_channels: 8,
+                        supported_sample_rates: vec![100_000_000],
+                    },
+                ],
+            },
+            OperationModeValidationCapabilities {
+                id: "operation-mode:1".to_string(),
+                native_code: 1,
+                label: "Stream Mode".to_string(),
+                stop_option_ids: vec![],
+                channel_modes: vec![dsview_core::ChannelModeValidationCapabilities {
+                    id: "channel-mode:30".to_string(),
+                    native_code: 30,
+                    label: "Stream 100x16".to_string(),
+                    max_enabled_channels: 16,
+                    supported_sample_rates: vec![100_000_000],
+                }],
+            },
+        ],
+        filters: vec![
+            EnumOptionSnapshot {
+                id: "filter:1".to_string(),
+                native_code: 1,
+                label: "Off".to_string(),
+            },
+            EnumOptionSnapshot {
+                id: "filter:2".to_string(),
+                native_code: 2,
+                label: "1 Sample".to_string(),
+            },
+        ],
+        threshold: ThresholdCapabilitySnapshot {
+            id: "threshold:vth-range".to_string(),
+            kind: "voltage-range".to_string(),
+            current_volts: Some(1.8),
+            min_volts: 0.7,
+            max_volts: 5.0,
+            step_volts: 0.1,
+            legacy_metadata: None,
+        },
+    }
 }
 
 fn classify_artifact_path_error(error: &CaptureArtifactPathError) -> ErrorResponse {
