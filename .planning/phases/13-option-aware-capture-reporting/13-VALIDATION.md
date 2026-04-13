@@ -21,7 +21,7 @@ created: 2026-04-13
 | **Config file** | none — Cargo defaults |
 | **Quick run command** | `cargo test -p dsview-core --test acquisition -- --nocapture` |
 | **Full suite command** | `cargo test --workspace -- --nocapture` |
-| **Estimated runtime** | ~90 seconds |
+| **Estimated runtime** | ~30 seconds |
 
 ---
 
@@ -30,7 +30,7 @@ created: 2026-04-13
 - **After every task commit:** Run `cargo test -p dsview-core --test acquisition -- --nocapture`
 - **After every plan wave:** Run `cargo test -p dsview-cli --test capture_cli -- --nocapture && cargo test -p dsview-sys --test device_options -- --nocapture`
 - **Before `/gsd-verify-work`:** Full suite must be green
-- **Max feedback latency:** 45 seconds
+- **Max feedback latency:** 30 seconds
 
 ---
 
@@ -38,8 +38,8 @@ created: 2026-04-13
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 13-01-01 | 01 | 1 | RUN-04 | T-13-01 / — | Full validated device-option request is applied in deterministic order before acquisition starts, with partial-apply failures surfaced clearly | unit/integration | `cargo test -p dsview-sys --test device_options -- --nocapture && cargo test -p dsview-core --lib -- --nocapture` | ✅ existing harness | ⬜ pending |
-| 13-01-02 | 01 | 1 | RUN-04 | T-13-01 / — | Option-aware capture path replaces hidden preflight mutation and preserves the `v1.0` baseline when no Phase 12 options are in play | unit/integration | `cargo test -p dsview-core --lib -- --nocapture` | ✅ existing harness | ⬜ pending |
+| 13-01-01 | 01 | 1 | RUN-04 | T-13-01 / — | Full validated device-option request is applied in deterministic order before acquisition starts, with partial-apply failures surfaced clearly | unit/integration | `cargo test -p dsview-sys --test device_options -- --nocapture` | ✅ existing harness | ⬜ pending |
+| 13-01-02 | 01 | 1 | RUN-04 | T-13-01 / — | Option-aware capture path replaces hidden preflight mutation and preserves the `v1.0` baseline when no Phase 12 options are in play | unit/integration | `cargo test -p dsview-core --test acquisition -- --nocapture && cargo test -p dsview-core --lib -- --nocapture && cargo test -p dsview-cli --bin dsview-cli -- --nocapture` | ✅ existing harness | ⬜ pending |
 | 13-02-01 | 02 | 2 | RUN-05 | T-13-02 / — | CLI JSON and metadata carry both requested and effective option facts from one shared source model | unit/integration | `cargo test -p dsview-core --test export_artifacts -- --nocapture` | ✅ existing harness | ⬜ pending |
 | 13-02-02 | 02 | 2 | RUN-05 | T-13-02 / — | Text output stays concise while still surfacing effective option values used for the run | unit/integration | `cargo test -p dsview-cli --bin dsview-cli -- --nocapture && cargo test -p dsview-core --test export_artifacts -- --nocapture` | ✅ existing harness | ⬜ pending |
 | 13-03-01 | 03 | 3 | RUN-04, RUN-05 | T-13-03 / — | Regression coverage proves option-aware runs and the default `v1.0` path both remain correct | integration | `cargo test -p dsview-cli --test capture_cli -- --nocapture && cargo test -p dsview-cli --test devices_cli -- --nocapture` | ✅ existing harness | ⬜ pending |
