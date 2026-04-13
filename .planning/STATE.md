@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-current_phase: 12
-current_phase_name: cli-device-option-surface
-current_plan: 3
+current_phase: 13
+current_phase_name: option aware capture reporting
+current_plan: Not started
 status: verifying
-stopped_at: Completed 12-cli-device-option-surface-03-PLAN.md
-last_updated: "2026-04-13T08:50:50.938Z"
-last_activity: 2026-04-13
+stopped_at: Completed Phase 12
+last_updated: "2026-04-13T09:05:25.334Z"
+last_activity: 2026-04-13 -- Phase 12 verification passed
 progress:
   total_phases: 4
   completed_phases: 3
@@ -24,18 +24,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 12 — cli-device-option-surface
+**Current focus:** Phase 13 — option-aware-capture-reporting
 
 ## Current Position
 
-Current Phase: 12
-Current Phase Name: cli-device-option-surface
-Current Plan: 3
+Current Phase: 13
+Current Phase Name: option aware capture reporting
+Current Plan: Not started
 Total Plans in Phase: 3
-Phase: 12 (cli-device-option-surface) — READY
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-04-13
+Phase: 13 (option-aware-capture-reporting) — READY
+Plan: Not started
+Status: Phase 12 complete and verified
+Last activity: 2026-04-13 -- Phase 12 verification passed
 
 ## Accumulated Context
 
@@ -86,14 +86,14 @@ Last activity: 2026-04-13
 
 ## Session Continuity
 
-Last session: 2026-04-13T08:50:50.933Z
+Last session: 2026-04-13T09:05:25Z
 
-Stopped At: Completed 12-cli-device-option-surface-03-PLAN.md
+Stopped At: Completed Phase 12
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Verify the completed Phase 12 CLI contract before advancing the milestone.
-- Start Phase 13 with `13-01-PLAN.md` to apply the already validated device-option selections at runtime.
-- Keep the now-locked Phase 12 help, token, and `devices options` contracts stable while Phase 13 adds apply-time behavior and reporting.
+- Plan Phase 13 to apply the already validated device-option selections at runtime and report effective values.
+- Preserve the completed Phase 12 help, token, and `devices options` contracts while Phase 13 adds apply-time behavior.
+- Keep the shipped `v1.0` capture/export baseline stable while introducing option-aware runtime application and reporting.
