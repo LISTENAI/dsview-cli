@@ -2,15 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: verifying
-last_updated: "2026-04-13T06:10:07.666Z"
-last_activity: 2026-04-13 -- Phase 11 verification passed
+current_phase: 12
+current_phase_name: cli-device-option-surface
+current_plan: 2
+status: executing
+stopped_at: Completed 12-cli-device-option-surface-01-PLAN.md
+last_updated: "2026-04-13T07:44:46.578Z"
+last_activity: 2026-04-13
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_plans: 9
+  completed_plans: 7
+  percent: 78
 ---
 
 # Session State
@@ -24,10 +28,14 @@ See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 ## Current Position
 
+Current Phase: 12
+Current Phase Name: cli-device-option-surface
+Current Plan: 2
+Total Plans in Phase: 3
 Phase: 12 (cli-device-option-surface) — READY
-Plan: Not started
-Status: Phase 11 complete and verified
-Last activity: 2026-04-13 -- Phase 11 verification passed
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-04-13 -- Plan 12-01 complete
 
 ## Accumulated Context
 
@@ -53,6 +61,9 @@ Last activity: 2026-04-13 -- Phase 11 verification passed
 - [Phase 11]: Use Phase 10 stable IDs as the allowlist source and carry native codes in the validated request for later apply-time phases.
 - [Phase 11]: Reuse the shipped capture sample-limit alignment helpers instead of duplicating the arithmetic in the Phase 11 validator.
 - [Phase 11]: Map current capture-config validation failures to the Phase 11 taxonomy while preserving their human-readable messages.
+- [Phase 12-cli-device-option-surface]: Keep friendly capture-token generation in dsview-cli so Phase 10/11 stable IDs remain unchanged.
+- [Phase 12-cli-device-option-surface]: Expose both token and stable_id in devices options JSON/text so automation and shell usage share one contract.
+- [Phase 12-cli-device-option-surface]: Lead devices options text with capture flag examples plus --channels hints derived from channel-mode limits.
 
 ## Performance Metrics
 
@@ -64,15 +75,18 @@ Last activity: 2026-04-13 -- Phase 11 verification passed
 | Phase 11 P01 | 45 min | 2 tasks | 8 files |
 | Phase 11 P02 | 13 min | 2 tasks | 5 files |
 | Phase 11 P03 | 7 min | 2 tasks | 2 files |
+| Phase 12-cli-device-option-surface P01 | 12m | 2 tasks | 4 files |
 
 ## Session Continuity
 
-- Last session: 2026-04-13T06:10:07Z
-- Stopped at: Completed Phase 11
-- Resume from: `/gsd-discuss-phase 12`
+Last session: 2026-04-13T07:44:46.576Z
+
+Stopped At: Completed 12-cli-device-option-surface-01-PLAN.md
+
+Resume File: None
 
 ## Immediate Next Steps
 
-- Discuss Phase 12 CLI option selection ergonomics before planning the new flag surface.
-- Plan Phase 12 to wire validated device-option arguments into the CLI without destabilizing the shipped `v1.0` path.
-- Preserve the completed Phase 11 validation taxonomy and selected-device loading behavior as Phase 12 inputs.
+- Execute Plan 12-02 to add `capture` device-option flags and resolve the new CLI tokens back to stable IDs.
+- Reuse the locked `devices options` JSON/text contract while wiring Phase 11 validation into the `capture` command path.
+- Keep Phase 13 apply-time mutation and reporting out of scope while finishing the remaining Phase 12 CLI parsing work.

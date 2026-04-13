@@ -12,12 +12,12 @@
 
 ### Device Option Configuration
 
-- [ ] **OPT-02**: User can choose `Buffer Mode` or `Stream Mode` for a `DSLogic Plus` capture run from the CLI.
-- [ ] **OPT-03**: User can choose the DSLogic stop option for operation modes that support it.
-- [ ] **OPT-04**: User can choose a DSLogic channel mode that determines valid channel count and maximum sample rate.
-- [ ] **OPT-05**: User can choose which logic channels are enabled for a run within the selected channel-mode limit.
-- [ ] **OPT-06**: User can choose the `DSLogic Plus` threshold voltage from the CLI.
-- [ ] **OPT-07**: User can choose the DSLogic filter option from the CLI.
+- [x] **OPT-02**: User can choose `Buffer Mode` or `Stream Mode` for a `DSLogic Plus` capture run from the CLI.
+- [x] **OPT-03**: User can choose the DSLogic stop option for operation modes that support it.
+- [x] **OPT-04**: User can choose a DSLogic channel mode that determines valid channel count and maximum sample rate.
+- [x] **OPT-05**: User can choose which logic channels are enabled for a run within the selected channel-mode limit.
+- [x] **OPT-06**: User can choose the `DSLogic Plus` threshold voltage from the CLI.
+- [x] **OPT-07**: User can choose the DSLogic filter option from the CLI.
 
 ### Validation and Execution
 
@@ -52,12 +52,12 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | OPT-01 | Phase 10 | Complete |
-| OPT-02 | Phase 12 | Pending |
-| OPT-03 | Phase 12 | Pending |
-| OPT-04 | Phase 12 | Pending |
-| OPT-05 | Phase 12 | Pending |
-| OPT-06 | Phase 12 | Pending |
-| OPT-07 | Phase 12 | Pending |
+| OPT-02 | Phase 12 | Complete |
+| OPT-03 | Phase 12 | Complete |
+| OPT-04 | Phase 12 | Complete |
+| OPT-05 | Phase 12 | Complete |
+| OPT-06 | Phase 12 | Complete |
+| OPT-07 | Phase 12 | Complete |
 | VAL-01 | Phase 11 | Complete |
 | VAL-02 | Phase 11 | Complete |
 | RUN-04 | Phase 13 | Pending |

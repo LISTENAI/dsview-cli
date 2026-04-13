@@ -88,7 +88,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 |-------|----------------|--------|-----------|
 | 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
 | 11. Device Option Validation Model | 3/3 | Complete    | 2026-04-13 |
-| 12. CLI Device Option Surface | 0/3 | Pending | - |
+| 12. CLI Device Option Surface | 1/3 | In Progress|  |
 | 13. Option-Aware Capture Reporting | 0/3 | Pending | - |
 
 ## Archived Milestones
