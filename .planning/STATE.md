@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-13T04:48:50.760Z"
+last_updated: "2026-04-13T05:02:20.032Z"
 last_activity: 2026-04-13
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # Session State
@@ -25,7 +25,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-10)
 ## Current Position
 
 Phase: 11 (device-option-validation-model) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-13
 
@@ -50,6 +50,9 @@ Last activity: 2026-04-13
 - [Phase 11]: Keep Phase 11 validation capabilities additive and internal instead of extending the shipped Phase 10 discovery schema.
 - [Phase 11]: Probe validation facts entirely inside dsview-sys and restore original operation/channel modes on every exit path.
 - [Phase 11]: Advertise stop-option compatibility only for Buffer Mode in the internal validation model.
+- [Phase 11]: Use Phase 10 stable IDs as the allowlist source and carry native codes in the validated request for later apply-time phases.
+- [Phase 11]: Reuse the shipped capture sample-limit alignment helpers instead of duplicating the arithmetic in the Phase 11 validator.
+- [Phase 11]: Map current capture-config validation failures to the Phase 11 taxonomy while preserving their human-readable messages.
 
 ## Performance Metrics
 
@@ -59,15 +62,16 @@ Last activity: 2026-04-13
 | 10 | 02 | 6 min | 2 | 3 |
 | 10 | 03 | 3 min | 2 | 4 |
 | Phase 11 P01 | 45 min | 2 tasks | 8 files |
+| Phase 11 P02 | 13 min | 2 tasks | 5 files |
 
 ## Session Continuity
 
-- Last session: 2026-04-13T04:47:43Z
-- Stopped at: Completed 11-01-PLAN.md
+- Last session: 2026-04-13T05:00:59Z
+- Stopped at: Completed 11-02-PLAN.md
 - Resume from: `/gsd-execute-phase 11`
 
 ## Immediate Next Steps
 
-- Execute `11-02-PLAN.md` to implement the pure validator against the new request/capability contracts from `11-01`.
-- Preserve the Phase 10 public discovery schema while wiring stable validation failures into CLI-visible machine-readable codes.
-- Keep the shipped `v1.0` capture/export path stable while finishing Phase 11 validation coverage.
+- Execute `11-03-PLAN.md` to lock the validator and CLI taxonomy with broader DSView-rule regression coverage.
+- Expand regression coverage without changing the shipped `v1.0` capture/export baseline or the Phase 10 discovery schema.
+- Keep the stable validation taxonomy intact while broadening the option matrix and CLI regression assertions.
