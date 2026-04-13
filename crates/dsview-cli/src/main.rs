@@ -1215,6 +1215,25 @@ mod tests {
     }
 
     #[test]
+    fn channels_only_capture_uses_device_option_validation() {
+        let args = sample_capture_args();
+
+        assert!(uses_device_option_validation(&args));
+    }
+
+    #[test]
+    fn capture_device_option_parse_errors_use_stable_validation_codes() {
+        let response = classify_capture_device_option_parse_error(
+            &dsview_cli::capture_device_options::CaptureDeviceOptionParseError::UnsupportedChannelModeToken {
+                token: "invalid-token".to_string(),
+            },
+        );
+
+        assert_eq!(response.code, "channel_mode_unsupported");
+        assert!(response.message.contains("invalid-token"));
+    }
+
+    #[test]
     fn capture_environment_not_ready_maps_to_stable_error_code() {
         let error = classify_capture_error(&CaptureRunError::EnvironmentNotReady);
         assert_eq!(error.code, "capture_environment_not_ready");
@@ -1367,6 +1386,24 @@ mod tests {
                 step_volts: 0.1,
                 legacy_metadata: None,
             },
+        }
+    }
+
+    fn sample_capture_args() -> CaptureArgs {
+        CaptureArgs {
+            runtime: SharedRuntimeArgs {
+                resource_dir: None,
+                format: OutputFormat::Json,
+            },
+            handle: 7,
+            sample_rate_hz: 100_000_000,
+            sample_limit: 4096,
+            channels: vec![0, 1, 2, 3],
+            device_options: CaptureDeviceOptionArgs::default(),
+            output: PathBuf::from("artifacts/run.vcd"),
+            metadata_output: None,
+            wait_timeout_ms: 10_000,
+            poll_interval_ms: 50,
         }
     }
 
