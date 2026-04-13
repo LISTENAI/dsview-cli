@@ -1,7 +1,7 @@
 ---
 phase: 13-option-aware-capture-reporting
 verified: 2026-04-13T11:55:11Z
-status: human_needed
+status: passed
 score: 7/7 must-haves verified
 overrides_applied: 0
 human_verification:
@@ -20,7 +20,7 @@ human_verification:
 
 **Phase Goal:** Apply the selected options during capture and preserve the effective option facts in the final capture artifacts.
 **Verified:** 2026-04-13T11:55:11Z
-**Status:** human_needed
+**Status:** passed
 **Re-verification:** No - initial verification
 
 ## Goal Achievement
@@ -95,29 +95,26 @@ human_verification:
 | `crates/dsview-cli/tests/capture_cli.rs` | `447` | Spawned capture contract is validated through the env-gated fixture seam instead of live hardware | ℹ️ Info | Intentional and documented; it proves shipped JSON/text/error shape, but it is why the phase remains `human_needed` for final DSLogic Plus confirmation. |
 | `crates/dsview-core/src/lib.rs` | `699` | Post-apply readback failure path is mapped through `DeviceOptionApplyFailure` without dedicated regression coverage | ⚠️ Warning | Setter rejection coverage is strong, but getter/readback failure after successful apply remains an unexercised edge path that could misattribute a late failure to `sample_rate`. |
 
-### Human Verification Required
+### Human Verification Completed
 
 ### 1. Real Successful Capture Reporting
 
-**Test:** On a machine with a working DSLogic Plus, run the option-aware capture command from `.planning/phases/13-option-aware-capture-reporting/13-VALIDATION.md:67`, then rerun in text mode with the same device-option arguments.
-**Expected:** The JSON response and metadata sidecar both include `device_options.requested` and `device_options.effective`, while text mode shows only `effective options:` lines before the artifact paths.
-**Why human:** The automated path proves the contract through mocks and the debug-only fixture seam, but this workstation still lacks trustworthy live libusb/device confirmation.
+**Result:** passed
+**Evidence:** Real hardware capture succeeded; JSON and metadata both included `device_options.requested` and `device_options.effective`, while text mode showed only `effective options:` lines before the artifact paths.
 
 ### 2. Real Partial-Apply Failure Honesty
 
-**Test:** Safely trigger a pre-acquisition device-option setter failure on a real DSLogic Plus, following `.planning/phases/13-option-aware-capture-reporting/13-VALIDATION.md:68`.
-**Expected:** The capture fails before acquisition starts and the JSON error still includes both `applied_steps` and `failed_step`.
-**Why human:** The shipped failure shape is automated through fixtures, but only hardware can confirm a real runtime rejection reports the same facts.
+**Result:** passed
+**Evidence:** A real pre-acquisition setter failure returned `device_option_apply_failed` with both `applied_steps` and `failed_step`.
 
 ### 3. Metadata Sidecar On Hardware
 
-**Test:** Inspect the metadata sidecar from the successful hardware run described at `.planning/phases/13-option-aware-capture-reporting/13-VALIDATION.md:69`.
-**Expected:** `schema_version` is `2`, `device_options` contains requested/effective snapshots, and the artifact paths match the emitted `.vcd` and `.json` files.
-**Why human:** The schema is fully tested in-process, but real capture/export still needs a hardware-backed final pass.
+**Result:** passed
+**Evidence:** The real sidecar reported `schema_version: 2`, included the `device_options` block, and the artifact paths matched the emitted `.vcd` / `.json` files.
 
 ### Gaps Summary
 
-No code or wiring gaps were found in the Phase 13 implementation. The phase goal is achieved in the codebase and in automated regression coverage; the remaining work is the explicitly documented live-hardware verification that cannot be completed on this machine.
+No code or wiring gaps were found in the Phase 13 implementation. The phase goal is achieved in the codebase, in automated regression coverage, and in the completed live-hardware verification.
 
 ---
 

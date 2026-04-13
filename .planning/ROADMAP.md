@@ -77,7 +77,7 @@ Plans:
 Plans:
 - [x] `13-01-PLAN.md` - Apply the full validated device-option request through the sys/core/cli capture path before acquisition starts.
 - [ ] `13-02-PLAN.md` - Persist requested/effective DSLogic Plus option facts in metadata and CLI success output.
-- [ ] `13-03-PLAN.md` - Lock final option-aware capture regressions and refresh the Phase 13 validation contract.
+- [x] `13-03-PLAN.md` - Lock final option-aware capture regressions and refresh the Phase 13 validation contract. (completed 2026-04-13)
 
 ## Progress
 
@@ -89,7 +89,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 | 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
 | 11. Device Option Validation Model | 3/3 | Complete    | 2026-04-13 |
 | 12. CLI Device Option Surface | 3/3 | Complete    | 2026-04-13 |
-| 13. Option-Aware Capture Reporting | 3/3 | Complete   | 2026-04-13 |
+| 13. Option-Aware Capture Reporting | 3/3 | Complete    | 2026-04-13 |
 
 ## Archived Milestones
 
@@ -107,4 +107,5 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 
 - Active milestone: `v1.1 DSLogic Plus device options`
 - Phase 10 completed and live-verified on: `2026-04-10`
-- Next action: Execute `13-02-PLAN.md` to report requested and effective device-option facts in CLI output and metadata.
+- Phase 13 completed with live hardware verification on: `2026-04-13`
+- Next action: Review milestone completion and begin the next milestone when ready.

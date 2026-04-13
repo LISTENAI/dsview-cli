@@ -4,11 +4,11 @@ milestone: v1.1
 milestone_name: milestone
 current_phase: 13
 current_phase_name: option aware capture reporting
-current_plan: 3
-status: verifying
-stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-04-13T11:37:14.764Z"
-last_activity: 2026-04-13
+current_plan: Not started
+status: completed
+stopped_at: Completed Phase 13 with human verification
+last_updated: "2026-04-13T12:35:52Z"
+last_activity: 2026-04-13 -- Phase 13 human verification passed
 progress:
   total_phases: 4
   completed_phases: 4
@@ -24,18 +24,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 13 — option-aware-capture-reporting
+**Current focus:** Milestone v1.1 complete
 
 ## Current Position
 
 Current Phase: 13
 Current Phase Name: option aware capture reporting
-Current Plan: 3
+Current Plan: Not started
 Total Plans in Phase: 3
-Phase: 13 (option-aware-capture-reporting) — READY
+Phase: 13 (option-aware-capture-reporting) — COMPLETE
 Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-04-13
+Status: Phase complete and human-verified
+Last activity: 2026-04-13 -- Phase 13 human verification passed
 
 ## Accumulated Context
 
@@ -96,14 +96,14 @@ Last activity: 2026-04-13
 
 ## Session Continuity
 
-Last session: 2026-04-13T11:37:14.755Z
+Last session: 2026-04-13T12:35:52Z
 
-Stopped At: Completed 13-03-PLAN.md
+Stopped At: Completed Phase 13 with human verification
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Execute `13-02-PLAN.md` to surface requested and effective option facts in CLI output and metadata.
-- Preserve the completed option-aware apply path while Phase 13-02 builds reporting on top of `EffectiveDeviceOptionState`.
-- Keep the shipped `v1.0` capture/export baseline stable while Phase 13-02 adds reporting behavior.
+- Milestone `v1.1` is functionally complete.
+- Review the final milestone state and archive/transition with the next milestone workflow when ready.
+- Preserve the validated `v1.0` baseline plus Phases 10-13 option workflow as the reference for future milestone planning.
