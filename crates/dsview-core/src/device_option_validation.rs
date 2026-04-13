@@ -433,15 +433,11 @@ pub(crate) fn normalize_device_option_validation_capabilities(
                 id: operation_mode_id(operation_mode.code),
                 native_code: operation_mode.code,
                 label: operation_mode.label.clone(),
-                stop_option_ids: if operation_mode.label.contains("Buffer") {
-                    operation_mode
-                        .stop_options
-                        .iter()
-                        .map(|option| stop_option_id(option.code))
-                        .collect()
-                } else {
-                    Vec::new()
-                },
+                stop_option_ids: operation_mode
+                    .stop_options
+                    .iter()
+                    .map(|option| stop_option_id(option.code))
+                    .collect(),
                 channel_modes: operation_mode
                     .channel_modes
                     .into_iter()

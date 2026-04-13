@@ -503,8 +503,7 @@ static int dsview_bridge_copy_validation_channel_modes_for_current_operation(
     int max_modes,
     unsigned short *out_count,
     unsigned short *out_total_channel_count,
-    unsigned long long *out_hardware_sample_capacity,
-    struct dsview_threshold_range *out_threshold)
+    unsigned long long *out_hardware_sample_capacity)
 {
     GVariant *data = NULL;
     struct sr_list_item *items = NULL;
@@ -596,23 +595,6 @@ static int dsview_bridge_copy_validation_channel_modes_for_current_operation(
                 }
             }
 
-            if (out_threshold != NULL && out_threshold->has_current_volts == 0) {
-                int has_current_vth = 0;
-                double current_vth = 0.0;
-
-                status = dsview_bridge_get_optional_double_config(
-                    SR_CONF_VTH,
-                    &has_current_vth,
-                    &current_vth);
-                if (status != SR_OK) {
-                    g_variant_unref(data);
-                    return status;
-                }
-                out_threshold->has_current_volts = has_current_vth;
-                if (has_current_vth) {
-                    out_threshold->current_volts = current_vth;
-                }
-            }
         }
         index++;
     }
@@ -1422,6 +1404,7 @@ int dsview_bridge_ds_get_validation_capabilities(
 {
     struct dsview_option_value operation_modes[DSVIEW_OPTION_VALUE_CAPACITY];
     unsigned short operation_mode_count = 0;
+    int has_current_vth = 0;
     int has_current_threshold_code = 0;
     int index;
     int status = SR_OK;
@@ -1486,6 +1469,14 @@ int dsview_bridge_ds_get_validation_capabilities(
         return status;
     }
     out_snapshot->threshold.has_current_legacy_code = has_current_threshold_code;
+    status = dsview_bridge_get_optional_double_config(
+        SR_CONF_VTH,
+        &has_current_vth,
+        &out_snapshot->threshold.current_volts);
+    if (status != SR_OK) {
+        return status;
+    }
+    out_snapshot->threshold.has_current_volts = has_current_vth;
 
     status = dsview_bridge_copy_option_values(
         SR_CONF_FILTER,
@@ -1540,13 +1531,15 @@ int dsview_bridge_ds_get_validation_capabilities(
             active_operation_mode = operation_mode_code;
         }
 
-        status = dsview_bridge_copy_option_values(
-            SR_CONF_BUFFER_OPTIONS,
-            operation_mode->stop_options,
-            DSVIEW_OPTION_VALUE_CAPACITY,
-            &operation_mode->stop_option_count);
-        if (status != SR_OK) {
-            goto restore;
+        if (operation_mode_code == LO_OP_BUFFER) {
+            status = dsview_bridge_copy_option_values(
+                SR_CONF_BUFFER_OPTIONS,
+                operation_mode->stop_options,
+                DSVIEW_OPTION_VALUE_CAPACITY,
+                &operation_mode->stop_option_count);
+            if (status != SR_OK) {
+                goto restore;
+            }
         }
 
         status = dsview_bridge_copy_validation_channel_modes_for_current_operation(
@@ -1554,8 +1547,7 @@ int dsview_bridge_ds_get_validation_capabilities(
             DSVIEW_CHANNEL_MODE_CAPACITY,
             &operation_mode->channel_mode_count,
             &out_snapshot->total_channel_count,
-            &out_snapshot->hardware_sample_capacity,
-            &out_snapshot->threshold);
+            &out_snapshot->hardware_sample_capacity);
         if (status != SR_OK) {
             goto restore;
         }

@@ -15,8 +15,8 @@ const SR_CONF_THRESHOLD: i32 = 30071;
 const SR_CONF_VTH: i32 = 30072;
 const SR_CONF_HW_DEPTH: i32 = 30075;
 
-const BUFFER_MODE: i32 = 101;
-const STREAM_MODE: i32 = 202;
+const BUFFER_MODE: i32 = 0;
+const STREAM_MODE: i32 = 1;
 
 const STOP_WHEN_FULL: i32 = 1;
 const UPLOAD_WHEN_FULL: i32 = 2;
@@ -497,6 +497,7 @@ fn validation_capabilities_snapshot_reads_mode_scoped_samplerates() {
             .collect::<Vec<_>>(),
         vec![STOP_WHEN_FULL as i16, UPLOAD_WHEN_FULL as i16]
     );
+    assert!(snapshot.operation_modes[1].stop_options.is_empty());
     assert_eq!(
         snapshot.operation_modes[0].channel_modes[0].supported_sample_rates,
         vec![50_000_000, 100_000_000]

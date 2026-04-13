@@ -170,7 +170,7 @@ pub(crate) fn align_sample_limit(value: u64, alignment: u64) -> u64 {
         if remainder == 0 {
             value
         } else {
-            value + (alignment - remainder)
+            value.checked_add(alignment - remainder).unwrap_or(u64::MAX)
         }
     }
 }
@@ -335,6 +335,23 @@ mod tests {
                 enabled_channel_count: 4,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn rejects_sample_limit_that_overflows_during_alignment() {
+        let capabilities = dslogic_plus_capabilities();
+        let error = capabilities
+            .validate_request(&request(100_000_000, u64::MAX, &[0, 1, 2, 3]))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CaptureConfigError::SampleLimitExceedsCapacity {
+                effective_sample_limit: u64::MAX,
+                enabled_channel_count: 4,
+                ..
+            }
         ));
     }
 }
