@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -18,9 +19,10 @@ use dsview_core::{
     CaptureExportError, CaptureRunError, CaptureRunRequest, ChannelModeGroupSnapshot,
     ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DeviceIdentitySnapshot,
     DeviceOptionValidationCapabilities, DeviceOptionApplyFailure, DeviceOptionValidationError,
-    DeviceOptionsSnapshot, Discovery, EnumOptionSnapshot, NativeErrorCode,
+    DeviceOptionsSnapshot, Discovery, EnumOptionSnapshot, MetadataAcquisitionInfo,
+    MetadataArtifactInfo, MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode,
     OperationModeValidationCapabilities, RuntimeError, SelectionHandle, SupportedDevice,
-    ThresholdCapabilitySnapshot,
+    ThresholdCapabilitySnapshot, ValidatedCaptureConfig,
     validated_capture_config_from_device_options,
 };
 use serde::Serialize;
@@ -401,6 +403,23 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
             .map_err(|error| command_error(args.runtime.format, classify_validation_error(&error)))?;
         validated_device_options = Some(validated);
     }
+    #[cfg(debug_assertions)]
+    if let Some(mode) = capture_test_fixture_mode(handle) {
+        let validated_config = fixture_validated_capture_config(
+            validated_device_options.as_ref(),
+            &device_options_snapshot,
+            &args,
+        )?;
+        return run_capture_with_test_fixture(
+            args.runtime.format,
+            handle,
+            &artifact_paths,
+            validated_config,
+            validated_device_options,
+            device_options_snapshot,
+            mode,
+        );
+    }
     let discovery = connect_runtime(&args.runtime)?;
     let config_request = CaptureConfigRequest {
         sample_rate_hz: args.sample_rate_hz,
@@ -465,6 +484,293 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     };
     render_capture_success(args.runtime.format, &response);
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CaptureTestFixtureMode {
+    Success,
+    ApplyFailureFilter,
+}
+
+#[cfg(debug_assertions)]
+fn capture_test_fixture_mode(handle: SelectionHandle) -> Option<CaptureTestFixtureMode> {
+    if handle.raw() != 7 {
+        return None;
+    }
+
+    match std::env::var(TEST_DEVICE_OPTIONS_FIXTURE_ENV).ok().as_deref() {
+        Some("apply-failure-filter") => Some(CaptureTestFixtureMode::ApplyFailureFilter),
+        Some(_) => Some(CaptureTestFixtureMode::Success),
+        None => None,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn fixture_validated_capture_config(
+    validated_device_options: Option<&dsview_core::ValidatedDeviceOptionRequest>,
+    device_options_snapshot: &Option<DeviceOptionsSnapshot>,
+    args: &CaptureArgs,
+) -> Result<ValidatedCaptureConfig, FailedCommand> {
+    if let Some(validated_device_options) = validated_device_options {
+        return Ok(validated_capture_config_from_device_options(
+            validated_device_options,
+        ));
+    }
+
+    let channel_mode_id = device_options_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.current.channel_mode_code)
+        .ok_or_else(|| {
+            command_error(
+                args.runtime.format,
+                fixture_error_response(
+                    "capture_test_fixture_invalid",
+                    "debug capture fixture is missing the current channel mode",
+                ),
+            )
+        })?;
+    Ok(ValidatedCaptureConfig {
+        sample_rate_hz: args.sample_rate_hz,
+        requested_sample_limit: args.sample_limit,
+        effective_sample_limit: args.sample_limit,
+        enabled_channels: args.channels.clone(),
+        channel_mode_id,
+    })
+}
+
+#[cfg(debug_assertions)]
+fn run_capture_with_test_fixture(
+    format: OutputFormat,
+    handle: SelectionHandle,
+    artifact_paths: &dsview_core::CaptureArtifactPaths,
+    validated_config: ValidatedCaptureConfig,
+    validated_device_options: Option<dsview_core::ValidatedDeviceOptionRequest>,
+    device_options_snapshot: Option<DeviceOptionsSnapshot>,
+    mode: CaptureTestFixtureMode,
+) -> Result<(), FailedCommand> {
+    match mode {
+        CaptureTestFixtureMode::ApplyFailureFilter => {
+            let error = DeviceOptionApplyFailure {
+                applied_steps: vec![
+                    dsview_core::DeviceOptionApplyStep::OperationMode,
+                    dsview_core::DeviceOptionApplyStep::StopOption,
+                    dsview_core::DeviceOptionApplyStep::ChannelMode,
+                    dsview_core::DeviceOptionApplyStep::ThresholdVolts,
+                ],
+                failed_step: dsview_core::DeviceOptionApplyStep::Filter,
+                runtime_error: RuntimeError::NativeCall {
+                    operation: "ds_set_filter",
+                    code: NativeErrorCode::Arg,
+                },
+            };
+            Err(command_error(
+                format,
+                classify_device_option_apply_failure(&error),
+            ))
+        }
+        CaptureTestFixtureMode::Success => {
+            let device_options_snapshot = device_options_snapshot.ok_or_else(|| {
+                command_error(
+                    format,
+                    fixture_error_response(
+                        "capture_test_fixture_invalid",
+                        "debug capture fixture is missing the device option snapshot",
+                    ),
+                )
+            })?;
+            let effective_device_options = validated_device_options
+                .as_ref()
+                .map(fixture_effective_device_option_state)
+                .or_else(|| fixture_inherited_effective_device_option_state(&device_options_snapshot, &validated_config));
+            let capture = dsview_core::CaptureRunSummary {
+                completion: CaptureCompletion::CleanSuccess,
+                summary: fixture_acquisition_summary(),
+                cleanup: fixture_capture_cleanup(),
+                effective_device_options,
+            };
+            let export_request = dsview_core::CaptureExportRequest {
+                capture: capture.clone(),
+                validated_config: validated_config.clone(),
+                vcd_path: artifact_paths.vcd_path.clone(),
+                metadata_path: Some(artifact_paths.metadata_path.clone()),
+                tool_name: env!("CARGO_PKG_NAME").to_string(),
+                tool_version: BUILD_VERSION.to_string(),
+                capture_started_at: std::time::UNIX_EPOCH,
+                device_model: "DSLogic Plus".to_string(),
+                device_stable_id: "dslogic-plus".to_string(),
+                selected_handle: handle,
+                validated_device_options: validated_device_options.clone(),
+                device_options_snapshot: device_options_snapshot.clone(),
+            };
+            let facts = dsview_core::build_capture_device_option_facts(&export_request).map_err(|detail| {
+                command_error(
+                    format,
+                    fixture_error_response(
+                        "capture_test_fixture_invalid",
+                        &format!("debug capture fixture failed to build device option facts: {detail}"),
+                    ),
+                )
+            })?;
+            write_capture_test_fixture_artifacts(
+                artifact_paths,
+                handle,
+                &validated_config,
+                &facts,
+            )
+            .map_err(|detail| {
+                command_error(
+                    format,
+                    fixture_error_response(
+                        "capture_test_fixture_write_failed",
+                        &detail,
+                    ),
+                )
+            })?;
+            let response = CaptureResponse {
+                selected_handle: handle.raw(),
+                completion: completion_name(capture.completion),
+                saw_logic_packet: capture.summary.saw_logic_packet,
+                saw_end_packet: capture.summary.saw_end_packet,
+                saw_terminal_normal_end: capture.summary.saw_terminal_normal_end,
+                cleanup_succeeded: capture.cleanup.succeeded(),
+                device_options: facts,
+                artifacts: CaptureArtifactsResponse {
+                    vcd_path: artifact_paths.vcd_path.display().to_string(),
+                    metadata_path: artifact_paths.metadata_path.display().to_string(),
+                },
+            };
+            render_capture_success(format, &response);
+            Ok(())
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+fn fixture_acquisition_summary() -> AcquisitionSummary {
+    AcquisitionSummary {
+        callback_registration_active: false,
+        start_status: 0,
+        saw_collect_task_start: true,
+        saw_device_running: true,
+        saw_device_stopped: true,
+        saw_terminal_normal_end: true,
+        saw_terminal_end_by_detached: false,
+        saw_terminal_end_by_error: false,
+        terminal_event: AcquisitionTerminalEvent::NormalEnd,
+        saw_logic_packet: true,
+        saw_end_packet: true,
+        end_packet_status: None,
+        saw_end_packet_ok: true,
+        saw_data_error_packet: false,
+        last_error: NativeErrorCode::Ok,
+        is_collecting: false,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn fixture_capture_cleanup() -> CaptureCleanup {
+    CaptureCleanup {
+        callbacks_cleared: true,
+        release_succeeded: true,
+        ..CaptureCleanup::default()
+    }
+}
+
+#[cfg(debug_assertions)]
+fn fixture_effective_device_option_state(
+    validated: &dsview_core::ValidatedDeviceOptionRequest,
+) -> dsview_core::EffectiveDeviceOptionState {
+    dsview_core::EffectiveDeviceOptionState {
+        operation_mode_code: Some(validated.operation_mode_code),
+        stop_option_code: validated.stop_option_code,
+        channel_mode_code: Some(validated.channel_mode_code),
+        threshold_volts: validated.threshold_volts,
+        filter_code: validated.filter_code,
+        enabled_channels: validated.enabled_channels.clone(),
+        sample_limit: Some(validated.effective_sample_limit),
+        sample_rate_hz: Some(validated.sample_rate_hz),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn fixture_inherited_effective_device_option_state(
+    snapshot: &DeviceOptionsSnapshot,
+    validated_config: &ValidatedCaptureConfig,
+) -> Option<dsview_core::EffectiveDeviceOptionState> {
+    Some(dsview_core::EffectiveDeviceOptionState {
+        operation_mode_code: snapshot.current.operation_mode_code,
+        stop_option_code: snapshot.current.stop_option_code,
+        channel_mode_code: snapshot.current.channel_mode_code,
+        threshold_volts: snapshot.threshold.current_volts,
+        filter_code: snapshot.current.filter_code,
+        enabled_channels: validated_config.enabled_channels.clone(),
+        sample_limit: Some(validated_config.effective_sample_limit),
+        sample_rate_hz: Some(validated_config.sample_rate_hz),
+    })
+}
+
+#[cfg(debug_assertions)]
+fn write_capture_test_fixture_artifacts(
+    artifact_paths: &dsview_core::CaptureArtifactPaths,
+    handle: SelectionHandle,
+    validated_config: &ValidatedCaptureConfig,
+    facts: &CaptureDeviceOptionFacts,
+) -> Result<(), String> {
+    if let Some(parent) = artifact_paths.vcd_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    if let Some(parent) = artifact_paths.metadata_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let vcd_bytes = b"$date fixture $end\n$version dsview-cli fixture $end\n#0\n";
+    fs::write(&artifact_paths.vcd_path, vcd_bytes).map_err(|error| error.to_string())?;
+
+    let metadata = dsview_core::CaptureMetadata {
+        schema_version: 2,
+        tool: MetadataToolInfo {
+            name: env!("CARGO_PKG_NAME").to_string(),
+            version: BUILD_VERSION.to_string(),
+        },
+        capture: MetadataCaptureInfo {
+            timestamp_utc: "1970-01-01T00:00:00Z".to_string(),
+            device_model: "DSLogic Plus".to_string(),
+            device_stable_id: "dslogic-plus".to_string(),
+            selected_handle: handle.raw(),
+            sample_rate_hz: validated_config.sample_rate_hz,
+            requested_sample_limit: validated_config.requested_sample_limit,
+            actual_sample_count: validated_config.effective_sample_limit,
+            enabled_channels: validated_config.enabled_channels.clone(),
+        },
+        acquisition: MetadataAcquisitionInfo {
+            completion: "clean_success".to_string(),
+            terminal_event: "normal_end".to_string(),
+            saw_logic_packet: true,
+            saw_end_packet: true,
+            end_packet_status: Some("ok".to_string()),
+        },
+        artifacts: MetadataArtifactInfo {
+            vcd_path: artifact_paths.vcd_path.display().to_string(),
+            metadata_path: artifact_paths.metadata_path.display().to_string(),
+        },
+        device_options: facts.clone(),
+    };
+    let metadata_bytes =
+        serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?;
+    fs::write(&artifact_paths.metadata_path, metadata_bytes).map_err(|error| error.to_string())
+}
+
+#[cfg(debug_assertions)]
+fn fixture_error_response(code: &'static str, message: &str) -> ErrorResponse {
+    ErrorResponse {
+        code,
+        message: message.to_string(),
+        detail: None,
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    }
 }
 
 fn run_options(args: OptionsArgs) -> Result<(), FailedCommand> {

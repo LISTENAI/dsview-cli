@@ -452,7 +452,7 @@ fn capture_json_success_reports_requested_and_effective_device_options() {
             "--handle",
             "7",
             "--sample-rate-hz",
-            "200000000",
+            "100000000",
             "--sample-limit",
             "4097",
             "--channels",
@@ -499,7 +499,7 @@ fn capture_json_success_reports_requested_and_effective_device_options() {
     );
     assert_eq!(
         payload["device_options"]["effective"]["sample_limit"],
-        4096
+        5120
     );
 
     let metadata = parse_json(&fs::read(metadata_path).expect("metadata should be written"));
@@ -510,7 +510,7 @@ fn capture_json_success_reports_requested_and_effective_device_options() {
     );
     assert_eq!(
         metadata["device_options"]["effective"]["sample_limit"],
-        4096
+        5120
     );
 }
 
@@ -525,7 +525,7 @@ fn capture_text_success_reports_effective_device_options_concisely() {
             "--handle",
             "7",
             "--sample-rate-hz",
-            "200000000",
+            "100000000",
             "--sample-limit",
             "4097",
             "--channels",
@@ -560,8 +560,8 @@ fn capture_text_success_reports_effective_device_options_concisely() {
     assert!(text.contains("enabled channels: 0,1,2,3,4,5,6,7"));
     assert!(text.contains("threshold volts: 2.4"));
     assert!(text.contains("filter: filter:1"));
-    assert!(text.contains("sample rate: 200000000"));
-    assert!(text.contains("sample limit: 4096"));
+    assert!(text.contains("sample rate: 100000000"));
+    assert!(text.contains("sample limit: 5120"));
     assert!(text.contains(&format!("vcd {}", vcd_path.display())));
     assert!(text.contains(&format!("metadata {}", metadata_path.display())));
     assert!(!text.contains("requested options:"));
@@ -577,7 +577,7 @@ fn capture_apply_failure_reports_applied_steps_and_failed_step() {
             "--handle",
             "7",
             "--sample-rate-hz",
-            "200000000",
+            "100000000",
             "--sample-limit",
             "4097",
             "--channels",
