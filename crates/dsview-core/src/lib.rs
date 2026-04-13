@@ -601,6 +601,17 @@ impl Discovery {
         Ok(snapshot)
     }
 
+    pub fn validate_device_option_request(
+        &self,
+        selection_handle: SelectionHandle,
+        request: &DeviceOptionValidationRequest,
+    ) -> Result<ValidatedDeviceOptionRequest, DeviceOptionValidationError> {
+        let capabilities = self
+            .load_device_option_validation_capabilities(selection_handle)
+            .map_err(|error| DeviceOptionValidationError::Runtime(error.to_string()))?;
+        capabilities.validate_request(request)
+    }
+
     pub fn validate_capture_config(
         &self,
         request: &CaptureConfigRequest,

@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use thiserror::Error;
 
 use crate::{
+    capture_config::{align_down, align_sample_limit},
     CurrentDeviceOptionValues, DeviceIdentitySnapshot, EnumOptionSnapshot, SupportedDevice,
     ThresholdCapabilitySnapshot,
 };
@@ -152,25 +153,227 @@ pub enum DeviceOptionValidationError {
 }
 
 impl DeviceOptionValidationError {
-    pub const fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::Runtime(_) => "validation_runtime_error",
-            Self::UnknownOperationMode { .. } => "invalid_operation_mode",
-            Self::UnknownStopOption { .. } => "invalid_stop_option",
+            Self::UnknownOperationMode { .. } => "operation_mode_unsupported",
+            Self::UnknownStopOption { .. } => "stop_option_unsupported",
             Self::StopOptionIncompatibleWithMode { .. } => "stop_option_incompatible",
-            Self::UnknownChannelMode { .. } => "invalid_channel_mode",
+            Self::UnknownChannelMode { .. } => "channel_mode_unsupported",
             Self::ChannelModeIncompatibleWithOperationMode { .. } => "channel_mode_incompatible",
-            Self::EmptySampleRate => "sample_rate_required",
-            Self::EmptySampleLimit => "sample_limit_required",
-            Self::NoEnabledChannels => "enabled_channels_required",
+            Self::EmptySampleRate => "sample_rate_missing",
+            Self::EmptySampleLimit => "sample_limit_missing",
+            Self::NoEnabledChannels => "enabled_channels_empty",
             Self::ChannelOutOfRange { .. } => "channel_out_of_range",
             Self::UnsupportedSampleRate { .. } => "sample_rate_unsupported",
             Self::TooManyEnabledChannels { .. } => "enabled_channels_exceed_mode_limit",
             Self::SampleLimitExceedsCapacity { .. } => "sample_limit_exceeds_capacity",
             Self::ThresholdOutOfRange { .. } => "threshold_out_of_range",
             Self::ThresholdStepInvalid { .. } => "threshold_step_invalid",
-            Self::UnknownFilter { .. } => "invalid_filter",
+            Self::UnknownFilter { .. } => "filter_unsupported",
         }
+    }
+}
+
+impl DeviceOptionValidationCapabilities {
+    pub fn validate_request(
+        &self,
+        request: &DeviceOptionValidationRequest,
+    ) -> Result<ValidatedDeviceOptionRequest, DeviceOptionValidationError> {
+        if request.sample_rate_hz == 0 {
+            return Err(DeviceOptionValidationError::EmptySampleRate);
+        }
+        if request.sample_limit == 0 {
+            return Err(DeviceOptionValidationError::EmptySampleLimit);
+        }
+        if request.enabled_channels.is_empty() {
+            return Err(DeviceOptionValidationError::NoEnabledChannels);
+        }
+
+        let operation_mode = self
+            .operation_modes
+            .iter()
+            .find(|mode| mode.id == request.operation_mode_id)
+            .ok_or_else(|| DeviceOptionValidationError::UnknownOperationMode {
+                operation_mode_id: request.operation_mode_id.clone(),
+            })?;
+        let channel_mode = self.resolve_channel_mode(operation_mode, &request.channel_mode_id)?;
+
+        for channel in request.enabled_channels.iter().copied() {
+            if channel >= self.total_channel_count {
+                return Err(DeviceOptionValidationError::ChannelOutOfRange {
+                    channel,
+                    total_channel_count: self.total_channel_count,
+                });
+            }
+        }
+
+        if request.enabled_channels.len() > channel_mode.max_enabled_channels as usize {
+            return Err(DeviceOptionValidationError::TooManyEnabledChannels {
+                enabled_channel_count: request.enabled_channels.len(),
+                max_enabled_channels: channel_mode.max_enabled_channels,
+            });
+        }
+
+        if !channel_mode
+            .supported_sample_rates
+            .contains(&request.sample_rate_hz)
+        {
+            return Err(DeviceOptionValidationError::UnsupportedSampleRate {
+                sample_rate_hz: request.sample_rate_hz,
+                channel_mode_id: channel_mode.id.clone(),
+            });
+        }
+
+        let effective_sample_limit =
+            align_sample_limit(request.sample_limit, self.sample_limit_alignment);
+        let maximum_sample_limit = align_down(
+            self.hardware_sample_capacity / request.enabled_channels.len() as u64,
+            self.sample_limit_alignment,
+        );
+        if maximum_sample_limit == 0 || effective_sample_limit > maximum_sample_limit {
+            return Err(DeviceOptionValidationError::SampleLimitExceedsCapacity {
+                effective_sample_limit,
+                maximum_sample_limit,
+                enabled_channel_count: request.enabled_channels.len(),
+            });
+        }
+
+        let stop_option_code =
+            self.resolve_stop_option_code(operation_mode, request.stop_option_id.as_deref())?;
+        let filter_code = self.resolve_filter_code(request.filter_id.as_deref())?;
+
+        if let Some(threshold_volts) = request.threshold_volts {
+            self.validate_threshold(threshold_volts)?;
+        }
+
+        Ok(ValidatedDeviceOptionRequest {
+            operation_mode_id: operation_mode.id.clone(),
+            operation_mode_code: operation_mode.native_code,
+            stop_option_id: request.stop_option_id.clone(),
+            stop_option_code,
+            channel_mode_id: channel_mode.id.clone(),
+            channel_mode_code: channel_mode.native_code,
+            sample_rate_hz: request.sample_rate_hz,
+            requested_sample_limit: request.sample_limit,
+            effective_sample_limit,
+            enabled_channels: request.enabled_channels.iter().copied().collect(),
+            threshold_volts: request.threshold_volts,
+            filter_id: request.filter_id.clone(),
+            filter_code,
+        })
+    }
+
+    fn resolve_channel_mode<'a>(
+        &'a self,
+        operation_mode: &'a OperationModeValidationCapabilities,
+        requested_channel_mode_id: &str,
+    ) -> Result<&'a ChannelModeValidationCapabilities, DeviceOptionValidationError> {
+        if let Some(channel_mode) = operation_mode
+            .channel_modes
+            .iter()
+            .find(|channel_mode| channel_mode.id == requested_channel_mode_id)
+        {
+            return Ok(channel_mode);
+        }
+
+        if self
+            .operation_modes
+            .iter()
+            .flat_map(|mode| mode.channel_modes.iter())
+            .any(|channel_mode| channel_mode.id == requested_channel_mode_id)
+        {
+            return Err(
+                DeviceOptionValidationError::ChannelModeIncompatibleWithOperationMode {
+                    operation_mode_id: operation_mode.id.clone(),
+                    channel_mode_id: requested_channel_mode_id.to_string(),
+                },
+            );
+        }
+
+        Err(DeviceOptionValidationError::UnknownChannelMode {
+            channel_mode_id: requested_channel_mode_id.to_string(),
+        })
+    }
+
+    fn resolve_stop_option_code(
+        &self,
+        operation_mode: &OperationModeValidationCapabilities,
+        requested_stop_option_id: Option<&str>,
+    ) -> Result<Option<i16>, DeviceOptionValidationError> {
+        let Some(requested_stop_option_id) = requested_stop_option_id else {
+            return Ok(None);
+        };
+
+        if operation_mode
+            .stop_option_ids
+            .iter()
+            .any(|stop_option_id| stop_option_id == requested_stop_option_id)
+        {
+            return parse_native_code(STOP_OPTION_PREFIX, requested_stop_option_id)
+                .ok_or_else(|| DeviceOptionValidationError::UnknownStopOption {
+                    stop_option_id: requested_stop_option_id.to_string(),
+                })
+                .map(Some);
+        }
+
+        if self.operation_modes.iter().any(|mode| {
+            mode.stop_option_ids
+                .iter()
+                .any(|id| id == requested_stop_option_id)
+        }) {
+            return Err(
+                DeviceOptionValidationError::StopOptionIncompatibleWithMode {
+                    stop_option_id: requested_stop_option_id.to_string(),
+                    operation_mode_id: operation_mode.id.clone(),
+                },
+            );
+        }
+
+        Err(DeviceOptionValidationError::UnknownStopOption {
+            stop_option_id: requested_stop_option_id.to_string(),
+        })
+    }
+
+    fn resolve_filter_code(
+        &self,
+        requested_filter_id: Option<&str>,
+    ) -> Result<Option<i16>, DeviceOptionValidationError> {
+        let Some(requested_filter_id) = requested_filter_id else {
+            return Ok(None);
+        };
+
+        self.filters
+            .iter()
+            .find(|filter| filter.id == requested_filter_id)
+            .map(|filter| Some(filter.native_code))
+            .ok_or_else(|| DeviceOptionValidationError::UnknownFilter {
+                filter_id: requested_filter_id.to_string(),
+            })
+    }
+
+    fn validate_threshold(&self, threshold_volts: f64) -> Result<(), DeviceOptionValidationError> {
+        if threshold_volts < self.threshold.min_volts || threshold_volts > self.threshold.max_volts
+        {
+            return Err(DeviceOptionValidationError::ThresholdOutOfRange {
+                threshold_volts,
+                min_volts: self.threshold.min_volts,
+                max_volts: self.threshold.max_volts,
+            });
+        }
+
+        let normalized_steps =
+            (threshold_volts - self.threshold.min_volts) / self.threshold.step_volts;
+        let rounded_steps = normalized_steps.round();
+        if (normalized_steps - rounded_steps).abs() > 1e-6 {
+            return Err(DeviceOptionValidationError::ThresholdStepInvalid {
+                threshold_volts,
+                min_volts: self.threshold.min_volts,
+                step_volts: self.threshold.step_volts,
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -188,6 +391,14 @@ pub(crate) fn filter_id(code: i16) -> String {
 
 pub(crate) fn channel_mode_id(code: i16) -> String {
     format!("{CHANNEL_MODE_PREFIX}:{code}")
+}
+
+fn parse_native_code(prefix: &str, value: &str) -> Option<i16> {
+    value
+        .strip_prefix(prefix)?
+        .strip_prefix(':')?
+        .parse::<i16>()
+        .ok()
 }
 
 pub(crate) fn normalize_device_option_validation_capabilities(

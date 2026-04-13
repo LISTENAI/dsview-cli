@@ -162,7 +162,7 @@ impl CaptureCapabilities {
     }
 }
 
-fn align_sample_limit(value: u64, alignment: u64) -> u64 {
+pub(crate) fn align_sample_limit(value: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
         value
     } else {
@@ -175,7 +175,7 @@ fn align_sample_limit(value: u64, alignment: u64) -> u64 {
     }
 }
 
-fn align_down(value: u64, alignment: u64) -> u64 {
+pub(crate) fn align_down(value: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
         value
     } else {
