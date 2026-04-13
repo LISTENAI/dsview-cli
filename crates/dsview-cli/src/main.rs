@@ -6,24 +6,24 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
-    build_device_options_response, render_device_options_text,
+    build_device_options_response,
     capture_device_options::{
-        CaptureDeviceOptionParseError, resolve_capture_device_option_request,
+        resolve_capture_device_option_request, CaptureDeviceOptionParseError,
     },
-    DeviceOptionsResponse,
+    render_device_options_text, DeviceOptionsResponse,
 };
 use dsview_core::{
-    describe_native_error, resolve_capture_artifact_paths, AcquisitionSummary,
-    AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError, CaptureCleanup,
-    CaptureCompletion, CaptureConfigError, CaptureConfigRequest, CaptureDeviceOptionFacts,
-    CaptureExportError, CaptureRunError, CaptureRunRequest, ChannelModeGroupSnapshot,
-    ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DeviceIdentitySnapshot,
-    DeviceOptionValidationCapabilities, DeviceOptionApplyFailure, DeviceOptionValidationError,
-    DeviceOptionsSnapshot, Discovery, EnumOptionSnapshot, MetadataAcquisitionInfo,
-    MetadataArtifactInfo, MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode,
-    OperationModeValidationCapabilities, RuntimeError, SelectionHandle, SupportedDevice,
-    ThresholdCapabilitySnapshot, ValidatedCaptureConfig,
-    validated_capture_config_from_device_options,
+    describe_native_error, resolve_capture_artifact_paths,
+    validated_capture_config_from_device_options, AcquisitionSummary, AcquisitionTerminalEvent,
+    BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion, CaptureConfigError,
+    CaptureConfigRequest, CaptureDeviceOptionFacts, CaptureExportError, CaptureRunError,
+    CaptureRunRequest, ChannelModeGroupSnapshot, ChannelModeOptionSnapshot,
+    CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionApplyFailure,
+    DeviceOptionValidationCapabilities, DeviceOptionValidationError, DeviceOptionsSnapshot,
+    Discovery, EnumOptionSnapshot, MetadataAcquisitionInfo, MetadataArtifactInfo,
+    MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OperationModeValidationCapabilities,
+    RuntimeError, SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
+    ValidatedCaptureConfig,
 };
 use serde::Serialize;
 
@@ -369,20 +369,19 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     let mut validated_device_options = None;
     let mut device_options_snapshot = None;
     if uses_device_option_validation(&args) {
-        let (snapshot, capabilities) = if let Some((snapshot, capabilities)) =
-            capture_test_fixture(handle)
-        {
-            (snapshot, capabilities)
-        } else {
-            let discovery = connect_runtime(&args.runtime)?;
-            let snapshot = discovery
-                .inspect_device_options(handle)
-                .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
-            let capabilities = discovery
-                .load_device_option_validation_capabilities(handle)
-                .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
-            (snapshot, capabilities)
-        };
+        let (snapshot, capabilities) =
+            if let Some((snapshot, capabilities)) = capture_test_fixture(handle) {
+                (snapshot, capabilities)
+            } else {
+                let discovery = connect_runtime(&args.runtime)?;
+                let snapshot = discovery
+                    .inspect_device_options(handle)
+                    .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+                let capabilities = discovery
+                    .load_device_option_validation_capabilities(handle)
+                    .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
+                (snapshot, capabilities)
+            };
         device_options_snapshot = Some(snapshot.clone());
         let request = resolve_capture_device_option_request(
             &snapshot,
@@ -398,9 +397,9 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
                 classify_capture_device_option_parse_error(&error),
             )
         })?;
-        let validated = capabilities
-            .validate_request(&request)
-            .map_err(|error| command_error(args.runtime.format, classify_validation_error(&error)))?;
+        let validated = capabilities.validate_request(&request).map_err(|error| {
+            command_error(args.runtime.format, classify_validation_error(&error))
+        })?;
         validated_device_options = Some(validated);
     }
     #[cfg(debug_assertions)]
@@ -433,7 +432,8 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
-    let validated_config = if let Some(validated_device_options) = validated_device_options.as_ref() {
+    let validated_config = if let Some(validated_device_options) = validated_device_options.as_ref()
+    {
         validated_capture_config_from_device_options(validated_device_options)
     } else {
         discovery
@@ -442,6 +442,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
                 command_error(args.runtime.format, classify_capture_config_error(&error))
             })?
     };
+    let capture_started_at = std::time::SystemTime::now();
     let result = discovery
         .run_capture(&run_request)
         .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
@@ -460,7 +461,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
             metadata_path: Some(artifact_paths.metadata_path),
             tool_name: env!("CARGO_PKG_NAME").to_string(),
             tool_version: BUILD_VERSION.to_string(),
-            capture_started_at: std::time::SystemTime::now(),
+            capture_started_at,
             device_model: "DSLogic Plus".to_string(),
             device_stable_id: "dslogic-plus".to_string(),
             selected_handle: handle,
@@ -499,7 +500,10 @@ fn capture_test_fixture_mode(handle: SelectionHandle) -> Option<CaptureTestFixtu
         return None;
     }
 
-    match std::env::var(TEST_DEVICE_OPTIONS_FIXTURE_ENV).ok().as_deref() {
+    match std::env::var(TEST_DEVICE_OPTIONS_FIXTURE_ENV)
+        .ok()
+        .as_deref()
+    {
         Some("apply-failure-filter") => Some(CaptureTestFixtureMode::ApplyFailureFilter),
         Some(_) => Some(CaptureTestFixtureMode::Success),
         None => None,
@@ -582,7 +586,12 @@ fn run_capture_with_test_fixture(
             let effective_device_options = validated_device_options
                 .as_ref()
                 .map(fixture_effective_device_option_state)
-                .or_else(|| fixture_inherited_effective_device_option_state(&device_options_snapshot, &validated_config));
+                .or_else(|| {
+                    fixture_inherited_effective_device_option_state(
+                        &device_options_snapshot,
+                        &validated_config,
+                    )
+                });
             let capture = dsview_core::CaptureRunSummary {
                 completion: CaptureCompletion::CleanSuccess,
                 summary: fixture_acquisition_summary(),
@@ -612,21 +621,13 @@ fn run_capture_with_test_fixture(
                     ),
                 )
             })?;
-            write_capture_test_fixture_artifacts(
-                artifact_paths,
-                handle,
-                &validated_config,
-                &facts,
-            )
-            .map_err(|detail| {
-                command_error(
-                    format,
-                    fixture_error_response(
-                        "capture_test_fixture_write_failed",
-                        &detail,
-                    ),
-                )
-            })?;
+            write_capture_test_fixture_artifacts(artifact_paths, handle, &validated_config, &facts)
+                .map_err(|detail| {
+                    command_error(
+                        format,
+                        fixture_error_response("capture_test_fixture_write_failed", &detail),
+                    )
+                })?;
             let response = CaptureResponse {
                 selected_handle: handle.raw(),
                 completion: completion_name(capture.completion),
@@ -756,8 +757,7 @@ fn write_capture_test_fixture_artifacts(
         },
         device_options: facts.clone(),
     };
-    let metadata_bytes =
-        serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?;
+    let metadata_bytes = serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?;
     fs::write(&artifact_paths.metadata_path, metadata_bytes).map_err(|error| error.to_string())
 }
 
@@ -946,10 +946,7 @@ fn capture_test_validation_capabilities() -> DeviceOptionValidationCapabilities 
                 id: "operation-mode:0".to_string(),
                 native_code: 0,
                 label: "Buffer Mode".to_string(),
-                stop_option_ids: vec![
-                    "stop-option:0".to_string(),
-                    "stop-option:1".to_string(),
-                ],
+                stop_option_ids: vec!["stop-option:0".to_string(), "stop-option:1".to_string()],
                 channel_modes: vec![
                     dsview_core::ChannelModeValidationCapabilities {
                         id: "channel-mode:20".to_string(),
@@ -1660,7 +1657,9 @@ fn render_effective_capture_options_text(facts: &CaptureDeviceOptionFacts) -> Ve
 
 pub(crate) fn capture_success_text(response: &CaptureResponse) -> String {
     let mut lines = vec![format!("capture {}", response.completion)];
-    lines.extend(render_effective_capture_options_text(&response.device_options));
+    lines.extend(render_effective_capture_options_text(
+        &response.device_options,
+    ));
     lines.push(format!("vcd {}", response.artifacts.vcd_path));
     lines.push(format!("metadata {}", response.artifacts.metadata_path));
     lines.join("\n")
@@ -1683,11 +1682,10 @@ mod tests {
 
     use dsview_cli::capture_device_options::resolve_capture_device_option_request;
     use dsview_core::{
-        AcquisitionSummary, AcquisitionTerminalEvent, CaptureConfigError,
-        ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
-        DeviceIdentitySnapshot, DeviceOptionValidationCapabilities,
-        EnumOptionSnapshot, OperationModeValidationCapabilities, SelectionHandle,
-        ThresholdCapabilitySnapshot,
+        AcquisitionSummary, AcquisitionTerminalEvent, CaptureConfigError, ChannelModeGroupSnapshot,
+        ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DeviceIdentitySnapshot,
+        DeviceOptionValidationCapabilities, EnumOptionSnapshot,
+        OperationModeValidationCapabilities, SelectionHandle, ThresholdCapabilitySnapshot,
     };
 
     #[test]
@@ -1916,6 +1914,55 @@ mod tests {
     }
 
     #[test]
+    fn operation_mode_change_does_not_inherit_incompatible_stop_option() {
+        let snapshot = sample_device_options_snapshot();
+        let capabilities = sample_validation_capabilities();
+        let args = CaptureDeviceOptionArgs {
+            operation_mode: Some("stream".to_string()),
+            channel_mode: Some("stream-100x16".to_string()),
+            ..CaptureDeviceOptionArgs::default()
+        };
+
+        let request = resolve_capture_device_option_request(
+            &snapshot,
+            &capabilities,
+            &args,
+            100_000_000,
+            4096,
+            &[0, 1, 2, 3],
+        )
+        .expect("operation mode change should not inherit incompatible stop option");
+
+        assert_eq!(request.operation_mode_id, "operation-mode:1");
+        assert_eq!(request.channel_mode_id, "channel-mode:30");
+        assert_eq!(request.stop_option_id, None);
+    }
+
+    #[test]
+    fn operation_mode_change_defaults_to_first_compatible_channel_mode() {
+        let snapshot = sample_device_options_snapshot();
+        let capabilities = sample_validation_capabilities();
+        let args = CaptureDeviceOptionArgs {
+            operation_mode: Some("stream".to_string()),
+            ..CaptureDeviceOptionArgs::default()
+        };
+
+        let request = resolve_capture_device_option_request(
+            &snapshot,
+            &capabilities,
+            &args,
+            100_000_000,
+            4096,
+            &[0, 1, 2, 3],
+        )
+        .expect("operation mode change should pick a compatible default channel mode");
+
+        assert_eq!(request.operation_mode_id, "operation-mode:1");
+        assert_eq!(request.channel_mode_id, "channel-mode:30");
+        assert_eq!(request.stop_option_id, None);
+    }
+
+    #[test]
     fn device_option_request_carries_channels_into_enabled_channels() {
         let snapshot = sample_device_options_snapshot();
         let capabilities = sample_validation_capabilities();
@@ -1981,8 +2028,16 @@ mod tests {
 
         assert_eq!(error.code, "device_option_apply_failed");
         assert_eq!(error.native_error, Some("SR_ERR_ARG"));
-        assert!(error.detail.as_deref().unwrap().contains("applied_steps=operation_mode,stop_option"));
-        assert!(error.detail.as_deref().unwrap().contains("failed_step=filter"));
+        assert!(error
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("applied_steps=operation_mode,stop_option"));
+        assert!(error
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("failed_step=filter"));
     }
 
     fn sample_device_options_snapshot() -> dsview_core::DeviceOptionsSnapshot {
@@ -2107,10 +2162,7 @@ mod tests {
                     id: "operation-mode:0".to_string(),
                     native_code: 0,
                     label: "Buffer Mode".to_string(),
-                    stop_option_ids: vec![
-                        "stop-option:0".to_string(),
-                        "stop-option:1".to_string(),
-                    ],
+                    stop_option_ids: vec!["stop-option:0".to_string(), "stop-option:1".to_string()],
                     channel_modes: vec![],
                 },
                 OperationModeValidationCapabilities {
@@ -2195,10 +2247,7 @@ mod tests {
 
         let payload = serde_json::to_value(response).unwrap();
 
-        assert_eq!(
-            payload["device_options"]["requested"]["sample_limit"],
-            4097
-        );
+        assert_eq!(payload["device_options"]["requested"]["sample_limit"], 4097);
         assert_eq!(
             payload["device_options"]["effective"]["operation_mode_id"],
             "operation-mode:1"

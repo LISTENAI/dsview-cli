@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dsview_core::{
-    ChannelModeOptionSnapshot, DeviceOptionValidationCapabilities,
-    DeviceOptionValidationRequest, DeviceOptionsSnapshot, EnumOptionSnapshot,
+    ChannelModeOptionSnapshot, DeviceOptionValidationCapabilities, DeviceOptionValidationRequest,
+    DeviceOptionsSnapshot, EnumOptionSnapshot,
 };
 use serde::Serialize;
 
@@ -66,9 +66,7 @@ pub enum CaptureDeviceOptionParseError {
     AmbiguousChannelModeToken { token: String },
     MissingCurrentOperationMode,
     MissingCurrentChannelMode,
-    ConflictingOperationModeInference {
-        sources: Vec<&'static str>,
-    },
+    ConflictingOperationModeInference { sources: Vec<&'static str> },
 }
 
 pub fn slug_token(label: &str) -> String {
@@ -212,26 +210,25 @@ pub fn resolve_capture_device_option_request<T: CaptureDeviceOptionInput>(
     channels: &[u16],
 ) -> Result<DeviceOptionValidationRequest, CaptureDeviceOptionParseError> {
     let lookup = token_lookup_maps(snapshot);
-    let explicit_operation_mode_id =
-        resolve_known_token(args.operation_mode(), &lookup.operation_modes_by_token, |token| {
-            CaptureDeviceOptionParseError::UnsupportedOperationModeToken {
-                token: token.to_string(),
-            }
-        })?;
-    let stop_option_id =
+    let explicit_operation_mode_id = resolve_known_token(
+        args.operation_mode(),
+        &lookup.operation_modes_by_token,
+        |token| CaptureDeviceOptionParseError::UnsupportedOperationModeToken {
+            token: token.to_string(),
+        },
+    )?;
+    let explicit_stop_option_id =
         resolve_known_token(args.stop_option(), &lookup.stop_options_by_token, |token| {
             CaptureDeviceOptionParseError::UnsupportedStopOptionToken {
                 token: token.to_string(),
             }
-        })?
-        .or_else(|| snapshot.current.stop_option_id.clone());
-    let resolved_channel_mode =
-        resolve_channel_mode(snapshot, &lookup, args.channel_mode(), explicit_operation_mode_id.as_deref())?;
-    let channel_mode_id = resolved_channel_mode
-        .as_ref()
-        .map(|mode| mode.stable_id.clone())
-        .or_else(|| snapshot.current.channel_mode_id.clone())
-        .ok_or(CaptureDeviceOptionParseError::MissingCurrentChannelMode)?;
+        })?;
+    let resolved_channel_mode = resolve_channel_mode(
+        snapshot,
+        &lookup,
+        args.channel_mode(),
+        explicit_operation_mode_id.as_deref(),
+    )?;
     let filter_id = resolve_known_token(args.filter(), &lookup.filters_by_token, |token| {
         CaptureDeviceOptionParseError::UnsupportedFilterToken {
             token: token.to_string(),
@@ -246,8 +243,34 @@ pub fn resolve_capture_device_option_request<T: CaptureDeviceOptionInput>(
         resolved_channel_mode
             .as_ref()
             .and_then(|mode| mode.inferred_operation_mode_id.clone()),
-        args.stop_option().is_some().then_some(stop_option_id.as_deref()).flatten(),
+        args.stop_option()
+            .is_some()
+            .then_some(explicit_stop_option_id.as_deref())
+            .flatten(),
     )?;
+    let stop_option_id = explicit_stop_option_id.or_else(|| {
+        if snapshot.current.operation_mode_id.as_deref() == Some(operation_mode_id.as_str()) {
+            snapshot.current.stop_option_id.clone()
+        } else {
+            None
+        }
+    });
+    let channel_mode_id = resolved_channel_mode
+        .as_ref()
+        .map(|mode| mode.stable_id.clone())
+        .or_else(|| {
+            if snapshot.current.operation_mode_id.as_deref() == Some(operation_mode_id.as_str()) {
+                snapshot.current.channel_mode_id.clone()
+            } else {
+                snapshot
+                    .channel_modes_by_operation_mode
+                    .iter()
+                    .find(|group| group.operation_mode_id == operation_mode_id)
+                    .and_then(|group| group.channel_modes.first())
+                    .map(|mode| mode.id.clone())
+            }
+        })
+        .ok_or(CaptureDeviceOptionParseError::MissingCurrentChannelMode)?;
 
     Ok(DeviceOptionValidationRequest {
         operation_mode_id,
@@ -311,9 +334,7 @@ fn resolve_operation_mode_id(
             .clone()
             .ok_or(CaptureDeviceOptionParseError::MissingCurrentOperationMode),
         1 => Ok(inferred_operation_modes.into_iter().next().unwrap()),
-        _ => Err(CaptureDeviceOptionParseError::ConflictingOperationModeInference {
-            sources,
-        }),
+        _ => Err(CaptureDeviceOptionParseError::ConflictingOperationModeInference { sources }),
     }
 }
 
@@ -362,10 +383,11 @@ fn resolve_channel_mode(
         .iter()
         .flat_map(|group| {
             group.channel_modes.iter().filter_map(|channel_mode| {
-                let token = lookup.channel_mode_tokens_by_stable_id.get(&channel_mode.id)?;
-                (token == channel_mode_token).then(|| {
-                    (group.operation_mode_id.clone(), channel_mode.id.clone())
-                })
+                let token = lookup
+                    .channel_mode_tokens_by_stable_id
+                    .get(&channel_mode.id)?;
+                (token == channel_mode_token)
+                    .then(|| (group.operation_mode_id.clone(), channel_mode.id.clone()))
             })
         })
         .collect::<Vec<_>>();
