@@ -614,9 +614,21 @@ impl Discovery {
 
     pub fn validate_capture_config(
         &self,
+        selection_handle: SelectionHandle,
         request: &CaptureConfigRequest,
     ) -> Result<ValidatedCaptureConfig, CaptureConfigError> {
-        self.dslogic_plus_capabilities()?.validate_request(request)
+        let opened = self
+            .open_device(selection_handle)
+            .map_err(|error| match error {
+                BringUpError::Runtime(runtime) => CaptureConfigError::from_runtime_error(runtime),
+                other => CaptureConfigError::Runtime(other.to_string()),
+            })?;
+        let capabilities = self.dslogic_plus_capabilities_for_opened(&opened)?;
+        let validated = capabilities.validate_request(request);
+        opened
+            .release()
+            .map_err(|error| CaptureConfigError::Runtime(error.to_string()))?;
+        validated
     }
 
     pub fn inspect_device_options(
@@ -743,7 +755,7 @@ impl Discovery {
         request: &CaptureRunRequest,
     ) -> Result<CaptureRunSummary, CaptureRunError> {
         let validated = self
-            .validate_capture_config(&request.config)
+            .validate_capture_config(request.selection_handle, &request.config)
             .map_err(|error| {
                 CaptureRunError::BringUp(BringUpError::Runtime(RuntimeError::InvalidArgument(
                     error.to_string(),

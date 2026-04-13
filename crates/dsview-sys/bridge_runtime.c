@@ -1300,6 +1300,9 @@ int dsview_bridge_ds_get_device_options(struct dsview_device_options_snapshot *o
     if (status != SR_OK) {
         return status;
     }
+    if (!out_snapshot->has_current_operation_mode || !out_snapshot->has_current_channel_mode) {
+        return SR_ERR_NA;
+    }
     status = dsview_bridge_get_optional_int16_config(
         SR_CONF_THRESHOLD,
         &has_current_threshold_code,
@@ -1460,6 +1463,9 @@ int dsview_bridge_ds_get_validation_capabilities(
         &out_snapshot->current_channel_mode_code);
     if (status != SR_OK) {
         return status;
+    }
+    if (!out_snapshot->has_current_operation_mode || !out_snapshot->has_current_channel_mode) {
+        return SR_ERR_NA;
     }
     status = dsview_bridge_get_optional_int16_config(
         SR_CONF_THRESHOLD,

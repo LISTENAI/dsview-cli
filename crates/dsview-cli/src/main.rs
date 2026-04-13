@@ -295,7 +295,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
     let validated_config = discovery
-        .validate_capture_config(&run_request.config)
+        .validate_capture_config(handle, &run_request.config)
         .map_err(|error| {
             command_error(args.runtime.format, classify_capture_config_error(&error))
         })?;
