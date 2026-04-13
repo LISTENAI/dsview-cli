@@ -255,17 +255,13 @@ The entrypoint already exists and already returns the stable validation taxonomy
 | A2 | Friendly token spellings should be short slug-style aliases layered on top of stable IDs rather than exact DSView labels. [ASSUMED] | Don't Hand-Roll / Open Questions | Medium; different token choices change tests, help text, and `devices options` output shape. |
 | A3 | `devices options` should likely expose both the CLI token and the underlying stable ID in JSON during `v1.1` to avoid regressing machine-readability. [ASSUMED] | Open Questions | Medium; if the planner chooses token-only JSON, downstream automation docs and fixtures must be updated carefully. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should `devices options` expose both CLI tokens and stable IDs, or only CLI tokens?**
-   - What we know: the command must stay machine-readable, become more capture-oriented, and keep the existing inspection entrypoint. [VERIFIED: .planning/phases/12-cli-device-option-surface/12-CONTEXT.md] [VERIFIED: crates/dsview-cli/src/device_options.rs]
-   - What's unclear: whether downstream automation will still need raw stable IDs directly in the Phase 12 response once friendly tokens are introduced. [ASSUMED]
-   - Recommendation: keep both in JSON for `v1.1`, and let text output optimize for copy-paste ergonomics. [ASSUMED]
+1. **Should `devices options` expose both CLI tokens and stable IDs, or only CLI tokens?**  
+   **RESOLVED:** Expose both `token` and `stable_id` in JSON for `v1.1`, while letting text output optimize for copy-paste ergonomics. This keeps the command machine-readable for automation and aligned with the capture-facing token surface. [VERIFIED: .planning/phases/12-cli-device-option-surface/12-CONTEXT.md] [VERIFIED: .planning/phases/12-cli-device-option-surface/12-01-SUMMARY.md]
 
-2. **Should Phase 12 say anything at success time about deferred apply behavior?**
-   - What we know: runtime application and effective-value reporting belong to Phase 13, not Phase 12. [VERIFIED: .planning/ROADMAP.md] [VERIFIED: .planning/phases/12-cli-device-option-surface/12-CONTEXT.md]
-   - What's unclear: whether users need an explicit reminder when Phase 12 accepts new flags on a real capture command. [ASSUMED]
-   - Recommendation: keep success output unchanged in Phase 12 and make the boundary clear in help text, tests, and plan notes rather than adding transitional success metadata. [ASSUMED]
+2. **Should Phase 12 say anything at success time about deferred apply behavior?**  
+   **RESOLVED:** Keep success output unchanged in Phase 12 and make the Phase 13 boundary clear through help text, tests, and plan notes rather than transitional success metadata. [VERIFIED: .planning/ROADMAP.md] [VERIFIED: .planning/phases/12-cli-device-option-surface/12-CONTEXT.md]
 
 ## Environment Availability
 
