@@ -60,8 +60,8 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] `12-01-PLAN.md` - Define the friendly token contract and capture-oriented `devices options` inspection surface.
-- [ ] `12-02-PLAN.md` - Add optional `capture` device-option flags and validate resolved selections against the Phase 11 model.
+- [x] `12-01-PLAN.md` - Define the friendly token contract and capture-oriented `devices options` inspection surface.
+- [x] `12-02-PLAN.md` - Add optional `capture` device-option flags and validate resolved selections against the Phase 11 model.
 - [ ] `12-03-PLAN.md` - Lock help, parser behavior, and inspection output with spawned CLI regression tests.
 
 ### Phase 13: Option-Aware Capture Reporting
@@ -88,7 +88,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 |-------|----------------|--------|-----------|
 | 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
 | 11. Device Option Validation Model | 3/3 | Complete    | 2026-04-13 |
-| 12. CLI Device Option Surface | 1/3 | In Progress|  |
+| 12. CLI Device Option Surface | 2/3 | In Progress|  |
 | 13. Option-Aware Capture Reporting | 0/3 | Pending | - |
 
 ## Archived Milestones
@@ -107,4 +107,4 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 
 - Active milestone: `v1.1 DSLogic Plus device options`
 - Phase 10 completed and live-verified on: `2026-04-10`
-- Next action: `/gsd-discuss-phase 12`
+- Next action: Execute `12-03-PLAN.md`

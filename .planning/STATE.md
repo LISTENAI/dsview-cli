@@ -4,17 +4,17 @@ milestone: v1.1
 milestone_name: milestone
 current_phase: 12
 current_phase_name: cli-device-option-surface
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 12-cli-device-option-surface-01-PLAN.md
-last_updated: "2026-04-13T08:18:07.069Z"
-last_activity: 2026-04-13 -- Phase 12 planning complete
+stopped_at: Completed 12-cli-device-option-surface-02-PLAN.md
+last_updated: "2026-04-13T08:35:07.605Z"
+last_activity: 2026-04-13
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 9
-  completed_plans: 7
-  percent: 78
+  completed_plans: 8
+  percent: 89
 ---
 
 # Session State
@@ -30,12 +30,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 Current Phase: 12
 Current Phase Name: cli-device-option-surface
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 3
 Phase: 12 (cli-device-option-surface) — READY
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
-Last activity: 2026-04-13 -- Phase 12 planning complete
+Last activity: 2026-04-13
 
 ## Accumulated Context
 
@@ -64,6 +64,9 @@ Last activity: 2026-04-13 -- Phase 12 planning complete
 - [Phase 12-cli-device-option-surface]: Keep friendly capture-token generation in dsview-cli so Phase 10/11 stable IDs remain unchanged.
 - [Phase 12-cli-device-option-surface]: Expose both token and stable_id in devices options JSON/text so automation and shell usage share one contract.
 - [Phase 12-cli-device-option-surface]: Lead devices options text with capture flag examples plus --channels hints derived from channel-mode limits.
+- [Phase 12]: Keep the clap-facing CaptureDeviceOptionArgs in main.rs and adapt it into the shared resolver with a lightweight trait instead of duplicating token parsing logic.
+- [Phase 12]: Preserve omitted sibling option values from the selected-device snapshot, but let explicit channel-mode or stop-option tokens infer the parent operation mode only when the inference is unique.
+- [Phase 12]: Route --channels through the same selected-device validation preflight as the new flags so channel-count limits stay aligned with the resolved channel mode before capture begins.
 
 ## Performance Metrics
 
@@ -76,17 +79,18 @@ Last activity: 2026-04-13 -- Phase 12 planning complete
 | Phase 11 P02 | 13 min | 2 tasks | 5 files |
 | Phase 11 P03 | 7 min | 2 tasks | 2 files |
 | Phase 12-cli-device-option-surface P01 | 12m | 2 tasks | 4 files |
+| Phase 12 P02 | 6m | 2 tasks | 2 files |
 
 ## Session Continuity
 
-Last session: 2026-04-13T07:44:46.576Z
+Last session: 2026-04-13T08:35:07.599Z
 
-Stopped At: Completed 12-cli-device-option-surface-01-PLAN.md
+Stopped At: Completed 12-cli-device-option-surface-02-PLAN.md
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Execute Plan 12-02 to add `capture` device-option flags and resolve the new CLI tokens back to stable IDs.
-- Reuse the locked `devices options` JSON/text contract while wiring Phase 11 validation into the `capture` command path.
-- Keep Phase 13 apply-time mutation and reporting out of scope while finishing the remaining Phase 12 CLI parsing work.
+- Execute Plan 12-03 to lock `capture` help, parser behavior, and spawned CLI regressions for the new device-option surface.
+- Reuse the locked resolver and selected-device validation branch while adding end-to-end CLI assertions for help text and stable diagnostics.
+- Keep Phase 13 apply-time mutation and reporting out of scope while finishing the remaining Phase 12 regression coverage.
