@@ -66,6 +66,7 @@ struct dsview_channel_mode {
 #define DSVIEW_OPTION_VALUE_CAPACITY 16
 #define DSVIEW_CHANNEL_MODE_GROUP_CAPACITY 8
 #define DSVIEW_CHANNEL_MODE_CAPACITY 16
+#define DSVIEW_SAMPLERATE_CAPACITY 64
 
 struct dsview_option_value {
     int code;
@@ -76,6 +77,23 @@ struct dsview_channel_mode_group {
     int operation_mode_code;
     unsigned short channel_mode_count;
     struct dsview_channel_mode channel_modes[DSVIEW_CHANNEL_MODE_CAPACITY];
+};
+
+struct dsview_validation_channel_mode {
+    int code;
+    char label[64];
+    unsigned short max_enabled_channels;
+    unsigned int samplerate_count;
+    unsigned long long samplerates[DSVIEW_SAMPLERATE_CAPACITY];
+};
+
+struct dsview_validation_operation_mode {
+    int code;
+    char label[64];
+    unsigned short stop_option_count;
+    struct dsview_option_value stop_options[DSVIEW_OPTION_VALUE_CAPACITY];
+    unsigned short channel_mode_count;
+    struct dsview_validation_channel_mode channel_modes[DSVIEW_CHANNEL_MODE_CAPACITY];
 };
 
 struct dsview_threshold_range {
@@ -112,6 +130,24 @@ struct dsview_device_options_snapshot {
     struct dsview_threshold_range threshold;
 };
 
+struct dsview_validation_capabilities_snapshot {
+    int has_current_operation_mode;
+    int current_operation_mode_code;
+    int has_current_stop_option;
+    int current_stop_option_code;
+    int has_current_filter;
+    int current_filter_code;
+    int has_current_channel_mode;
+    int current_channel_mode_code;
+    unsigned short total_channel_count;
+    unsigned long long hardware_sample_capacity;
+    unsigned short filter_count;
+    struct dsview_option_value filters[DSVIEW_OPTION_VALUE_CAPACITY];
+    struct dsview_threshold_range threshold;
+    unsigned short operation_mode_count;
+    struct dsview_validation_operation_mode operation_modes[DSVIEW_CHANNEL_MODE_GROUP_CAPACITY];
+};
+
 struct dsview_samplerate_list {
     unsigned int count;
     unsigned long long values[64];
@@ -141,6 +177,7 @@ int dsview_bridge_ds_get_vth(double *value);
 int dsview_bridge_ds_get_samplerates(struct dsview_samplerate_list *out_list);
 int dsview_bridge_ds_get_channel_modes(struct dsview_channel_mode *out_modes, int max_modes, int *out_count);
 int dsview_bridge_ds_get_device_options(struct dsview_device_options_snapshot *out_snapshot);
+int dsview_bridge_ds_get_validation_capabilities(struct dsview_validation_capabilities_snapshot *out_snapshot);
 int dsview_bridge_ds_set_samplerate(unsigned long long value);
 int dsview_bridge_ds_set_sample_limit(unsigned long long value);
 int dsview_bridge_ds_enable_channel(int channel_index, int enable);

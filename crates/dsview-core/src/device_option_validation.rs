@@ -3,9 +3,10 @@ use std::collections::BTreeSet;
 use thiserror::Error;
 
 use crate::{
-    CurrentDeviceOptionValues, DeviceIdentitySnapshot, EnumOptionSnapshot,
+    CurrentDeviceOptionValues, DeviceIdentitySnapshot, EnumOptionSnapshot, SupportedDevice,
     ThresholdCapabilitySnapshot,
 };
+use dsview_sys::DeviceOptionValidationSnapshot as NativeDeviceOptionValidationSnapshot;
 
 pub(crate) const OPERATION_MODE_PREFIX: &str = "operation-mode";
 pub(crate) const STOP_OPTION_PREFIX: &str = "stop-option";
@@ -108,7 +109,9 @@ pub enum DeviceOptionValidationError {
         channel: u16,
         total_channel_count: u16,
     },
-    #[error("sample rate {sample_rate_hz} Hz is not supported in channel mode `{channel_mode_id}`")]
+    #[error(
+        "sample rate {sample_rate_hz} Hz is not supported in channel mode `{channel_mode_id}`"
+    )]
     UnsupportedSampleRate {
         sample_rate_hz: u64,
         channel_mode_id: String,
@@ -185,4 +188,91 @@ pub(crate) fn filter_id(code: i16) -> String {
 
 pub(crate) fn channel_mode_id(code: i16) -> String {
     format!("{CHANNEL_MODE_PREFIX}:{code}")
+}
+
+pub(crate) fn normalize_device_option_validation_capabilities(
+    device: &SupportedDevice,
+    native: NativeDeviceOptionValidationSnapshot,
+) -> DeviceOptionValidationCapabilities {
+    DeviceOptionValidationCapabilities {
+        device: DeviceIdentitySnapshot {
+            selection_handle: device.selection_handle.raw(),
+            native_handle: device.native_handle.raw(),
+            stable_id: device.stable_id.to_string(),
+            kind: device.kind.display_name().to_string(),
+            name: device.name.clone(),
+        },
+        current: CurrentDeviceOptionValues {
+            operation_mode_id: native.current_operation_mode_code.map(operation_mode_id),
+            operation_mode_code: native.current_operation_mode_code,
+            stop_option_id: native.current_stop_option_code.map(stop_option_id),
+            stop_option_code: native.current_stop_option_code,
+            filter_id: native.current_filter_code.map(filter_id),
+            filter_code: native.current_filter_code,
+            channel_mode_id: native.current_channel_mode_code.map(channel_mode_id),
+            channel_mode_code: native.current_channel_mode_code,
+        },
+        total_channel_count: native.total_channel_count,
+        hardware_sample_capacity: native.hardware_sample_capacity,
+        sample_limit_alignment: 1024,
+        operation_modes: native
+            .operation_modes
+            .into_iter()
+            .map(|operation_mode| OperationModeValidationCapabilities {
+                id: operation_mode_id(operation_mode.code),
+                native_code: operation_mode.code,
+                label: operation_mode.label.clone(),
+                stop_option_ids: if operation_mode.label.contains("Buffer") {
+                    operation_mode
+                        .stop_options
+                        .iter()
+                        .map(|option| stop_option_id(option.code))
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                channel_modes: operation_mode
+                    .channel_modes
+                    .into_iter()
+                    .map(|channel_mode| ChannelModeValidationCapabilities {
+                        id: channel_mode_id(channel_mode.code),
+                        native_code: channel_mode.code,
+                        label: channel_mode.label,
+                        max_enabled_channels: channel_mode.max_enabled_channels,
+                        supported_sample_rates: channel_mode.supported_sample_rates,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        filters: native
+            .filters
+            .into_iter()
+            .map(|filter| EnumOptionSnapshot {
+                id: filter_id(filter.code),
+                native_code: filter.code,
+                label: filter.label,
+            })
+            .collect(),
+        threshold: ThresholdCapabilitySnapshot {
+            id: native.threshold.id,
+            kind: native.threshold.kind,
+            current_volts: native.threshold.current_volts,
+            min_volts: native.threshold.min_volts,
+            max_volts: native.threshold.max_volts,
+            step_volts: native.threshold.step_volts,
+            legacy_metadata: native.threshold.legacy.map(|legacy| {
+                crate::LegacyThresholdMetadataSnapshot {
+                    current_native_code: legacy.current_code,
+                    options: legacy
+                        .options
+                        .into_iter()
+                        .map(|option| crate::RawOptionMetadataSnapshot {
+                            native_code: option.code,
+                            label: option.label,
+                        })
+                        .collect(),
+                }
+            }),
+        },
+    }
 }

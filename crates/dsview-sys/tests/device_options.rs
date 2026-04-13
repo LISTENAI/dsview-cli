@@ -6,12 +6,14 @@ const SR_OK: i32 = 0;
 const SR_ERR_NA: i32 = 6;
 const SR_ERR_ARG: i32 = 3;
 
+const SR_CONF_TOTAL_CH_NUM: i32 = 30026;
 const SR_CONF_FILTER: i32 = 30021;
 const SR_CONF_OPERATION_MODE: i32 = 30065;
 const SR_CONF_BUFFER_OPTIONS: i32 = 30066;
 const SR_CONF_CHANNEL_MODE: i32 = 30067;
 const SR_CONF_THRESHOLD: i32 = 30071;
 const SR_CONF_VTH: i32 = 30072;
+const SR_CONF_HW_DEPTH: i32 = 30075;
 
 const BUFFER_MODE: i32 = 101;
 const STREAM_MODE: i32 = 202;
@@ -50,6 +52,7 @@ unsafe extern "C" {
     fn dsview_test_reset_mock_option_api();
     fn dsview_test_mock_set_current_int(key: i32, has_value: i32, value: i32, status: i32);
     fn dsview_test_mock_set_current_double(key: i32, has_value: i32, value: f64, status: i32);
+    fn dsview_test_mock_set_current_u64(key: i32, has_value: i32, value: u64, status: i32);
     fn dsview_test_mock_set_list_items(
         key: i32,
         items: *const TestListItem,
@@ -59,6 +62,13 @@ unsafe extern "C" {
     fn dsview_test_mock_set_channel_mode_group(
         operation_mode_code: i32,
         items: *const TestChannelMode,
+        count: i32,
+        status: i32,
+    );
+    fn dsview_test_mock_set_channel_mode_samplerates(
+        operation_mode_code: i32,
+        channel_mode_code: i32,
+        values: *const u64,
         count: i32,
         status: i32,
     );
@@ -133,6 +143,10 @@ fn configure_mock_option_api() {
         channel_mode(STREAM_WIDE_MODE, "Streaming full lanes", 16),
         channel_mode(STREAM_COMPACT_MODE, "Streaming compact lanes", 6),
     ];
+    let buffer_wide_samplerates = [50_000_000_u64, 100_000_000];
+    let buffer_compact_samplerates = [100_000_000_u64, 200_000_000];
+    let stream_wide_samplerates = [25_000_000_u64, 50_000_000];
+    let stream_compact_samplerates = [50_000_000_u64, 100_000_000];
 
     unsafe {
         dsview_test_mock_set_list_items(
@@ -175,8 +189,38 @@ fn configure_mock_option_api() {
         dsview_test_mock_set_current_int(SR_CONF_BUFFER_OPTIONS, 1, STOP_WHEN_FULL, SR_OK);
         dsview_test_mock_set_current_int(SR_CONF_FILTER, 1, FILTER_ONE_TICK, SR_OK);
         dsview_test_mock_set_current_int(SR_CONF_CHANNEL_MODE, 1, BUFFER_COMPACT_MODE, SR_OK);
+        dsview_test_mock_set_current_int(SR_CONF_TOTAL_CH_NUM, 1, 16, SR_OK);
         dsview_test_mock_set_current_int(SR_CONF_THRESHOLD, 1, THRESHOLD_3V3, SR_OK);
         dsview_test_mock_set_current_double(SR_CONF_VTH, 1, 1.8, SR_OK);
+        dsview_test_mock_set_current_u64(SR_CONF_HW_DEPTH, 1, 268_435_456, SR_OK);
+        dsview_test_mock_set_channel_mode_samplerates(
+            BUFFER_MODE,
+            BUFFER_WIDE_MODE,
+            buffer_wide_samplerates.as_ptr(),
+            buffer_wide_samplerates.len() as i32,
+            SR_OK,
+        );
+        dsview_test_mock_set_channel_mode_samplerates(
+            BUFFER_MODE,
+            BUFFER_COMPACT_MODE,
+            buffer_compact_samplerates.as_ptr(),
+            buffer_compact_samplerates.len() as i32,
+            SR_OK,
+        );
+        dsview_test_mock_set_channel_mode_samplerates(
+            STREAM_MODE,
+            STREAM_WIDE_MODE,
+            stream_wide_samplerates.as_ptr(),
+            stream_wide_samplerates.len() as i32,
+            SR_OK,
+        );
+        dsview_test_mock_set_channel_mode_samplerates(
+            STREAM_MODE,
+            STREAM_COMPACT_MODE,
+            stream_compact_samplerates.as_ptr(),
+            stream_compact_samplerates.len() as i32,
+            SR_OK,
+        );
     }
 }
 
@@ -200,10 +244,19 @@ fn device_options_snapshot_reads_current_and_supported_values() {
         .device_options()
         .expect("mocked bridge should return a device option snapshot");
 
-    assert_eq!(snapshot.current_operation_mode_code, Some(BUFFER_MODE as i16));
-    assert_eq!(snapshot.current_stop_option_code, Some(STOP_WHEN_FULL as i16));
+    assert_eq!(
+        snapshot.current_operation_mode_code,
+        Some(BUFFER_MODE as i16)
+    );
+    assert_eq!(
+        snapshot.current_stop_option_code,
+        Some(STOP_WHEN_FULL as i16)
+    );
     assert_eq!(snapshot.current_filter_code, Some(FILTER_ONE_TICK as i16));
-    assert_eq!(snapshot.current_channel_mode_code, Some(BUFFER_COMPACT_MODE as i16));
+    assert_eq!(
+        snapshot.current_channel_mode_code,
+        Some(BUFFER_COMPACT_MODE as i16)
+    );
 
     assert_eq!(snapshot.operation_modes.len(), 2);
     assert_eq!(snapshot.operation_modes[0].code, BUFFER_MODE as i16);
@@ -311,10 +364,22 @@ fn restore_original_modes_after_successful_channel_mode_discovery() {
         .device_options()
         .expect("successful discovery should restore original modes");
 
-    assert_eq!(snapshot.current_operation_mode_code, Some(BUFFER_MODE as i16));
-    assert_eq!(snapshot.current_channel_mode_code, Some(BUFFER_COMPACT_MODE as i16));
-    assert_eq!(read_current_int(SR_CONF_OPERATION_MODE), (true, BUFFER_MODE));
-    assert_eq!(read_current_int(SR_CONF_CHANNEL_MODE), (true, BUFFER_COMPACT_MODE));
+    assert_eq!(
+        snapshot.current_operation_mode_code,
+        Some(BUFFER_MODE as i16)
+    );
+    assert_eq!(
+        snapshot.current_channel_mode_code,
+        Some(BUFFER_COMPACT_MODE as i16)
+    );
+    assert_eq!(
+        read_current_int(SR_CONF_OPERATION_MODE),
+        (true, BUFFER_MODE)
+    );
+    assert_eq!(
+        read_current_int(SR_CONF_CHANNEL_MODE),
+        (true, BUFFER_COMPACT_MODE)
+    );
     assert!(
         unsafe { dsview_test_mock_get_set_call_count(SR_CONF_OPERATION_MODE) } >= 2,
         "discovery should switch operation modes before restoring the original mode"
@@ -354,8 +419,14 @@ fn restore_original_modes_after_channel_mode_discovery_failure() {
             code: dsview_sys::NativeErrorCode::Arg,
         }
     ));
-    assert_eq!(read_current_int(SR_CONF_OPERATION_MODE), (true, BUFFER_MODE));
-    assert_eq!(read_current_int(SR_CONF_CHANNEL_MODE), (true, BUFFER_COMPACT_MODE));
+    assert_eq!(
+        read_current_int(SR_CONF_OPERATION_MODE),
+        (true, BUFFER_MODE)
+    );
+    assert_eq!(
+        read_current_int(SR_CONF_CHANNEL_MODE),
+        (true, BUFFER_COMPACT_MODE)
+    );
 }
 
 #[test]
@@ -385,4 +456,92 @@ fn sr_err_na_options_stay_optional_and_threshold_truthful() {
     assert_eq!(snapshot.threshold.max_volts, 5.0);
     assert_eq!(snapshot.threshold.step_volts, 0.1);
     assert!(snapshot.threshold.legacy.is_none());
+}
+
+#[test]
+fn validation_capabilities_snapshot_reads_mode_scoped_samplerates() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    let snapshot = runtime
+        .device_option_validation_capabilities()
+        .expect("mocked bridge should return validation capabilities");
+
+    assert_eq!(
+        snapshot.current_operation_mode_code,
+        Some(BUFFER_MODE as i16)
+    );
+    assert_eq!(
+        snapshot.current_stop_option_code,
+        Some(STOP_WHEN_FULL as i16)
+    );
+    assert_eq!(snapshot.current_filter_code, Some(FILTER_ONE_TICK as i16));
+    assert_eq!(
+        snapshot.current_channel_mode_code,
+        Some(BUFFER_COMPACT_MODE as i16)
+    );
+    assert_eq!(snapshot.total_channel_count, 16);
+    assert_eq!(snapshot.hardware_sample_capacity, 268_435_456);
+    assert_eq!(snapshot.filters.len(), 2);
+    assert_eq!(snapshot.threshold.current_volts, Some(1.8));
+    assert_eq!(snapshot.operation_modes.len(), 2);
+    assert_eq!(snapshot.operation_modes[0].code, BUFFER_MODE as i16);
+    assert_eq!(
+        snapshot.operation_modes[0]
+            .stop_options
+            .iter()
+            .map(|option| option.code)
+            .collect::<Vec<_>>(),
+        vec![STOP_WHEN_FULL as i16, UPLOAD_WHEN_FULL as i16]
+    );
+    assert_eq!(
+        snapshot.operation_modes[0].channel_modes[0].supported_sample_rates,
+        vec![50_000_000, 100_000_000]
+    );
+    assert_eq!(
+        snapshot.operation_modes[1].channel_modes[1].supported_sample_rates,
+        vec![50_000_000, 100_000_000]
+    );
+}
+
+#[test]
+fn validation_capabilities_restore_original_modes_after_failure() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+    configure_mock_option_api();
+
+    unsafe {
+        dsview_test_mock_set_channel_mode_samplerates(
+            STREAM_MODE,
+            STREAM_COMPACT_MODE,
+            std::ptr::null(),
+            0,
+            SR_ERR_ARG,
+        );
+    }
+
+    let error = runtime
+        .device_option_validation_capabilities()
+        .expect_err("broken samplerate discovery should fail");
+
+    assert!(matches!(
+        error,
+        dsview_sys::RuntimeError::NativeCall {
+            operation: "ds_get_validation_capabilities",
+            code: dsview_sys::NativeErrorCode::Arg,
+        }
+    ));
+    assert_eq!(
+        read_current_int(SR_CONF_OPERATION_MODE),
+        (true, BUFFER_MODE)
+    );
+    assert_eq!(
+        read_current_int(SR_CONF_CHANNEL_MODE),
+        (true, BUFFER_COMPACT_MODE)
+    );
 }

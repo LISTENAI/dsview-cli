@@ -20,21 +20,20 @@ pub use device_option_validation::{
     OperationModeValidationCapabilities, ValidatedDeviceOptionRequest,
 };
 pub use device_options::{
-    ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
-    DeviceIdentitySnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot,
+    normalize_device_options_snapshot, ChannelModeGroupSnapshot, ChannelModeOptionSnapshot,
+    CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot,
     LegacyThresholdMetadataSnapshot, RawOptionMetadataSnapshot, ThresholdCapabilitySnapshot,
-    normalize_device_options_snapshot,
+};
+pub use dsview_sys::{
+    runtime_library_name, source_runtime_library_path, AcquisitionSummary,
+    AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, ExportErrorCode, NativeErrorCode,
+    RuntimeError, VcdExportFacts, VcdExportRequest,
 };
 use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
-pub use dsview_sys::{
-    AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, ExportErrorCode,
-    NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest, runtime_library_name,
-    source_runtime_library_path,
-};
 use serde::Serialize;
 use thiserror::Error;
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 const DSLOGIC_PLUS_MODELS: &[&str] = &["DSLogic PLus"];
 const DSLOGIC_PLUS_PRIMARY_FIRMWARES: &[&str] = &["DSLogicPlus.fw"];
@@ -583,6 +582,23 @@ impl Discovery {
             sample_limit_alignment: 1024,
             threshold_volts: native.threshold_volts,
         })
+    }
+
+    pub fn load_device_option_validation_capabilities(
+        &self,
+        selection_handle: SelectionHandle,
+    ) -> Result<DeviceOptionValidationCapabilities, BringUpError> {
+        let opened = self.open_device(selection_handle)?;
+        let native = self
+            .runtime
+            .device_option_validation_capabilities()
+            .map_err(BringUpError::Runtime)?;
+        let snapshot = device_option_validation::normalize_device_option_validation_capabilities(
+            opened.device(),
+            native,
+        );
+        opened.release()?;
+        Ok(snapshot)
     }
 
     pub fn validate_capture_config(
