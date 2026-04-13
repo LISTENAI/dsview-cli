@@ -14,12 +14,13 @@ use dsview_cli::{
 use dsview_core::{
     describe_native_error, resolve_capture_artifact_paths, AcquisitionSummary,
     AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError, CaptureCleanup,
-    CaptureCompletion, CaptureConfigError, CaptureConfigRequest, CaptureExportError,
-    CaptureRunError, CaptureRunRequest, ChannelModeGroupSnapshot, ChannelModeOptionSnapshot,
-    CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionValidationCapabilities,
-    DeviceOptionApplyFailure, DeviceOptionValidationError, DeviceOptionsSnapshot, Discovery,
-    EnumOptionSnapshot, NativeErrorCode, OperationModeValidationCapabilities, RuntimeError,
-    SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
+    CaptureCompletion, CaptureConfigError, CaptureConfigRequest, CaptureDeviceOptionFacts,
+    CaptureExportError, CaptureRunError, CaptureRunRequest, ChannelModeGroupSnapshot,
+    ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DeviceIdentitySnapshot,
+    DeviceOptionValidationCapabilities, DeviceOptionApplyFailure, DeviceOptionValidationError,
+    DeviceOptionsSnapshot, Discovery, EnumOptionSnapshot, NativeErrorCode,
+    OperationModeValidationCapabilities, RuntimeError, SelectionHandle, SupportedDevice,
+    ThresholdCapabilitySnapshot,
     validated_capture_config_from_device_options,
 };
 use serde::Serialize;
@@ -266,6 +267,7 @@ struct CaptureResponse {
     saw_end_packet: bool,
     saw_terminal_normal_end: bool,
     cleanup_succeeded: bool,
+    device_options: CaptureDeviceOptionFacts,
     artifacts: CaptureArtifactsResponse,
 }
 
@@ -455,6 +457,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         saw_end_packet: result.summary.saw_end_packet,
         saw_terminal_normal_end: result.summary.saw_terminal_normal_end,
         cleanup_succeeded: result.cleanup.succeeded(),
+        device_options: export.metadata.device_options.clone(),
         artifacts: CaptureArtifactsResponse {
             vcd_path: export.vcd_path.display().to_string(),
             metadata_path: export.metadata_path.display().to_string(),
@@ -1298,14 +1301,7 @@ fn render_capture_success(format: OutputFormat, response: &CaptureResponse) {
             println!("{}", serde_json::to_string_pretty(response).unwrap());
         }
         OutputFormat::Text => {
-            println!(
-                "{}",
-                capture_success_text(
-                    response.completion,
-                    &response.artifacts.vcd_path,
-                    &response.artifacts.metadata_path,
-                )
-            );
+            println!("{}", capture_success_text(response));
         }
     }
 }
@@ -1321,12 +1317,47 @@ fn render_device_options_success(format: OutputFormat, response: &DeviceOptionsR
     }
 }
 
-pub(crate) fn capture_success_text(
-    completion: &str,
-    vcd_path: &str,
-    metadata_path: &str,
-) -> String {
-    format!("capture {completion}\nvcd {vcd_path}\nmetadata {metadata_path}")
+fn render_effective_capture_options_text(facts: &CaptureDeviceOptionFacts) -> Vec<String> {
+    let effective = &facts.effective;
+    vec![
+        "effective options:".to_string(),
+        format!("operation mode: {}", effective.operation_mode_id),
+        format!(
+            "stop option: {}",
+            effective.stop_option_id.as_deref().unwrap_or("none")
+        ),
+        format!("channel mode: {}", effective.channel_mode_id),
+        format!(
+            "enabled channels: {}",
+            effective
+                .enabled_channels
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        format!(
+            "threshold volts: {}",
+            effective
+                .threshold_volts
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        ),
+        format!(
+            "filter: {}",
+            effective.filter_id.as_deref().unwrap_or("none")
+        ),
+        format!("sample rate: {}", effective.sample_rate_hz),
+        format!("sample limit: {}", effective.sample_limit),
+    ]
+}
+
+pub(crate) fn capture_success_text(response: &CaptureResponse) -> String {
+    let mut lines = vec![format!("capture {}", response.completion)];
+    lines.extend(render_effective_capture_options_text(&response.device_options));
+    lines.push(format!("vcd {}", response.artifacts.vcd_path));
+    lines.push(format!("metadata {}", response.artifacts.metadata_path));
+    lines.join("\n")
 }
 
 fn render_error(format: OutputFormat, error: &ErrorResponse) {
