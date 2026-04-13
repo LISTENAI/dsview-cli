@@ -17,11 +17,11 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 - [x] User can start a capture from the CLI and export machine-readable waveform output for downstream analysis. Shipped in `v1.0`.
 - [x] User can run the full capture-and-export workflow non-interactively from a single CLI command. Shipped in `v1.0`.
 - [x] User can choose artifact output locations and receive clear artifact path reporting after a successful run. Shipped in `v1.0`.
+- [x] User can validate DSLogic Plus option combinations before capture so the shipped `v1.0` capture/export path remains stable. Validated in Phase 11.
 
 ### Active
 
 - [ ] Expose DSView-style `DSLogic Plus` device options from the CLI, including operation mode, stop option, channel mode, enabled channels, threshold voltage, and filter selection.
-- [ ] Validate DSLogic Plus option combinations before capture so the shipped `v1.0` capture/export path remains stable.
 - [ ] Provide a discoverable non-interactive CLI surface for inspecting supported device-option values before a run.
 
 ### Out of Scope
@@ -43,6 +43,7 @@ Milestone `v1.1` is grounded in direct DSView source inspection rather than gree
 
 - `v1.0 MVP` shipped on `2026-04-09` and is archived in `.planning/milestones/`.
 - The validated DSLogic Plus capture/export path is the baseline that `v1.1` must preserve.
+- Phase 11 validation modeling completed on `2026-04-13`, including selected-device capability loading, pure validation, and stable CLI validation codes.
 - The next milestone is now defined around device-option parity for the existing `DSLogic Plus` target rather than broader hardware support or decode work.
 
 ## Current Milestone: v1.1 DSLogic Plus device options
@@ -92,4 +93,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-10 after defining milestone `v1.1`*
+*Last updated: 2026-04-13 after completing Phase 11 validation modeling*
