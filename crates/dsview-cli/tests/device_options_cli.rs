@@ -126,7 +126,7 @@ fn sample_snapshot() -> DeviceOptionsSnapshot {
 }
 
 #[test]
-fn device_options_json_is_stable_for_automation() {
+fn device_options_json_exposes_capture_tokens_and_stable_ids() {
     let response = build_device_options_response(&sample_snapshot());
     let actual = serde_json::to_value(&response).expect("response should serialize");
 
@@ -139,53 +139,64 @@ fn device_options_json_is_stable_for_automation() {
             "native_handle": 42
         },
         "current": {
-            "operation_mode_id": "operation-mode:0",
+            "operation_mode_token": "buffer",
+            "operation_mode_stable_id": "operation-mode:0",
             "operation_mode_code": 0,
-            "stop_option_id": "stop-option:1",
+            "stop_option_token": "stop-after-samples",
+            "stop_option_stable_id": "stop-option:1",
             "stop_option_code": 1,
-            "filter_id": "filter:2",
-            "filter_code": 2,
-            "channel_mode_id": "channel-mode:20",
+            "filter_token": "off",
+            "filter_stable_id": "filter:1",
+            "filter_code": 1,
+            "channel_mode_token": "buffer-100x16",
+            "channel_mode_stable_id": "channel-mode:20",
             "channel_mode_code": 20
         },
         "operation_modes": [
             {
-                "id": "operation-mode:0",
+                "token": "buffer",
+                "stable_id": "operation-mode:0",
                 "label": "Buffer Mode",
                 "native_code": 0
             },
             {
-                "id": "operation-mode:1",
+                "token": "stream",
+                "stable_id": "operation-mode:1",
                 "label": "Stream Mode",
                 "native_code": 1
             }
         ],
         "stop_options": [
             {
-                "id": "stop-option:0",
+                "token": "immediate",
+                "stable_id": "stop-option:0",
                 "label": "Immediate",
                 "native_code": 0
             },
             {
-                "id": "stop-option:1",
+                "token": "stop-after-samples",
+                "stable_id": "stop-option:1",
                 "label": "Stop after samples",
                 "native_code": 1
             }
         ],
         "filters": [
             {
-                "id": "filter:1",
+                "token": "off",
+                "stable_id": "filter:1",
                 "label": "Off",
                 "native_code": 1
             },
             {
-                "id": "filter:2",
+                "token": "1-sample",
+                "stable_id": "filter:2",
                 "label": "1 Sample",
                 "native_code": 2
             }
         ],
         "threshold": {
-            "id": "threshold:vth-range",
+            "threshold_flag": "--threshold-volts",
+            "stable_id": "threshold:vth-range",
             "kind": "voltage-range",
             "current_volts": 1.8,
             "min_volts": 0.7,
@@ -205,21 +216,52 @@ fn device_options_json_is_stable_for_automation() {
                 ]
             }
         },
+        "capture_guide": {
+            "operation_mode_flag": "--operation-mode",
+            "stop_option_flag": "--stop-option",
+            "channel_mode_flag": "--channel-mode",
+            "threshold_flag": "--threshold-volts",
+            "filter_flag": "--filter",
+            "channels_flag": "--channels"
+        }
+    });
+
+    assert_eq!(actual["selected_handle"], expected["selected_handle"]);
+    assert_eq!(actual["device"], expected["device"]);
+    assert_eq!(actual["current"], expected["current"]);
+    assert_eq!(actual["operation_modes"], expected["operation_modes"]);
+    assert_eq!(actual["stop_options"], expected["stop_options"]);
+    assert_eq!(actual["filters"], expected["filters"]);
+    assert_eq!(actual["threshold"], expected["threshold"]);
+    assert_eq!(actual["capture_guide"], expected["capture_guide"]);
+}
+
+#[test]
+fn device_options_json_retains_channel_mode_limits_for_channels_flag() {
+    let response = build_device_options_response(&sample_snapshot());
+    let actual = serde_json::to_value(&response).expect("response should serialize");
+
+    let expected = json!({
+        "channels_flag": "--channels",
         "channel_modes_by_operation_mode": [
             {
-                "operation_mode_id": "operation-mode:0",
+                "operation_mode_token": "buffer",
+                "operation_mode_stable_id": "operation-mode:0",
                 "operation_mode_code": 0,
-                "current_channel_mode_id": "channel-mode:20",
+                "current_channel_mode_token": "buffer-100x16",
+                "current_channel_mode_stable_id": "channel-mode:20",
                 "current_channel_mode_code": 20,
                 "channel_modes": [
                     {
-                        "id": "channel-mode:20",
+                        "token": "buffer-100x16",
+                        "stable_id": "channel-mode:20",
                         "label": "Buffer 100x16",
                         "native_code": 20,
                         "max_enabled_channels": 16
                     },
                     {
-                        "id": "channel-mode:21",
+                        "token": "buffer-200x8",
+                        "stable_id": "channel-mode:21",
                         "label": "Buffer 200x8",
                         "native_code": 21,
                         "max_enabled_channels": 8
@@ -227,13 +269,16 @@ fn device_options_json_is_stable_for_automation() {
                 ]
             },
             {
-                "operation_mode_id": "operation-mode:1",
+                "operation_mode_token": "stream",
+                "operation_mode_stable_id": "operation-mode:1",
                 "operation_mode_code": 1,
-                "current_channel_mode_id": null,
+                "current_channel_mode_token": null,
+                "current_channel_mode_stable_id": null,
                 "current_channel_mode_code": null,
                 "channel_modes": [
                     {
-                        "id": "channel-mode:30",
+                        "token": "stream-100x16",
+                        "stable_id": "channel-mode:30",
                         "label": "Stream 100x16",
                         "native_code": 30,
                         "max_enabled_channels": 16
@@ -243,11 +288,15 @@ fn device_options_json_is_stable_for_automation() {
         ]
     });
 
-    assert_eq!(actual, expected);
+    assert_eq!(actual["capture_guide"]["channels_flag"], expected["channels_flag"]);
+    assert_eq!(
+        actual["channel_modes_by_operation_mode"],
+        expected["channel_modes_by_operation_mode"]
+    );
 }
 
 #[test]
-fn device_options_text_uses_deterministic_section_order() {
+fn device_options_text_shows_copy_paste_capture_flags() {
     let response = build_device_options_response(&sample_snapshot());
     let rendered = render_device_options_text(&response);
 
@@ -258,34 +307,41 @@ fn device_options_text_uses_deterministic_section_order() {
         "  model: DSLogic Plus\n",
         "  native_name: DSLogic PLus\n",
         "  native_handle: 42\n",
+        "capture_flags\n",
+        "  --operation-mode buffer\n",
+        "  --stop-option stop-after-samples\n",
+        "  --channel-mode buffer-100x16\n",
+        "  --threshold-volts 1.8\n",
+        "  --filter off\n",
+        "  --channels IDX[,IDX...]  (buffer-100x16 allows up to 16 enabled channels)\n",
         "operation_modes\n",
-        "  current: operation-mode:0 | native_code=0\n",
-        "  option: operation-mode:0 | native_code=0 | label=Buffer Mode\n",
-        "  option: operation-mode:1 | native_code=1 | label=Stream Mode\n",
+        "  current: buffer | stable_id=operation-mode:0 | native_code=0\n",
+        "  option: token=buffer | stable_id=operation-mode:0 | native_code=0 | label=Buffer Mode\n",
+        "  option: token=stream | stable_id=operation-mode:1 | native_code=1 | label=Stream Mode\n",
         "stop_options\n",
-        "  current: stop-option:1 | native_code=1\n",
-        "  option: stop-option:0 | native_code=0 | label=Immediate\n",
-        "  option: stop-option:1 | native_code=1 | label=Stop after samples\n",
-        "filters\n",
-        "  current: filter:2 | native_code=2\n",
-        "  option: filter:1 | native_code=1 | label=Off\n",
-        "  option: filter:2 | native_code=2 | label=1 Sample\n",
+        "  current: stop-after-samples | stable_id=stop-option:1 | native_code=1\n",
+        "  option: token=immediate | stable_id=stop-option:0 | native_code=0 | label=Immediate\n",
+        "  option: token=stop-after-samples | stable_id=stop-option:1 | native_code=1 | label=Stop after samples\n",
+        "channel_modes_by_operation_mode\n",
+        "  group: buffer | stable_id=operation-mode:0 | native_code=0 | current_channel_mode=buffer-100x16 | current_stable_id=channel-mode:20 | current_native_code=20\n",
+        "  channel_mode: buffer-100x16 | stable_id=channel-mode:20 | native_code=20 | label=Buffer 100x16 | max_enabled_channels=16\n",
+        "  channel_mode: buffer-200x8 | stable_id=channel-mode:21 | native_code=21 | label=Buffer 200x8 | max_enabled_channels=8\n",
+        "  group: stream | stable_id=operation-mode:1 | native_code=1 | current_channel_mode=none | current_stable_id=none | current_native_code=none\n",
+        "  channel_mode: stream-100x16 | stable_id=channel-mode:30 | native_code=30 | label=Stream 100x16 | max_enabled_channels=16\n",
         "threshold\n",
-        "  id: threshold:vth-range\n",
+        "  --threshold-volts 1.8\n",
+        "  stable_id: threshold:vth-range\n",
         "  kind: voltage-range\n",
-        "  current_volts: 1.8\n",
         "  min_volts: 0.7\n",
         "  max_volts: 5.0\n",
         "  step_volts: 0.1\n",
         "  legacy_current_native_code: 3\n",
         "  legacy_option: native_code=3 | label=1.8 V\n",
         "  legacy_option: native_code=5 | label=3.3 V\n",
-        "channel_modes_by_operation_mode\n",
-        "  group: operation-mode:0 | native_code=0 | current_channel_mode=channel-mode:20 | current_native_code=20\n",
-        "  channel_mode: channel-mode:20 | native_code=20 | label=Buffer 100x16 | max_enabled_channels=16\n",
-        "  channel_mode: channel-mode:21 | native_code=21 | label=Buffer 200x8 | max_enabled_channels=8\n",
-        "  group: operation-mode:1 | native_code=1 | current_channel_mode=none | current_native_code=none\n",
-        "  channel_mode: channel-mode:30 | native_code=30 | label=Stream 100x16 | max_enabled_channels=16"
+        "filters\n",
+        "  current: off | stable_id=filter:1 | native_code=1\n",
+        "  option: token=off | stable_id=filter:1 | native_code=1 | label=Off\n",
+        "  option: token=1-sample | stable_id=filter:2 | native_code=2 | label=1 Sample"
     );
 
     assert_eq!(rendered, expected);
