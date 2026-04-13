@@ -6,6 +6,8 @@ const SR_OK: i32 = 0;
 const SR_ERR_NA: i32 = 6;
 const SR_ERR_ARG: i32 = 3;
 
+const SR_CONF_SAMPLERATE: i32 = 30000;
+const SR_CONF_LIMIT_SAMPLES: i32 = 50001;
 const SR_CONF_TOTAL_CH_NUM: i32 = 30026;
 const SR_CONF_FILTER: i32 = 30021;
 const SR_CONF_OPERATION_MODE: i32 = 30065;
@@ -14,6 +16,7 @@ const SR_CONF_CHANNEL_MODE: i32 = 30067;
 const SR_CONF_THRESHOLD: i32 = 30071;
 const SR_CONF_VTH: i32 = 30072;
 const SR_CONF_HW_DEPTH: i32 = 30075;
+const APPLY_CHANNEL_CALL_KEY: i32 = -70000;
 
 const BUFFER_MODE: i32 = 0;
 const STREAM_MODE: i32 = 1;
@@ -207,6 +210,8 @@ fn configure_mock_option_api() {
         dsview_test_mock_set_current_int(SR_CONF_TOTAL_CH_NUM, 1, 16, SR_OK);
         dsview_test_mock_set_current_int(SR_CONF_THRESHOLD, 1, THRESHOLD_3V3, SR_OK);
         dsview_test_mock_set_current_double(SR_CONF_VTH, 1, 1.8, SR_OK);
+        dsview_test_mock_set_current_u64(SR_CONF_SAMPLERATE, 1, 100_000_000, SR_OK);
+        dsview_test_mock_set_current_u64(SR_CONF_LIMIT_SAMPLES, 1, 8192, SR_OK);
         dsview_test_mock_set_current_u64(SR_CONF_HW_DEPTH, 1, 268_435_456, SR_OK);
         dsview_test_mock_set_channel_mode_samplerates(
             BUFFER_MODE,
@@ -322,6 +327,27 @@ fn apply_device_options_exposes_all_required_runtime_setters() {
     assert_eq!(runtime.current_filter_code().unwrap(), Some(FILTER_NONE as i16));
     assert_eq!(runtime.current_sample_limit().unwrap(), Some(4096));
     assert_eq!(runtime.current_samplerate().unwrap(), Some(50_000_000));
+    assert_eq!(
+        apply_log()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>(),
+        vec![
+            SR_CONF_OPERATION_MODE,
+            SR_CONF_BUFFER_OPTIONS,
+            SR_CONF_CHANNEL_MODE,
+            SR_CONF_VTH,
+            SR_CONF_FILTER,
+            APPLY_CHANNEL_CALL_KEY,
+            APPLY_CHANNEL_CALL_KEY,
+            APPLY_CHANNEL_CALL_KEY,
+            APPLY_CHANNEL_CALL_KEY,
+            APPLY_CHANNEL_CALL_KEY,
+            APPLY_CHANNEL_CALL_KEY,
+            SR_CONF_LIMIT_SAMPLES,
+            SR_CONF_SAMPLERATE,
+        ]
+    );
 }
 
 #[test]
@@ -367,7 +393,7 @@ fn mock_apply_sequence_records_d05_order_and_stops_after_first_failure() {
             (SR_CONF_OPERATION_MODE, STREAM_MODE as i64),
             (SR_CONF_BUFFER_OPTIONS, UPLOAD_WHEN_FULL as i64),
             (SR_CONF_CHANNEL_MODE, STREAM_COMPACT_MODE as i64),
-            (SR_CONF_VTH, 2),
+            (SR_CONF_VTH, 0),
             (SR_CONF_FILTER, FILTER_NONE as i64),
         ]
     );
@@ -415,7 +441,8 @@ fn current_option_readback_reports_effective_values_after_apply() {
     assert_eq!(read_current_int(SR_CONF_CHANNEL_MODE), (true, STREAM_COMPACT_MODE));
     assert_eq!(read_current_double(SR_CONF_VTH), (true, 2.5));
     assert_eq!(read_current_int(SR_CONF_FILTER), (true, FILTER_NONE));
-    assert_eq!(read_current_u64(SR_CONF_HW_DEPTH), (true, 16_384));
+    assert_eq!(read_current_u64(SR_CONF_LIMIT_SAMPLES), (true, 16_384));
+    assert_eq!(read_current_u64(SR_CONF_SAMPLERATE), (true, 100_000_000));
     assert_eq!(runtime.current_samplerate().unwrap(), Some(100_000_000));
 }
 

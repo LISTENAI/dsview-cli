@@ -52,6 +52,9 @@ unsafe extern "C" {
     fn dsview_bridge_ds_get_current_sample_limit(value: *mut u64) -> c_int;
     fn dsview_bridge_ds_get_total_channel_count(value: *mut c_int) -> c_int;
     fn dsview_bridge_ds_get_valid_channel_count(value: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_get_current_operation_mode(value: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_get_current_stop_option(value: *mut c_int) -> c_int;
+    fn dsview_bridge_ds_get_current_filter(value: *mut c_int) -> c_int;
     fn dsview_bridge_ds_get_current_channel_mode(value: *mut c_int) -> c_int;
     fn dsview_bridge_ds_get_hw_depth(value: *mut u64) -> c_int;
     fn dsview_bridge_ds_get_vth(value: *mut f64) -> c_int;
@@ -65,6 +68,11 @@ unsafe extern "C" {
     fn dsview_bridge_ds_get_validation_capabilities(
         out_snapshot: *mut RawDeviceOptionValidationSnapshot,
     ) -> c_int;
+    fn dsview_bridge_ds_set_operation_mode(value: c_int) -> c_int;
+    fn dsview_bridge_ds_set_stop_option(value: c_int) -> c_int;
+    fn dsview_bridge_ds_set_channel_mode(value: c_int) -> c_int;
+    fn dsview_bridge_ds_set_vth(value: f64) -> c_int;
+    fn dsview_bridge_ds_set_filter(value: c_int) -> c_int;
     fn dsview_bridge_ds_set_samplerate(value: u64) -> c_int;
     fn dsview_bridge_ds_set_sample_limit(value: u64) -> c_int;
     fn dsview_bridge_ds_enable_channel(channel_index: c_int, enable: c_int) -> c_int;
@@ -1008,6 +1016,36 @@ impl RuntimeBridge {
         decode_device_option_validation_snapshot(&raw)
     }
 
+    pub fn set_operation_mode(&self, value: i16) -> Result<(), RuntimeError> {
+        native_call_status("ds_set_operation_mode", unsafe {
+            dsview_bridge_ds_set_operation_mode(value as c_int)
+        })
+    }
+
+    pub fn set_stop_option(&self, value: i16) -> Result<(), RuntimeError> {
+        native_call_status("ds_set_stop_option", unsafe {
+            dsview_bridge_ds_set_stop_option(value as c_int)
+        })
+    }
+
+    pub fn set_channel_mode(&self, value: i16) -> Result<(), RuntimeError> {
+        native_call_status("ds_set_channel_mode", unsafe {
+            dsview_bridge_ds_set_channel_mode(value as c_int)
+        })
+    }
+
+    pub fn set_threshold_volts(&self, value: f64) -> Result<(), RuntimeError> {
+        native_call_status("ds_set_threshold_volts", unsafe {
+            dsview_bridge_ds_set_vth(value)
+        })
+    }
+
+    pub fn set_filter(&self, value: i16) -> Result<(), RuntimeError> {
+        native_call_status("ds_set_filter", unsafe {
+            dsview_bridge_ds_set_filter(value as c_int)
+        })
+    }
+
     pub fn set_samplerate(&self, value: u64) -> Result<(), RuntimeError> {
         native_call_status("ds_set_samplerate", unsafe {
             dsview_bridge_ds_set_samplerate(value)
@@ -1032,6 +1070,58 @@ impl RuntimeBridge {
             })?;
         }
         Ok(())
+    }
+
+    pub fn current_operation_mode_code(&self) -> Result<Option<i16>, RuntimeError> {
+        Ok(
+            get_optional_i32_config(
+                "ds_get_current_operation_mode",
+                dsview_bridge_ds_get_current_operation_mode,
+            )?
+            .map(|value| value as i16),
+        )
+    }
+
+    pub fn current_stop_option_code(&self) -> Result<Option<i16>, RuntimeError> {
+        Ok(
+            get_optional_i32_config(
+                "ds_get_current_stop_option",
+                dsview_bridge_ds_get_current_stop_option,
+            )?
+            .map(|value| value as i16),
+        )
+    }
+
+    pub fn current_channel_mode_code(&self) -> Result<Option<i16>, RuntimeError> {
+        Ok(
+            get_optional_i32_config(
+                "ds_get_current_channel_mode",
+                dsview_bridge_ds_get_current_channel_mode,
+            )?
+            .map(|value| value as i16),
+        )
+    }
+
+    pub fn current_threshold_volts(&self) -> Result<Option<f64>, RuntimeError> {
+        get_optional_f64_config("ds_get_vth", dsview_bridge_ds_get_vth)
+    }
+
+    pub fn current_filter_code(&self) -> Result<Option<i16>, RuntimeError> {
+        Ok(
+            get_optional_i32_config("ds_get_current_filter", dsview_bridge_ds_get_current_filter)?
+                .map(|value| value as i16),
+        )
+    }
+
+    pub fn current_sample_limit(&self) -> Result<Option<u64>, RuntimeError> {
+        get_optional_u64_config(
+            "ds_get_current_sample_limit",
+            dsview_bridge_ds_get_current_sample_limit,
+        )
+    }
+
+    pub fn current_samplerate(&self) -> Result<Option<u64>, RuntimeError> {
+        get_optional_u64_config("ds_get_current_samplerate", dsview_bridge_ds_get_current_samplerate)
     }
 
     pub fn register_acquisition_callbacks(
@@ -1441,6 +1531,20 @@ fn get_i32_config(
     Ok(value)
 }
 
+fn get_optional_i32_config(
+    operation: &'static str,
+    getter: unsafe extern "C" fn(*mut c_int) -> c_int,
+) -> Result<Option<i32>, RuntimeError> {
+    match get_i32_config(operation, getter) {
+        Ok(value) => Ok(Some(value)),
+        Err(RuntimeError::NativeCall {
+            operation: _,
+            code: NativeErrorCode::NotApplicable,
+        }) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn get_f64_config(
     operation: &'static str,
     getter: unsafe extern "C" fn(*mut f64) -> c_int,
@@ -1448,6 +1552,34 @@ fn get_f64_config(
     let mut value = 0.0;
     native_call_status(operation, unsafe { getter(&mut value) })?;
     Ok(value)
+}
+
+fn get_optional_f64_config(
+    operation: &'static str,
+    getter: unsafe extern "C" fn(*mut f64) -> c_int,
+) -> Result<Option<f64>, RuntimeError> {
+    match get_f64_config(operation, getter) {
+        Ok(value) => Ok(Some(value)),
+        Err(RuntimeError::NativeCall {
+            operation: _,
+            code: NativeErrorCode::NotApplicable,
+        }) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn get_optional_u64_config(
+    operation: &'static str,
+    getter: unsafe extern "C" fn(*mut u64) -> c_int,
+) -> Result<Option<u64>, RuntimeError> {
+    match get_u64_config(operation, getter) {
+        Ok(value) => Ok(Some(value)),
+        Err(RuntimeError::NativeCall {
+            operation: _,
+            code: NativeErrorCode::NotApplicable,
+        }) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn decode_device_options_snapshot(

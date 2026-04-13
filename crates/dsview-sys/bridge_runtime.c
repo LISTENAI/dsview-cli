@@ -1135,6 +1135,21 @@ int dsview_bridge_ds_get_current_sample_limit(unsigned long long *value)
     return dsview_bridge_get_uint64_config(SR_CONF_LIMIT_SAMPLES, value);
 }
 
+int dsview_bridge_ds_get_current_operation_mode(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_OPERATION_MODE, value);
+}
+
+int dsview_bridge_ds_get_current_stop_option(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_BUFFER_OPTIONS, value);
+}
+
+int dsview_bridge_ds_get_current_filter(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_FILTER, value);
+}
+
 int dsview_bridge_ds_get_total_channel_count(int *value)
 {
     return dsview_bridge_get_int16_config(SR_CONF_TOTAL_CH_NUM, value);
@@ -1585,6 +1600,38 @@ int dsview_bridge_ds_set_samplerate(unsigned long long value)
 
     data = g_variant_new_uint64(value);
     return g_bridge_api.ds_set_actived_device_config(NULL, NULL, SR_CONF_SAMPLERATE, data);
+}
+
+int dsview_bridge_ds_set_operation_mode(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_OPERATION_MODE, value);
+}
+
+int dsview_bridge_ds_set_stop_option(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_BUFFER_OPTIONS, value);
+}
+
+int dsview_bridge_ds_set_channel_mode(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_CHANNEL_MODE, value);
+}
+
+int dsview_bridge_ds_set_vth(double value)
+{
+    GVariant *data;
+
+    if (g_bridge_api.ds_set_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    data = g_variant_new_double(value);
+    return g_bridge_api.ds_set_actived_device_config(NULL, NULL, SR_CONF_VTH, data);
+}
+
+int dsview_bridge_ds_set_filter(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_FILTER, value);
 }
 
 int dsview_bridge_ds_set_sample_limit(unsigned long long value)
@@ -2254,6 +2301,11 @@ struct dsview_test_channel_mode {
     unsigned short max_enabled_channels;
 };
 
+#define DSVIEW_TEST_APPLY_LOG_CAPACITY 256
+#define DSVIEW_TEST_APPLY_FAILURE_CAPACITY 16
+#define DSVIEW_TEST_CHANNEL_ENABLE_FAILURE_CAPACITY 16
+#define DSVIEW_TEST_APPLY_KEY_CHANNEL_ENABLE (-70000)
+
 struct dsview_test_mock_u64_state {
     int has_value;
     unsigned long long value;
@@ -2291,6 +2343,22 @@ struct dsview_test_mock_channel_group_state {
     unsigned long long samplerates[DSVIEW_CHANNEL_MODE_CAPACITY][DSVIEW_SAMPLERATE_CAPACITY];
 };
 
+struct dsview_test_mock_apply_call {
+    int key;
+    long long value;
+};
+
+struct dsview_test_mock_apply_failure {
+    int key;
+    int status;
+};
+
+struct dsview_test_mock_channel_enable_failure {
+    int channel_index;
+    int enable;
+    int status;
+};
+
 struct dsview_test_mock_state {
     struct dsview_test_mock_int_state current_operation_mode;
     struct dsview_test_mock_int_state current_stop_option;
@@ -2300,13 +2368,22 @@ struct dsview_test_mock_state {
     struct dsview_test_mock_int_state current_valid_channel_count;
     struct dsview_test_mock_int_state current_total_channel_count;
     struct dsview_test_mock_double_state current_vth;
+    struct dsview_test_mock_u64_state current_samplerate;
+    struct dsview_test_mock_u64_state current_sample_limit;
     struct dsview_test_mock_u64_state current_hw_depth;
     struct dsview_test_mock_list_state operation_modes;
     struct dsview_test_mock_list_state stop_options;
     struct dsview_test_mock_list_state filters;
     struct dsview_test_mock_list_state legacy_thresholds;
     struct dsview_test_mock_channel_group_state channel_groups[DSVIEW_CHANNEL_MODE_GROUP_CAPACITY];
+    struct dsview_test_mock_apply_call apply_log[DSVIEW_TEST_APPLY_LOG_CAPACITY];
+    struct dsview_test_mock_apply_failure apply_failures[DSVIEW_TEST_APPLY_FAILURE_CAPACITY];
+    struct dsview_test_mock_channel_enable_failure
+        channel_enable_failures[DSVIEW_TEST_CHANNEL_ENABLE_FAILURE_CAPACITY];
     int channel_group_count;
+    int apply_log_count;
+    int apply_failure_count;
+    int channel_enable_failure_count;
     int operation_mode_set_calls;
     int channel_mode_set_calls;
 };
@@ -2330,6 +2407,20 @@ static struct dsview_test_mock_int_state *dsview_test_mock_int_state_for_key(int
         return &g_test_mock_state.current_valid_channel_count;
     case SR_CONF_TOTAL_CH_NUM:
         return &g_test_mock_state.current_total_channel_count;
+    default:
+        return NULL;
+    }
+}
+
+static struct dsview_test_mock_u64_state *dsview_test_mock_u64_state_for_key(int key)
+{
+    switch (key) {
+    case SR_CONF_SAMPLERATE:
+        return &g_test_mock_state.current_samplerate;
+    case SR_CONF_LIMIT_SAMPLES:
+        return &g_test_mock_state.current_sample_limit;
+    case SR_CONF_HW_DEPTH:
+        return &g_test_mock_state.current_hw_depth;
     default:
         return NULL;
     }
@@ -2371,6 +2462,44 @@ static const struct dsview_test_mock_channel_group_state *dsview_test_mock_curre
     }
 
     return dsview_test_mock_find_channel_group(g_test_mock_state.current_operation_mode.value);
+}
+
+static void dsview_test_mock_record_apply_call(int key, long long value)
+{
+    if (g_test_mock_state.apply_log_count >= DSVIEW_TEST_APPLY_LOG_CAPACITY) {
+        return;
+    }
+
+    g_test_mock_state.apply_log[g_test_mock_state.apply_log_count].key = key;
+    g_test_mock_state.apply_log[g_test_mock_state.apply_log_count].value = value;
+    g_test_mock_state.apply_log_count++;
+}
+
+static int dsview_test_mock_lookup_apply_failure(int key)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.apply_failure_count; index++) {
+        if (g_test_mock_state.apply_failures[index].key == key) {
+            return g_test_mock_state.apply_failures[index].status;
+        }
+    }
+
+    return SR_OK;
+}
+
+static int dsview_test_mock_lookup_channel_enable_failure(int channel_index, int enable)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.channel_enable_failure_count; index++) {
+        if (g_test_mock_state.channel_enable_failures[index].channel_index == channel_index
+            && g_test_mock_state.channel_enable_failures[index].enable == enable) {
+            return g_test_mock_state.channel_enable_failures[index].status;
+        }
+    }
+
+    return SR_OK;
 }
 
 static int dsview_test_mock_valid_channels_for_mode(int channel_mode_code, unsigned short *out_value)
@@ -2428,6 +2557,7 @@ static int dsview_test_mock_get_config(
     GVariant **data)
 {
     struct dsview_test_mock_int_state *int_state;
+    struct dsview_test_mock_u64_state *u64_state;
 
     (void)ch;
     (void)cg;
@@ -2447,14 +2577,15 @@ static int dsview_test_mock_get_config(
         return SR_OK;
     }
 
-    if (key == SR_CONF_HW_DEPTH) {
-        if (g_test_mock_state.current_hw_depth.status != SR_OK) {
-            return g_test_mock_state.current_hw_depth.status;
+    u64_state = dsview_test_mock_u64_state_for_key(key);
+    if (u64_state != NULL) {
+        if (u64_state->status != SR_OK) {
+            return u64_state->status;
         }
-        if (!g_test_mock_state.current_hw_depth.has_value) {
+        if (!u64_state->has_value) {
             return SR_ERR_NA;
         }
-        *data = g_variant_new_uint64(g_test_mock_state.current_hw_depth.value);
+        *data = g_variant_new_uint64(u64_state->value);
         return SR_OK;
     }
 
@@ -2564,8 +2695,12 @@ static int dsview_test_mock_set_config(
     GVariant *data)
 {
     struct dsview_test_mock_channel_group_state *group;
+    struct dsview_test_mock_u64_state *u64_state;
+    double double_value;
+    unsigned long long u64_value;
     int value;
     int index;
+    int failure_status;
 
     (void)ch;
     (void)cg;
@@ -2574,7 +2709,41 @@ static int dsview_test_mock_set_config(
         return DSVIEW_BRIDGE_ERR_ARG;
     }
 
+    if (key == SR_CONF_VTH) {
+        double_value = g_variant_get_double(data);
+        dsview_test_mock_record_apply_call(key, 0);
+        failure_status = dsview_test_mock_lookup_apply_failure(key);
+        if (failure_status != SR_OK) {
+            return failure_status;
+        }
+
+        g_test_mock_state.current_vth.has_value = 1;
+        g_test_mock_state.current_vth.value = double_value;
+        g_test_mock_state.current_vth.status = SR_OK;
+        return SR_OK;
+    }
+
+    u64_state = dsview_test_mock_u64_state_for_key(key);
+    if (u64_state != NULL) {
+        u64_value = g_variant_get_uint64(data);
+        dsview_test_mock_record_apply_call(key, (long long)u64_value);
+        failure_status = dsview_test_mock_lookup_apply_failure(key);
+        if (failure_status != SR_OK) {
+            return failure_status;
+        }
+
+        u64_state->has_value = 1;
+        u64_state->value = u64_value;
+        u64_state->status = SR_OK;
+        return SR_OK;
+    }
+
     value = g_variant_get_int16(data);
+    dsview_test_mock_record_apply_call(key, value);
+    failure_status = dsview_test_mock_lookup_apply_failure(key);
+    if (failure_status != SR_OK) {
+        return failure_status;
+    }
 
     if (key == SR_CONF_OPERATION_MODE) {
         g_test_mock_state.operation_mode_set_calls++;
@@ -2619,7 +2788,37 @@ static int dsview_test_mock_set_config(
         return SR_ERR_ARG;
     }
 
+    if (key == SR_CONF_BUFFER_OPTIONS) {
+        g_test_mock_state.current_stop_option.has_value = 1;
+        g_test_mock_state.current_stop_option.value = value;
+        g_test_mock_state.current_stop_option.status = SR_OK;
+        return SR_OK;
+    }
+
+    if (key == SR_CONF_FILTER) {
+        g_test_mock_state.current_filter.has_value = 1;
+        g_test_mock_state.current_filter.value = value;
+        g_test_mock_state.current_filter.status = SR_OK;
+        return SR_OK;
+    }
+
     return SR_ERR_NA;
+}
+
+static int dsview_test_mock_enable_channel(int channel_index, gboolean enable)
+{
+    int enabled = enable ? 1 : 0;
+    int failure_status;
+
+    dsview_test_mock_record_apply_call(
+        DSVIEW_TEST_APPLY_KEY_CHANNEL_ENABLE,
+        ((long long)channel_index << 1) | enabled);
+    failure_status = dsview_test_mock_lookup_channel_enable_failure(channel_index, enabled);
+    if (failure_status != SR_OK) {
+        return failure_status;
+    }
+
+    return SR_OK;
 }
 
 void dsview_test_install_mock_option_api(void)
@@ -2627,6 +2826,7 @@ void dsview_test_install_mock_option_api(void)
     g_bridge_api.ds_get_actived_device_config = dsview_test_mock_get_config;
     g_bridge_api.ds_get_actived_device_config_list = dsview_test_mock_get_config_list;
     g_bridge_api.ds_set_actived_device_config = dsview_test_mock_set_config;
+    g_bridge_api.ds_enable_device_channel_index = dsview_test_mock_enable_channel;
 }
 
 void dsview_test_reset_mock_option_api(void)
@@ -2640,6 +2840,8 @@ void dsview_test_reset_mock_option_api(void)
     g_test_mock_state.current_valid_channel_count.status = SR_ERR_NA;
     g_test_mock_state.current_total_channel_count.status = SR_ERR_NA;
     g_test_mock_state.current_vth.status = SR_ERR_NA;
+    g_test_mock_state.current_samplerate.status = SR_ERR_NA;
+    g_test_mock_state.current_sample_limit.status = SR_ERR_NA;
     g_test_mock_state.current_hw_depth.status = SR_ERR_NA;
     g_test_mock_state.operation_modes.status = SR_ERR_NA;
     g_test_mock_state.stop_options.status = SR_ERR_NA;
@@ -2673,13 +2875,15 @@ void dsview_test_mock_set_current_double(int key, int has_value, double value, i
 
 void dsview_test_mock_set_current_u64(int key, int has_value, unsigned long long value, int status)
 {
-    if (key != SR_CONF_HW_DEPTH) {
+    struct dsview_test_mock_u64_state *state = dsview_test_mock_u64_state_for_key(key);
+
+    if (state == NULL) {
         return;
     }
 
-    g_test_mock_state.current_hw_depth.has_value = has_value != 0;
-    g_test_mock_state.current_hw_depth.value = value;
-    g_test_mock_state.current_hw_depth.status = status;
+    state->has_value = has_value != 0;
+    state->value = value;
+    state->status = status;
 }
 
 void dsview_test_mock_set_list_items(
@@ -2800,6 +3004,99 @@ int dsview_test_mock_get_current_int(int key, int *out_has_value, int *out_value
     *out_has_value = state->has_value;
     *out_value = state->value;
     return state->status;
+}
+
+int dsview_test_mock_get_current_double(int key, int *out_has_value, double *out_value)
+{
+    if (key != SR_CONF_VTH || out_has_value == NULL || out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_has_value = g_test_mock_state.current_vth.has_value;
+    *out_value = g_test_mock_state.current_vth.value;
+    return g_test_mock_state.current_vth.status;
+}
+
+int dsview_test_mock_get_current_u64(int key, int *out_has_value, unsigned long long *out_value)
+{
+    const struct dsview_test_mock_u64_state *state = dsview_test_mock_u64_state_for_key(key);
+
+    if (state == NULL || out_has_value == NULL || out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_has_value = state->has_value;
+    *out_value = state->value;
+    return state->status;
+}
+
+void dsview_test_mock_set_apply_failure(int key, int status)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.apply_failure_count; index++) {
+        if (g_test_mock_state.apply_failures[index].key == key) {
+            g_test_mock_state.apply_failures[index].status = status;
+            return;
+        }
+    }
+
+    if (g_test_mock_state.apply_failure_count >= DSVIEW_TEST_APPLY_FAILURE_CAPACITY) {
+        return;
+    }
+
+    g_test_mock_state.apply_failures[g_test_mock_state.apply_failure_count].key = key;
+    g_test_mock_state.apply_failures[g_test_mock_state.apply_failure_count].status = status;
+    g_test_mock_state.apply_failure_count++;
+}
+
+void dsview_test_mock_set_channel_enable_failure(int channel_index, int enable, int status)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.channel_enable_failure_count; index++) {
+        if (g_test_mock_state.channel_enable_failures[index].channel_index == channel_index
+            && g_test_mock_state.channel_enable_failures[index].enable == enable) {
+            g_test_mock_state.channel_enable_failures[index].status = status;
+            return;
+        }
+    }
+
+    if (g_test_mock_state.channel_enable_failure_count
+        >= DSVIEW_TEST_CHANNEL_ENABLE_FAILURE_CAPACITY) {
+        return;
+    }
+
+    g_test_mock_state.channel_enable_failures[g_test_mock_state.channel_enable_failure_count]
+        .channel_index = channel_index;
+    g_test_mock_state.channel_enable_failures[g_test_mock_state.channel_enable_failure_count]
+        .enable = enable;
+    g_test_mock_state.channel_enable_failures[g_test_mock_state.channel_enable_failure_count]
+        .status = status;
+    g_test_mock_state.channel_enable_failure_count++;
+}
+
+void dsview_test_mock_reset_apply_log(void)
+{
+    g_test_mock_state.apply_log_count = 0;
+    g_test_mock_state.apply_failure_count = 0;
+    g_test_mock_state.channel_enable_failure_count = 0;
+}
+
+int dsview_test_mock_get_apply_call_count(void)
+{
+    return g_test_mock_state.apply_log_count;
+}
+
+int dsview_test_mock_get_apply_call(int index, int *out_key, long long *out_value)
+{
+    if (index < 0 || index >= g_test_mock_state.apply_log_count || out_key == NULL || out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_key = g_test_mock_state.apply_log[index].key;
+    *out_value = g_test_mock_state.apply_log[index].value;
+    return SR_OK;
 }
 
 int dsview_test_mock_get_set_call_count(int key)
