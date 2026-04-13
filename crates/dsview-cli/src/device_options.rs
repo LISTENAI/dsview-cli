@@ -167,3 +167,257 @@ fn format_decimal(value: f64) -> String {
     }
     formatted
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{build_device_options_response, render_device_options_text};
+    use dsview_core::{
+        ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
+        DeviceIdentitySnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot,
+        LegacyThresholdMetadataSnapshot, RawOptionMetadataSnapshot, ThresholdCapabilitySnapshot,
+    };
+    use serde_json::json;
+
+    fn sample_snapshot() -> DeviceOptionsSnapshot {
+        DeviceOptionsSnapshot {
+            device: DeviceIdentitySnapshot {
+                selection_handle: 7,
+                native_handle: 42,
+                stable_id: "dslogic-plus".to_string(),
+                kind: "DSLogic Plus".to_string(),
+                name: "DSLogic PLus".to_string(),
+            },
+            current: CurrentDeviceOptionValues {
+                operation_mode_id: Some("operation-mode:0".to_string()),
+                operation_mode_code: Some(0),
+                stop_option_id: Some("stop-option:1".to_string()),
+                stop_option_code: Some(1),
+                filter_id: Some("filter:1".to_string()),
+                filter_code: Some(1),
+                channel_mode_id: Some("channel-mode:20".to_string()),
+                channel_mode_code: Some(20),
+            },
+            operation_modes: vec![
+                EnumOptionSnapshot {
+                    id: "operation-mode:0".to_string(),
+                    native_code: 0,
+                    label: "Buffer Mode".to_string(),
+                },
+                EnumOptionSnapshot {
+                    id: "operation-mode:1".to_string(),
+                    native_code: 1,
+                    label: "Stream Mode".to_string(),
+                },
+            ],
+            stop_options: vec![
+                EnumOptionSnapshot {
+                    id: "stop-option:0".to_string(),
+                    native_code: 0,
+                    label: "Immediate".to_string(),
+                },
+                EnumOptionSnapshot {
+                    id: "stop-option:1".to_string(),
+                    native_code: 1,
+                    label: "Stop after samples".to_string(),
+                },
+            ],
+            filters: vec![
+                EnumOptionSnapshot {
+                    id: "filter:1".to_string(),
+                    native_code: 1,
+                    label: "Off".to_string(),
+                },
+                EnumOptionSnapshot {
+                    id: "filter:2".to_string(),
+                    native_code: 2,
+                    label: "1 Sample".to_string(),
+                },
+            ],
+            channel_modes_by_operation_mode: vec![
+                ChannelModeGroupSnapshot {
+                    operation_mode_id: "operation-mode:0".to_string(),
+                    operation_mode_code: 0,
+                    current_channel_mode_id: Some("channel-mode:20".to_string()),
+                    current_channel_mode_code: Some(20),
+                    channel_modes: vec![
+                        ChannelModeOptionSnapshot {
+                            id: "channel-mode:20".to_string(),
+                            native_code: 20,
+                            label: "Buffer 100x16".to_string(),
+                            max_enabled_channels: 16,
+                        },
+                        ChannelModeOptionSnapshot {
+                            id: "channel-mode:21".to_string(),
+                            native_code: 21,
+                            label: "Buffer 200x8".to_string(),
+                            max_enabled_channels: 8,
+                        },
+                    ],
+                },
+                ChannelModeGroupSnapshot {
+                    operation_mode_id: "operation-mode:1".to_string(),
+                    operation_mode_code: 1,
+                    current_channel_mode_id: None,
+                    current_channel_mode_code: None,
+                    channel_modes: vec![ChannelModeOptionSnapshot {
+                        id: "channel-mode:30".to_string(),
+                        native_code: 30,
+                        label: "Stream 100x16".to_string(),
+                        max_enabled_channels: 16,
+                    }],
+                },
+            ],
+            threshold: ThresholdCapabilitySnapshot {
+                id: "threshold:vth-range".to_string(),
+                kind: "voltage-range".to_string(),
+                current_volts: Some(1.8),
+                min_volts: 0.7,
+                max_volts: 5.0,
+                step_volts: 0.1,
+                legacy_metadata: Some(LegacyThresholdMetadataSnapshot {
+                    current_native_code: Some(3),
+                    options: vec![
+                        RawOptionMetadataSnapshot {
+                            native_code: 3,
+                            label: "1.8 V".to_string(),
+                        },
+                        RawOptionMetadataSnapshot {
+                            native_code: 5,
+                            label: "3.3 V".to_string(),
+                        },
+                    ],
+                }),
+            },
+        }
+    }
+
+    #[test]
+    fn build_device_options_response_surfaces_capture_tokens_and_flags() {
+        let response = build_device_options_response(&sample_snapshot());
+        let actual = serde_json::to_value(&response).expect("response should serialize");
+
+        let expected = json!({
+            "selected_handle": 7,
+            "device": {
+                "stable_id": "dslogic-plus",
+                "model": "DSLogic Plus",
+                "native_name": "DSLogic PLus",
+                "native_handle": 42
+            },
+            "current": {
+                "operation_mode_token": "buffer",
+                "operation_mode_stable_id": "operation-mode:0",
+                "operation_mode_code": 0,
+                "stop_option_token": "stop-after-samples",
+                "stop_option_stable_id": "stop-option:1",
+                "stop_option_code": 1,
+                "filter_token": "off",
+                "filter_stable_id": "filter:1",
+                "filter_code": 1,
+                "channel_mode_token": "buffer-100x16",
+                "channel_mode_stable_id": "channel-mode:20",
+                "channel_mode_code": 20
+            },
+            "operation_modes": [
+                {
+                    "token": "buffer",
+                    "stable_id": "operation-mode:0",
+                    "native_code": 0,
+                    "label": "Buffer Mode"
+                },
+                {
+                    "token": "stream",
+                    "stable_id": "operation-mode:1",
+                    "native_code": 1,
+                    "label": "Stream Mode"
+                }
+            ],
+            "stop_options": [
+                {
+                    "token": "immediate",
+                    "stable_id": "stop-option:0",
+                    "native_code": 0,
+                    "label": "Immediate"
+                },
+                {
+                    "token": "stop-after-samples",
+                    "stable_id": "stop-option:1",
+                    "native_code": 1,
+                    "label": "Stop after samples"
+                }
+            ],
+            "filters": [
+                {
+                    "token": "off",
+                    "stable_id": "filter:1",
+                    "native_code": 1,
+                    "label": "Off"
+                },
+                {
+                    "token": "1-sample",
+                    "stable_id": "filter:2",
+                    "native_code": 2,
+                    "label": "1 Sample"
+                }
+            ],
+            "threshold": {
+                "threshold_flag": "--threshold-volts",
+                "stable_id": "threshold:vth-range",
+                "kind": "voltage-range",
+                "current_volts": 1.8,
+                "min_volts": 0.7,
+                "max_volts": 5.0,
+                "step_volts": 0.1
+            },
+            "channel_modes_by_operation_mode": [
+                {
+                    "operation_mode_token": "buffer",
+                    "operation_mode_stable_id": "operation-mode:0",
+                    "operation_mode_code": 0,
+                    "current_channel_mode_token": "buffer-100x16",
+                    "current_channel_mode_stable_id": "channel-mode:20",
+                    "current_channel_mode_code": 20,
+                    "channel_modes": [
+                        {
+                            "token": "buffer-100x16",
+                            "stable_id": "channel-mode:20",
+                            "native_code": 20,
+                            "label": "Buffer 100x16",
+                            "max_enabled_channels": 16
+                        },
+                        {
+                            "token": "buffer-200x8",
+                            "stable_id": "channel-mode:21",
+                            "native_code": 21,
+                            "label": "Buffer 200x8",
+                            "max_enabled_channels": 8
+                        }
+                    ]
+                }
+            ],
+            "capture_guide": {
+                "operation_mode_flag": "--operation-mode",
+                "stop_option_flag": "--stop-option",
+                "channel_mode_flag": "--channel-mode",
+                "threshold_flag": "--threshold-volts",
+                "filter_flag": "--filter",
+                "channels_flag": "--channels"
+            }
+        });
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn render_device_options_text_surfaces_copy_paste_capture_flags() {
+        let response = build_device_options_response(&sample_snapshot());
+        let rendered = render_device_options_text(&response);
+
+        assert!(rendered.contains("--operation-mode buffer"));
+        assert!(rendered.contains("--stop-option stop-after-samples"));
+        assert!(rendered.contains("--channel-mode buffer-100x16"));
+        assert!(rendered.contains("--threshold-volts 1.8"));
+        assert!(rendered.contains("--filter off"));
+        assert!(rendered.contains("--channels IDX[,IDX...]"));
+    }
+}
