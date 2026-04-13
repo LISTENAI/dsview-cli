@@ -13,7 +13,7 @@ This roadmap defines milestone `v1.1 DSLogic Plus device options`. It builds dir
 ## Phases
 
 - [x] **Phase 10: Device Option Bridge and Discovery** - Extend the Rust/native boundary to expose DSView-backed option lists and current values for `DSLogic Plus`. (completed 2026-04-10)
-- [ ] **Phase 11: Device Option Validation Model** - Represent DSLogic Plus device-option combinations in Rust and validate them before acquisition.
+- [x] **Phase 11: Device Option Validation Model** - Represent DSLogic Plus device-option combinations in Rust and validate them before acquisition. (completed 2026-04-13)
 - [ ] **Phase 12: CLI Device Option Surface** - Add a discoverable non-interactive CLI surface for selecting DSView-compatible device options.
 - [ ] **Phase 13: Option-Aware Capture Reporting** - Apply selected options during capture and publish the effective option facts in outputs and metadata.
 
@@ -87,7 +87,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
-| 11. Device Option Validation Model | 2/3 | In Progress|  |
+| 11. Device Option Validation Model | 3/3 | Complete   | 2026-04-13 |
 | 12. CLI Device Option Surface | 0/3 | Pending | - |
 | 13. Option-Aware Capture Reporting | 0/3 | Pending | - |
 
