@@ -125,6 +125,8 @@ struct CaptureArgs {
         help = "Comma-separated logic channel indexes to enable, for example 0,1,2,3"
     )]
     channels: Vec<u16>,
+    #[command(flatten)]
+    device_options: CaptureDeviceOptionArgs,
     #[arg(
         long = "output",
         value_name = "PATH",
@@ -149,6 +151,63 @@ struct CaptureArgs {
         help = "Polling interval for checking capture progress while waiting"
     )]
     poll_interval_ms: u64,
+}
+
+#[derive(Args, Debug, Clone, Default, PartialEq)]
+#[command(next_help_heading = "Device options")]
+struct CaptureDeviceOptionArgs {
+    #[arg(
+        long = "operation-mode",
+        value_name = "TOKEN",
+        help = "Operation mode token, for example `buffer`; see `devices options --handle <HANDLE>` for supported tokens and compatibility"
+    )]
+    operation_mode: Option<String>,
+    #[arg(
+        long = "stop-option",
+        value_name = "TOKEN",
+        help = "Stop option token; see `devices options --handle <HANDLE>` for supported tokens and compatibility"
+    )]
+    stop_option: Option<String>,
+    #[arg(
+        long = "channel-mode",
+        value_name = "TOKEN",
+        help = "Channel mode token; see `devices options --handle <HANDLE>` for supported tokens and compatibility"
+    )]
+    channel_mode: Option<String>,
+    #[arg(
+        long = "threshold-volts",
+        value_name = "VOLTS",
+        help = "Threshold voltage in volts; see `devices options --handle <HANDLE>` for supported values and compatibility"
+    )]
+    threshold_volts: Option<f64>,
+    #[arg(
+        long = "filter",
+        value_name = "TOKEN",
+        help = "Filter token; see `devices options --handle <HANDLE>` for supported tokens and compatibility"
+    )]
+    filter: Option<String>,
+}
+
+impl dsview_cli::capture_device_options::CaptureDeviceOptionInput for CaptureDeviceOptionArgs {
+    fn operation_mode(&self) -> Option<&str> {
+        self.operation_mode.as_deref()
+    }
+
+    fn stop_option(&self) -> Option<&str> {
+        self.stop_option.as_deref()
+    }
+
+    fn channel_mode(&self) -> Option<&str> {
+        self.channel_mode.as_deref()
+    }
+
+    fn threshold_volts(&self) -> Option<f64> {
+        self.threshold_volts
+    }
+
+    fn filter(&self) -> Option<&str> {
+        self.filter.as_deref()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -904,8 +963,8 @@ mod tests {
         AcquisitionSummary, AcquisitionTerminalEvent, CaptureConfigError,
         ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
         DeviceIdentitySnapshot, DeviceOptionValidationCapabilities,
-        DeviceOptionValidationRequest, EnumOptionSnapshot, OperationModeValidationCapabilities,
-        SelectionHandle, ThresholdCapabilitySnapshot,
+        EnumOptionSnapshot, OperationModeValidationCapabilities, SelectionHandle,
+        ThresholdCapabilitySnapshot,
     };
 
     #[test]

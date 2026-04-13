@@ -1,6 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use dsview_core::{ChannelModeOptionSnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot};
+use dsview_core::{
+    ChannelModeOptionSnapshot, DeviceOptionValidationCapabilities,
+    DeviceOptionValidationRequest, DeviceOptionsSnapshot, EnumOptionSnapshot,
+};
 use serde::Serialize;
 
 const BUFFER_TOKEN: &str = "buffer";
@@ -44,6 +47,28 @@ pub struct CaptureTokenLookupMaps {
     pub channel_modes_by_token: BTreeMap<String, String>,
     pub channel_mode_tokens_by_stable_id: BTreeMap<String, String>,
     pub channel_mode_parent_operation_modes: BTreeMap<String, String>,
+}
+
+pub trait CaptureDeviceOptionInput {
+    fn operation_mode(&self) -> Option<&str>;
+    fn stop_option(&self) -> Option<&str>;
+    fn channel_mode(&self) -> Option<&str>;
+    fn threshold_volts(&self) -> Option<f64>;
+    fn filter(&self) -> Option<&str>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureDeviceOptionParseError {
+    UnsupportedOperationModeToken { token: String },
+    UnsupportedStopOptionToken { token: String },
+    UnsupportedChannelModeToken { token: String },
+    UnsupportedFilterToken { token: String },
+    AmbiguousChannelModeToken { token: String },
+    MissingCurrentOperationMode,
+    MissingCurrentChannelMode,
+    ConflictingOperationModeInference {
+        sources: Vec<&'static str>,
+    },
 }
 
 pub fn slug_token(label: &str) -> String {
@@ -175,6 +200,221 @@ fn operation_mode_token(label: &str) -> String {
         BUFFER_TOKEN | "buffer-mode" => BUFFER_TOKEN.to_string(),
         STREAM_TOKEN | "stream-mode" => STREAM_TOKEN.to_string(),
         other => other.to_string(),
+    }
+}
+
+pub fn resolve_capture_device_option_request<T: CaptureDeviceOptionInput>(
+    snapshot: &DeviceOptionsSnapshot,
+    capabilities: &DeviceOptionValidationCapabilities,
+    args: &T,
+    sample_rate_hz: u64,
+    sample_limit: u64,
+    channels: &[u16],
+) -> Result<DeviceOptionValidationRequest, CaptureDeviceOptionParseError> {
+    let lookup = token_lookup_maps(snapshot);
+    let explicit_operation_mode_id =
+        resolve_known_token(args.operation_mode(), &lookup.operation_modes_by_token, |token| {
+            CaptureDeviceOptionParseError::UnsupportedOperationModeToken {
+                token: token.to_string(),
+            }
+        })?;
+    let stop_option_id =
+        resolve_known_token(args.stop_option(), &lookup.stop_options_by_token, |token| {
+            CaptureDeviceOptionParseError::UnsupportedStopOptionToken {
+                token: token.to_string(),
+            }
+        })?
+        .or_else(|| snapshot.current.stop_option_id.clone());
+    let resolved_channel_mode =
+        resolve_channel_mode(snapshot, &lookup, args.channel_mode(), explicit_operation_mode_id.as_deref())?;
+    let channel_mode_id = resolved_channel_mode
+        .as_ref()
+        .map(|mode| mode.stable_id.clone())
+        .or_else(|| snapshot.current.channel_mode_id.clone())
+        .ok_or(CaptureDeviceOptionParseError::MissingCurrentChannelMode)?;
+    let filter_id = resolve_known_token(args.filter(), &lookup.filters_by_token, |token| {
+        CaptureDeviceOptionParseError::UnsupportedFilterToken {
+            token: token.to_string(),
+        }
+    })?
+    .or_else(|| snapshot.current.filter_id.clone());
+    let threshold_volts = args.threshold_volts().or(snapshot.threshold.current_volts);
+    let operation_mode_id = resolve_operation_mode_id(
+        snapshot,
+        capabilities,
+        explicit_operation_mode_id,
+        resolved_channel_mode
+            .as_ref()
+            .and_then(|mode| mode.inferred_operation_mode_id.clone()),
+        args.stop_option().is_some().then_some(stop_option_id.as_deref()).flatten(),
+    )?;
+
+    Ok(DeviceOptionValidationRequest {
+        operation_mode_id,
+        stop_option_id,
+        channel_mode_id,
+        sample_rate_hz,
+        sample_limit,
+        enabled_channels: channels.iter().copied().collect::<BTreeSet<_>>(),
+        threshold_volts,
+        filter_id,
+    })
+}
+
+fn resolve_known_token<F>(
+    token: Option<&str>,
+    stable_ids_by_token: &BTreeMap<String, String>,
+    error_for_token: F,
+) -> Result<Option<String>, CaptureDeviceOptionParseError>
+where
+    F: FnOnce(&str) -> CaptureDeviceOptionParseError + Copy,
+{
+    token
+        .map(|value| {
+            stable_ids_by_token
+                .get(value)
+                .cloned()
+                .ok_or_else(|| error_for_token(value))
+        })
+        .transpose()
+}
+
+fn resolve_operation_mode_id(
+    snapshot: &DeviceOptionsSnapshot,
+    capabilities: &DeviceOptionValidationCapabilities,
+    explicit_operation_mode_id: Option<String>,
+    inferred_from_channel_mode: Option<String>,
+    stop_option_id: Option<&str>,
+) -> Result<String, CaptureDeviceOptionParseError> {
+    if let Some(operation_mode_id) = explicit_operation_mode_id {
+        return Ok(operation_mode_id);
+    }
+
+    let inferred_from_stop_option =
+        infer_operation_mode_from_stop_option(capabilities, stop_option_id);
+    let mut inferred_operation_modes = BTreeSet::new();
+    let mut sources = Vec::new();
+
+    if let Some(operation_mode_id) = inferred_from_channel_mode {
+        inferred_operation_modes.insert(operation_mode_id);
+        sources.push("channel_mode");
+    }
+    if let Some(operation_mode_id) = inferred_from_stop_option {
+        inferred_operation_modes.insert(operation_mode_id);
+        sources.push("stop_option");
+    }
+
+    match inferred_operation_modes.len() {
+        0 => snapshot
+            .current
+            .operation_mode_id
+            .clone()
+            .ok_or(CaptureDeviceOptionParseError::MissingCurrentOperationMode),
+        1 => Ok(inferred_operation_modes.into_iter().next().unwrap()),
+        _ => Err(CaptureDeviceOptionParseError::ConflictingOperationModeInference {
+            sources,
+        }),
+    }
+}
+
+fn infer_operation_mode_from_stop_option(
+    capabilities: &DeviceOptionValidationCapabilities,
+    stop_option_id: Option<&str>,
+) -> Option<String> {
+    let stop_option_id = stop_option_id?;
+    let mut matches = capabilities
+        .operation_modes
+        .iter()
+        .filter(|operation_mode| {
+            operation_mode
+                .stop_option_ids
+                .iter()
+                .any(|supported_stop_option_id| supported_stop_option_id == stop_option_id)
+        })
+        .map(|operation_mode| operation_mode.id.clone());
+
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        None
+    } else {
+        Some(first)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedChannelMode {
+    stable_id: String,
+    inferred_operation_mode_id: Option<String>,
+}
+
+fn resolve_channel_mode(
+    snapshot: &DeviceOptionsSnapshot,
+    lookup: &CaptureTokenLookupMaps,
+    channel_mode_token: Option<&str>,
+    explicit_operation_mode_id: Option<&str>,
+) -> Result<Option<ResolvedChannelMode>, CaptureDeviceOptionParseError> {
+    let Some(channel_mode_token) = channel_mode_token else {
+        return Ok(None);
+    };
+
+    let matches = snapshot
+        .channel_modes_by_operation_mode
+        .iter()
+        .flat_map(|group| {
+            group.channel_modes.iter().filter_map(|channel_mode| {
+                let token = lookup.channel_mode_tokens_by_stable_id.get(&channel_mode.id)?;
+                (token == channel_mode_token).then(|| {
+                    (group.operation_mode_id.clone(), channel_mode.id.clone())
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if matches.is_empty() {
+        return Err(CaptureDeviceOptionParseError::UnsupportedChannelModeToken {
+            token: channel_mode_token.to_string(),
+        });
+    }
+
+    let mut stable_ids = matches
+        .iter()
+        .map(|(_, stable_id)| stable_id.clone())
+        .collect::<BTreeSet<_>>();
+    if stable_ids.len() == 1 {
+        return Ok(Some(ResolvedChannelMode {
+            stable_id: stable_ids.pop_first().unwrap(),
+            inferred_operation_mode_id: infer_unique_operation_mode(&matches),
+        }));
+    }
+
+    if let Some(explicit_operation_mode_id) = explicit_operation_mode_id {
+        let explicit_matches = matches
+            .iter()
+            .filter(|(operation_mode_id, _)| operation_mode_id == explicit_operation_mode_id)
+            .map(|(_, stable_id)| stable_id.clone())
+            .collect::<BTreeSet<_>>();
+        if explicit_matches.len() == 1 {
+            return Ok(Some(ResolvedChannelMode {
+                stable_id: explicit_matches.into_iter().next().unwrap(),
+                inferred_operation_mode_id: None,
+            }));
+        }
+    }
+
+    Err(CaptureDeviceOptionParseError::AmbiguousChannelModeToken {
+        token: channel_mode_token.to_string(),
+    })
+}
+
+fn infer_unique_operation_mode(matches: &[(String, String)]) -> Option<String> {
+    let mut operation_mode_ids = matches
+        .iter()
+        .map(|(operation_mode_id, _)| operation_mode_id.clone())
+        .collect::<BTreeSet<_>>();
+    if operation_mode_ids.len() == 1 {
+        operation_mode_ids.pop_first()
+    } else {
+        None
     }
 }
 
