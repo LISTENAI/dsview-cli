@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 12
 current_phase_name: cli-device-option-surface
 current_plan: 3
-status: executing
-stopped_at: Completed 12-cli-device-option-surface-02-PLAN.md
-last_updated: "2026-04-13T08:35:07.605Z"
+status: verifying
+stopped_at: Completed 12-cli-device-option-surface-03-PLAN.md
+last_updated: "2026-04-13T08:50:50.938Z"
 last_activity: 2026-04-13
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 8
-  percent: 89
+  completed_plans: 9
+  percent: 100
 ---
 
 # Session State
@@ -34,7 +34,7 @@ Current Plan: 3
 Total Plans in Phase: 3
 Phase: 12 (cli-device-option-surface) — READY
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-13
 
 ## Accumulated Context
@@ -67,6 +67,8 @@ Last activity: 2026-04-13
 - [Phase 12]: Keep the clap-facing CaptureDeviceOptionArgs in main.rs and adapt it into the shared resolver with a lightweight trait instead of duplicating token parsing logic.
 - [Phase 12]: Preserve omitted sibling option values from the selected-device snapshot, but let explicit channel-mode or stop-option tokens infer the parent operation mode only when the inference is unique.
 - [Phase 12]: Route --channels through the same selected-device validation preflight as the new flags so channel-count limits stay aligned with the resolved channel mode before capture begins.
+- [Phase 12]: Keep the selected-device integration-test seam debug-only and env-gated so release behavior stays unchanged while spawned CLI tests remain deterministic.
+- [Phase 12]: Pin devices options token assertions to the same acceptance tokens used by capture_cli so discovery and execution cannot drift independently.
 
 ## Performance Metrics
 
@@ -80,17 +82,18 @@ Last activity: 2026-04-13
 | Phase 11 P03 | 7 min | 2 tasks | 2 files |
 | Phase 12-cli-device-option-surface P01 | 12m | 2 tasks | 4 files |
 | Phase 12 P02 | 6m | 2 tasks | 2 files |
+| Phase 12 P03 | 6m | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last session: 2026-04-13T08:35:07.599Z
+Last session: 2026-04-13T08:50:50.933Z
 
-Stopped At: Completed 12-cli-device-option-surface-02-PLAN.md
+Stopped At: Completed 12-cli-device-option-surface-03-PLAN.md
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Execute Plan 12-03 to lock `capture` help, parser behavior, and spawned CLI regressions for the new device-option surface.
-- Reuse the locked resolver and selected-device validation branch while adding end-to-end CLI assertions for help text and stable diagnostics.
-- Keep Phase 13 apply-time mutation and reporting out of scope while finishing the remaining Phase 12 regression coverage.
+- Verify the completed Phase 12 CLI contract before advancing the milestone.
+- Start Phase 13 with `13-01-PLAN.md` to apply the already validated device-option selections at runtime.
+- Keep the now-locked Phase 12 help, token, and `devices options` contracts stable while Phase 13 adds apply-time behavior and reporting.

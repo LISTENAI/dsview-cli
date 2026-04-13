@@ -14,7 +14,7 @@ This roadmap defines milestone `v1.1 DSLogic Plus device options`. It builds dir
 
 - [x] **Phase 10: Device Option Bridge and Discovery** - Extend the Rust/native boundary to expose DSView-backed option lists and current values for `DSLogic Plus`. (completed 2026-04-10)
 - [x] **Phase 11: Device Option Validation Model** - Represent DSLogic Plus device-option combinations in Rust and validate them before acquisition. (completed 2026-04-13)
-- [ ] **Phase 12: CLI Device Option Surface** - Add a discoverable non-interactive CLI surface for selecting DSView-compatible device options.
+- [x] **Phase 12: CLI Device Option Surface** - Add a discoverable non-interactive CLI surface for selecting DSView-compatible device options. (completed 2026-04-13)
 - [ ] **Phase 13: Option-Aware Capture Reporting** - Apply selected options during capture and publish the effective option facts in outputs and metadata.
 
 ## Phase Details
@@ -62,7 +62,7 @@ Plans:
 Plans:
 - [x] `12-01-PLAN.md` - Define the friendly token contract and capture-oriented `devices options` inspection surface.
 - [x] `12-02-PLAN.md` - Add optional `capture` device-option flags and validate resolved selections against the Phase 11 model.
-- [ ] `12-03-PLAN.md` - Lock help, parser behavior, and inspection output with spawned CLI regression tests.
+- [x] `12-03-PLAN.md` - Lock help, parser behavior, and inspection output with spawned CLI regression tests.
 
 ### Phase 13: Option-Aware Capture Reporting
 **Goal**: Apply the selected options during capture and preserve the effective option facts in the final capture artifacts.
@@ -88,7 +88,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 |-------|----------------|--------|-----------|
 | 10. Device Option Bridge and Discovery | 3/3 | Complete    | 2026-04-10 |
 | 11. Device Option Validation Model | 3/3 | Complete    | 2026-04-13 |
-| 12. CLI Device Option Surface | 2/3 | In Progress|  |
+| 12. CLI Device Option Surface | 3/3 | Complete   | 2026-04-13 |
 | 13. Option-Aware Capture Reporting | 0/3 | Pending | - |
 
 ## Archived Milestones
@@ -107,4 +107,4 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 
 - Active milestone: `v1.1 DSLogic Plus device options`
 - Phase 10 completed and live-verified on: `2026-04-10`
-- Next action: Execute `12-03-PLAN.md`
+- Next action: Verify Phase 12 and start `13-01-PLAN.md` for runtime option application.
