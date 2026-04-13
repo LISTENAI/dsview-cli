@@ -4,17 +4,17 @@ milestone: v1.1
 milestone_name: milestone
 current_phase: 13
 current_phase_name: option aware capture reporting
-current_plan: 02
+current_plan: 3
 status: executing
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-04-13T11:06:43.300Z"
-last_activity: 2026-04-13 -- Completed Plan 13-01
+stopped_at: Completed 13-02-PLAN.md
+last_updated: "2026-04-13T11:20:42.753Z"
+last_activity: 2026-04-13
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 12
-  completed_plans: 10
-  percent: 83
+  completed_plans: 11
+  percent: 92
 ---
 
 # Session State
@@ -30,12 +30,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-10)
 
 Current Phase: 13
 Current Phase Name: option aware capture reporting
-Current Plan: 02
+Current Plan: 3
 Total Plans in Phase: 3
 Phase: 13 (option-aware-capture-reporting) — READY
-Plan: 02
-Status: Executing
-Last activity: 2026-04-13 -- Completed Plan 13-01
+Plan: 3 of 3
+Status: Ready to execute
+Last activity: 2026-04-13
 
 ## Accumulated Context
 
@@ -72,6 +72,8 @@ Last activity: 2026-04-13 -- Completed Plan 13-01
 - [Phase 13]: Keep the D-05 setter sequence in Rust so core owns apply order, fail-fast behavior, and typed reporting instead of hiding sequencing in C.
 - [Phase 13]: Reuse the Phase 11 validated request directly during capture execution and derive export validation config from it, rather than re-validating against the current active mode.
 - [Phase 13]: Treat effective enabled channels as the successfully applied validated request after channel-enable setters succeed, while reading the other effective values back from runtime getters.
+- [Phase 13]: Core now builds requested/effective device-option facts once and reuses that block across metadata and CLI JSON.
+- [Phase 13]: Baseline captures mirror inherited current option state into both requested and effective reporting blocks so automation always sees explicit facts.
 
 ## Performance Metrics
 
@@ -87,12 +89,13 @@ Last activity: 2026-04-13 -- Completed Plan 13-01
 | Phase 12 P02 | 6m | 2 tasks | 2 files |
 | Phase 12 P03 | 6m | 2 tasks | 3 files |
 | Phase 13 P01 | 16m | 2 tasks | 7 files |
+| Phase 13 P02 | 9m | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last session: 2026-04-13T11:06:43.295Z
+Last session: 2026-04-13T11:20:42.747Z
 
-Stopped At: Completed 13-01-PLAN.md
+Stopped At: Completed 13-02-PLAN.md
 
 Resume File: None
 
