@@ -266,7 +266,7 @@ pub struct EffectiveDeviceOptionState {
     pub sample_rate_hz: Option<u64>,
 }
 
-#[derive(Debug, Error, Clone, PartialEq)]
+#[derive(Debug, Error)]
 #[error("device option apply failed at {failed_step}: {runtime_error}")]
 pub struct DeviceOptionApplyFailure {
     pub applied_steps: Vec<DeviceOptionApplyStep>,
