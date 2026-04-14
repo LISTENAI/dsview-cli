@@ -1,47 +1,48 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: DSLogic Plus device options
-current_phase: 13
-current_phase_name: milestone closeout
-current_plan: complete
-status: completed
-stopped_at: Completed v1.1 milestone archival
-last_updated: "2026-04-13T12:47:51Z"
-last_activity: 2026-04-13 -- v1.1 milestone archived and ready for next planning cycle
+milestone: v1.2
+milestone_name: DSView protocol decode CLI foundation
+current_phase: 14
+current_phase_name: decode runtime boundary and decoder registry
+current_plan: -
+status: ready
+stopped_at: Milestone initialized; Phase 14 ready for discuss/plan
+last_updated: "2026-04-14T07:58:43Z"
+last_activity: 2026-04-14 -- milestone v1.2 initialized and Phase 14 is ready for planning
 progress:
   total_phases: 4
-  completed_phases: 4
-  total_plans: 12
-  completed_plans: 12
-  percent: 100
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Session State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-13)
+See: `.planning/PROJECT.md` (updated 2026-04-14)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Planning the next milestone on top of the shipped `v1.1` baseline
+**Current focus:** Define and execute `v1.2 DSView protocol decode CLI foundation`
 
 ## Current Position
 
-Current Phase: milestone closeout
-Current Phase Name: `v1.1` archived
-Current Plan: complete
-Total Plans in Milestone: 12
-Milestone: `v1.1 DSLogic Plus device options` - COMPLETE AND ARCHIVED
-Status: Milestone archived, requirements reset, and release tag pending/ready
-Last activity: 2026-04-13 -- archived `v1.1` milestone and prepared the next planning cycle
+Current Phase: 14
+Current Phase Name: `Decode Runtime Boundary and Decoder Registry`
+Current Plan: -
+Total Plans in Milestone: 0
+Milestone: `v1.2 DSView protocol decode CLI foundation`
+Status: Milestone initialized and ready for phase discussion/planning
+Last activity: 2026-04-14 -- defined `v1.2` milestone, requirements, roadmap, and next phase
 
 ## Accumulated Context
 
 - `v1.0 MVP` shipped on 2026-04-09 and remains the baseline for the non-interactive capture/export workflow.
 - `v1.1` shipped on 2026-04-13 and added DSView-backed device-option discovery, validation, selection, apply-time reporting, and schema-v2 requested/effective metadata for `DSLogic Plus`.
 - The Rust layer now owns stable IDs, friendly capture tokens, deterministic option apply order, partial-apply diagnostics, and output reporting while `DSView/` stays read-only.
-- Presets, repeat/loop collect behavior, advanced trigger configuration, protocol decode, and broader device support remain candidate future work rather than shipped scope.
+- Presets, repeat/loop collect behavior, advanced trigger configuration, broader device support, and full capture+decode orchestration remain candidate future work rather than shipped scope.
+- `v1.2` is intentionally scoped around a config-driven decode workflow so protocol-analysis support does not bloat the existing `capture` command surface.
 
 ## Decisions
 
@@ -75,34 +76,19 @@ Last activity: 2026-04-13 -- archived `v1.1` milestone and prepared the next pla
 - [Phase 13]: Baseline captures mirror inherited current option state into both requested and effective reporting blocks so automation always sees explicit facts.
 - [Phase 13]: Reused DSVIEW_CLI_TEST_DEVICE_OPTIONS_FIXTURE for full spawned capture success and failure coverage instead of adding a second fixture flag.
 - [Phase 13]: Phase 13 hardware verification completed successfully on a real DSLogic Plus and closed the final live-runtime gap for `v1.1`.
-
-## Performance Metrics
-
-| Phase | Plan | Duration | Tasks | Files |
-|-------|------|----------|-------|-------|
-| 10 | 01 | 8 min | 2 | 4 |
-| 10 | 02 | 6 min | 2 | 3 |
-| 10 | 03 | 3 min | 2 | 4 |
-| Phase 11 P01 | 45 min | 2 tasks | 8 files |
-| Phase 11 P02 | 13 min | 2 tasks | 5 files |
-| Phase 11 P03 | 7 min | 2 tasks | 2 files |
-| Phase 12-cli-device-option-surface P01 | 12m | 2 tasks | 4 files |
-| Phase 12 P02 | 6m | 2 tasks | 2 files |
-| Phase 12 P03 | 6m | 2 tasks | 3 files |
-| Phase 13 P01 | 16m | 2 tasks | 7 files |
-| Phase 13 P02 | 9m | 2 tasks | 3 files |
-| Phase 13 P03 | 12m | 2 tasks | 3 files |
+- [Milestone v1.2]: Protocol decode planning will treat `libsigrokdecode4DSL` as the engine and avoid reusing DSView Qt decode UI classes as runtime abstractions.
+- [Milestone v1.2]: Decode configuration should stay file-driven and separate from the `capture` command surface.
 
 ## Session Continuity
 
-Last session: 2026-04-13T12:35:52Z
+Last session: 2026-04-14T07:58:43Z
 
-Stopped At: Completed v1.1 milestone archival
+Stopped At: Milestone initialized; Phase 14 ready for discuss/plan
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Start the next milestone definition flow with `/gsd-new-milestone`.
-- Recreate `.planning/REQUIREMENTS.md` only as part of that next milestone setup.
-- Preserve the shipped `v1.1` DSLogic Plus option workflow as the baseline for any new runtime work.
+- Run `/gsd-discuss-phase 14` to clarify the decode runtime boundary approach.
+- Or run `/gsd-plan-phase 14` to start planning directly.
+- Preserve the shipped `v1.0` and `v1.1` workflows while introducing decode support as a separate layer.

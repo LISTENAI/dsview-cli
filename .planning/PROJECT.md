@@ -25,8 +25,10 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 
 ### Active
 
-- [ ] Define the next milestone after `v1.1` and recreate `.planning/REQUIREMENTS.md` via `/gsd-new-milestone`.
-- [ ] Decide whether the next shipped increment should prioritize presets, collect-mode control, trigger programming, protocol decode, or broader DSLogic-family support.
+- [ ] User can inspect the DSView protocol decoder registry from the CLI, including decoder ids, channels, options, and stack metadata. - `v1.2`
+- [ ] User can define protocol decode stacks in a config-driven workflow that does not bloat the existing `capture` command surface. - `v1.2`
+- [ ] User can run DSView protocol decoders on captured logic data from the CLI and receive machine-readable annotation output. - `v1.2`
+- [ ] User can reuse saved capture artifacts as decode inputs while keeping future capture+decode pipeline support open. - `v1.2`
 
 ### Out of Scope
 
@@ -34,31 +36,44 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 - Full DSView GUI feature parity - future milestones should extend the workflow intentionally instead of mirroring the whole desktop app.
 - Modifying the upstream `DSView/` codebase or libraries - the integration strategy still depends on consuming that stack as a read-only dependency.
 - Terminal waveform rendering or a TUI viewer - the product direction stays focused on export-first automation.
+- Flattening decoder-specific flags into `capture` - protocol decode should remain config-driven and separable from acquisition.
+- Live decode visualization or Qt decode panel parity - the milestone targets headless decode execution only.
 
 ## Context
 
 The workspace keeps the upstream `DSView/` project as a read-only native dependency while the Rust workspace owns the CLI, orchestration, validation, and reporting layers. `v1.0` proved that this split could deliver a stable non-interactive capture/export workflow for `DSLogic Plus`, and `v1.1` extended that same baseline with truthful DSView-backed device-option discovery and execution rather than inventing a parallel configuration model.
+
+## Current Milestone: v1.2 DSView protocol decode CLI foundation
+
+**Goal:** Add a headless DSView protocol decode foundation that stays separate from `capture` flag growth and fits the existing Rust/native boundary architecture.
+
+**Target features:**
+- Expose DSView protocol decoder discovery and inspection from the CLI
+- Define a config-driven decoder stack model for channels and options
+- Run offline decode against captured logic artifacts and emit machine-readable annotations
+- Establish a clean handoff boundary for future capture+decode pipelines without coupling decode options to `capture`
 
 ## Current State
 
 - `v1.1 DSLogic Plus device options` shipped on `2026-04-13` and is archived at `.planning/milestones/v1.1-ROADMAP.md`.
 - The CLI now exposes `devices list`, `devices options`, and option-aware `capture` flows for `DSLogic Plus`.
 - Real-hardware verification passed for discovery on `2026-04-10` and for option-aware capture/reporting on `2026-04-13`.
-- No next milestone is defined yet; live requirements will be recreated when `/gsd-new-milestone` starts the next planning cycle.
+- `v1.2 DSView protocol decode CLI foundation` is now the active planning target.
 
 ## Next Milestone Goals
 
-- Choose the next smallest shipped increment that extends the proven `DSLogic Plus` workflow without weakening the `v1.0` and `v1.1` baseline.
-- Prefer work that builds on the validated option model: reusable presets, collect-mode control, trigger configuration, protocol decode, or broadened hardware support.
-- Keep hardware verification part of phase exit criteria whenever new runtime behavior is added.
+- Reuse `libsigrokdecode4DSL` directly instead of porting DSView Qt decode classes.
+- Keep decode config outside the `capture` command to avoid parameter-surface sprawl.
+- Deliver a smallest-useful decode foundation: discovery, inspect, config validation, offline decode execution, and stable artifact/error reporting.
 
 ## Constraints
 
-- **Device scope**: `DSLogic Plus` is the only shipped target today; broader hardware support remains future work.
-- **Dependency boundary**: Reuse `DSView/` and its modified `libsigrok4DSL` stack without modifying that repository.
+- **Device scope**: `DSLogic Plus` remains the only shipped target; broader hardware support remains future work.
+- **Dependency boundary**: Reuse `DSView/` and its modified libraries without modifying that repository.
 - **Workflow**: Optimize for scriptable CLI usage, not GUI, TUI, or profile-driven interaction.
 - **Baseline stability**: Preserve the shipped `v1.0` capture/export path and the shipped `v1.1` device-option workflow.
 - **Scope discipline**: Future milestones should extend the validated workflow incrementally rather than chasing full DSView feature parity.
+- **Decode UX discipline**: Protocol decode must not force a large decoder-specific flag surface onto the existing `capture` command.
 
 ## Key Decisions
 
@@ -70,6 +85,7 @@ The workspace keeps the upstream `DSView/` project as a read-only native depende
 | Layer friendly CLI tokens on top of stable core IDs | Automation needs stable identifiers while humans need copy-pasteable command tokens | Adopted in `v1.1` discovery and capture surfaces |
 | Keep device-option apply order and failure reporting in Rust core instead of C | Ordered execution, partial-apply facts, and output reuse need one typed source of truth | Adopted in `v1.1` runtime apply/reporting |
 | Report requested and effective device-option facts separately | Devices can align or adjust runtime values, so outputs must preserve both intent and outcome | Adopted in `v1.1` JSON, text, and metadata reporting |
+| Keep protocol decode as a separate config-driven workflow instead of expanding `capture` flags | Decoder surfaces vary too much and would otherwise bloat the main acquisition command | Adopted for `v1.2` milestone planning |
 
 ## Evolution
 
@@ -89,4 +105,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-13 after completing the v1.1 milestone*
+*Last updated: 2026-04-14 after starting milestone `v1.2`*
