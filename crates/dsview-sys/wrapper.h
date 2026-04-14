@@ -205,6 +205,13 @@ int dsview_bridge_render_vcd_from_logic_packets(
     size_t logic_packet_count,
     uint16_t unitsize,
     struct dsview_export_buffer *out_buffer);
+int dsview_bridge_render_vcd_from_cross_logic_packets(
+    const struct dsview_vcd_export_request *request,
+    const uint8_t *sample_bytes,
+    size_t sample_bytes_len,
+    const size_t *logic_packet_lengths,
+    size_t logic_packet_count,
+    struct dsview_export_buffer *out_buffer);
 void dsview_bridge_free_export_buffer(struct dsview_export_buffer *buffer);
 
 #ifdef __cplusplus

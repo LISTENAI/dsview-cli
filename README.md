@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/mast
 Install a specific version instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.1.1
 ```
 
 The installer keeps the release bundle intact so the executable can still find its sibling `runtime/` and `resources/` directories.
@@ -76,7 +76,7 @@ The CLI uses a **repository-built runtime** model:
 
 Release bundle structure:
 ```
-dsview-cli-v0.1.0-x86_64-unknown-linux-gnu/
+dsview-cli-v1.1.1-x86_64-unknown-linux-gnu/
 ├── dsview-cli                    # CLI executable
 ├── runtime/
 │   └── libdsview_runtime.so      # Platform-specific runtime (.so/.dylib/.dll)

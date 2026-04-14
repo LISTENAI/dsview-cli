@@ -13,6 +13,8 @@
 
 #include "libsigrok-internal.h"
 
+#define DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY 64
+
 typedef int (*ds_lib_init_fn)(void);
 typedef int (*ds_lib_exit_fn)(void);
 typedef void (*ds_set_firmware_resource_dir_fn)(const char *dir);
@@ -85,6 +87,7 @@ struct dsview_bridge_api {
 struct dsview_retained_packet {
     int type;
     int status;
+    int format;
     unsigned long long samplerate_hz;
     size_t length;
     uint16_t unitsize;
@@ -108,12 +111,14 @@ struct dsview_recorded_stream {
     unsigned long long sample_count;
     uint16_t max_unitsize;
     uint16_t expected_unitsize;
+    uint16_t enabled_channel_count;
 };
 
 static struct dsview_bridge_api g_bridge_api;
 static struct dsview_bridge_acquisition_summary g_acquisition_summary;
 static int g_acquisition_callback_registration_active = 0;
 static struct dsview_recorded_stream g_recorded_stream;
+static uint8_t g_enabled_channel_state[DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY];
 
 static void dsview_bridge_clear_registered_callbacks(void);
 static void dsview_bridge_reset_recorded_stream(void);
@@ -123,6 +128,11 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
 static int dsview_bridge_build_vcd_device(const struct dsview_vcd_export_request *request, struct sr_dev_inst **out_sdi);
 static void dsview_bridge_free_vcd_device(struct sr_dev_inst *sdi);
 static int dsview_bridge_emit_packet(const struct sr_output *output, const struct dsview_retained_packet *packet, GString **assembled_output);
+static int dsview_bridge_emit_cross_logic_packet(
+    const struct sr_output *output,
+    const struct dsview_retained_packet *packet,
+    uint16_t enabled_channel_count,
+    GString **assembled_output);
 static uint16_t dsview_bridge_expected_logic_unitsize(void);
 static int dsview_bridge_get_optional_int16_config(int key, int *has_value, int *value);
 static int dsview_bridge_get_optional_double_config(int key, int *has_value, double *value);
@@ -688,6 +698,8 @@ static int dsview_bridge_prepare_recording_capacity(void)
 {
     unsigned long long sample_limit = 0;
     int valid_channel_count = 0;
+    int enabled_channel_count = 0;
+    size_t enabled_index;
     size_t unitsize;
     size_t packet_capacity;
     size_t payload_capacity;
@@ -700,11 +712,18 @@ static int dsview_bridge_prepare_recording_capacity(void)
     if (dsview_bridge_get_int16_config(SR_CONF_VLD_CH_NUM, &valid_channel_count) != SR_OK) {
         return DSVIEW_EXPORT_ERR_RUNTIME;
     }
-    if (sample_limit == 0 || valid_channel_count <= 0) {
+    for (enabled_index = 0; enabled_index < G_N_ELEMENTS(g_enabled_channel_state); enabled_index++) {
+        enabled_channel_count += g_enabled_channel_state[enabled_index] != 0;
+    }
+    if (enabled_channel_count <= 0) {
+        enabled_channel_count = valid_channel_count;
+    }
+
+    if (sample_limit == 0 || enabled_channel_count <= 0) {
         return DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS;
     }
 
-    unitsize = (size_t)((valid_channel_count + 7) / 8);
+    unitsize = (size_t)((enabled_channel_count + 7) / 8);
     if (unitsize == 0) {
         unitsize = 1;
     }
@@ -727,6 +746,7 @@ static int dsview_bridge_prepare_recording_capacity(void)
     g_recorded_stream.packet_capacity = packet_capacity;
     g_recorded_stream.payload_capacity = payload_capacity;
     g_recorded_stream.expected_unitsize = (uint16_t)unitsize;
+    g_recorded_stream.enabled_channel_count = (uint16_t)enabled_channel_count;
     return SR_OK;
 }
 
@@ -803,6 +823,7 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
     memset(&retained, 0, sizeof(retained));
     retained.type = DSVIEW_EXPORT_PACKET_LOGIC;
     retained.status = packet->status;
+    retained.format = logic->format;
     retained.length = (size_t)logic->length;
     retained.unitsize = unitsize;
     retained.data_error = logic->data_error;
@@ -813,7 +834,17 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
     }
     memcpy(retained.data, logic->data, retained.length);
 
-    packet_samples = logic->length / unitsize;
+    if (logic->format == LA_CROSS_DATA) {
+        if (g_recorded_stream.enabled_channel_count == 0
+            || ((size_t)logic->length % ((size_t)g_recorded_stream.enabled_channel_count * sizeof(uint64_t))) != 0) {
+            free(retained.data);
+            return DSVIEW_EXPORT_ERR_GENERIC;
+        }
+        packet_samples = ((unsigned long long)logic->length * 8ULL)
+            / (unsigned long long)g_recorded_stream.enabled_channel_count;
+    } else {
+        packet_samples = logic->length / unitsize;
+    }
     if (g_recorded_stream.sample_count > G_MAXUINT64 - packet_samples) {
         free(retained.data);
         g_recorded_stream.overflowed = 1;
@@ -1648,11 +1679,19 @@ int dsview_bridge_ds_set_sample_limit(unsigned long long value)
 
 int dsview_bridge_ds_enable_channel(int channel_index, int enable)
 {
+    int status;
+
     if (g_bridge_api.ds_enable_device_channel_index == NULL) {
         return DSVIEW_BRIDGE_ERR_NOT_LOADED;
     }
 
-    return g_bridge_api.ds_enable_device_channel_index(channel_index, enable ? TRUE : FALSE);
+    status = g_bridge_api.ds_enable_device_channel_index(channel_index, enable ? TRUE : FALSE);
+    if (status == SR_OK && channel_index >= 0
+        && channel_index < (int)G_N_ELEMENTS(g_enabled_channel_state)) {
+        g_enabled_channel_state[channel_index] = enable ? 1 : 0;
+    }
+
+    return status;
 }
 
 static void dsview_bridge_record_terminal_event(int terminal_event)
@@ -1981,6 +2020,7 @@ static int dsview_bridge_emit_packet(const struct sr_output *output, const struc
     case DSVIEW_EXPORT_PACKET_LOGIC:
         memset(&logic, 0, sizeof(logic));
         logic.length = packet->length;
+        logic.format = packet->format;
         logic.unitsize = packet->unitsize;
         logic.data_error = packet->data_error;
         logic.error_pattern = packet->error_pattern;
@@ -2008,6 +2048,90 @@ static int dsview_bridge_emit_packet(const struct sr_output *output, const struc
     return dsview_bridge_append_output_chunk(assembled_output, chunk);
 }
 
+static int dsview_bridge_emit_cross_logic_packet(
+    const struct sr_output *output,
+    const struct dsview_retained_packet *packet,
+    uint16_t enabled_channel_count,
+    GString **assembled_output)
+{
+    struct sr_datafeed_packet replay_packet;
+    struct sr_datafeed_logic logic;
+    GString *chunk = NULL;
+    uint8_t *expanded = NULL;
+    size_t sample_blocks;
+    size_t sample_count;
+    uint16_t unitsize;
+    size_t output_len;
+    size_t block_index;
+    size_t channel_index;
+    int status;
+
+    if (packet == NULL || packet->data == NULL || enabled_channel_count == 0) {
+        return DSVIEW_EXPORT_ERR_GENERIC;
+    }
+    if ((packet->length % ((size_t)enabled_channel_count * sizeof(uint64_t))) != 0) {
+        return DSVIEW_EXPORT_ERR_GENERIC;
+    }
+
+    sample_blocks = packet->length / ((size_t)enabled_channel_count * sizeof(uint64_t));
+    sample_count = sample_blocks * 64U;
+    unitsize = (uint16_t)((enabled_channel_count + 7U) / 8U);
+    if (unitsize == 0) {
+        unitsize = 1;
+    }
+    if (sample_count > (SIZE_MAX / unitsize)) {
+        return DSVIEW_EXPORT_ERR_OVERFLOW;
+    }
+
+    output_len = sample_count * unitsize;
+    expanded = calloc(output_len, 1);
+    if (expanded == NULL) {
+        return SR_ERR_MALLOC;
+    }
+
+    for (block_index = 0; block_index < sample_blocks; block_index++) {
+        const uint8_t *block = packet->data
+            + block_index * (size_t)enabled_channel_count * sizeof(uint64_t);
+
+        for (channel_index = 0; channel_index < enabled_channel_count; channel_index++) {
+            uint64_t bits = 0;
+            size_t bit_index;
+
+            memcpy(&bits, block + channel_index * sizeof(uint64_t), sizeof(bits));
+            bits = GUINT64_FROM_LE(bits);
+
+            for (bit_index = 0; bit_index < 64U; bit_index++) {
+                if (((bits >> bit_index) & 1U) != 0) {
+                    size_t sample_offset = (block_index * 64U + bit_index) * unitsize;
+                    expanded[sample_offset + channel_index / 8U] |=
+                        (uint8_t)(1U << (channel_index % 8U));
+                }
+            }
+        }
+    }
+
+    memset(&logic, 0, sizeof(logic));
+    logic.length = output_len;
+    logic.format = LA_SPLIT_DATA;
+    logic.unitsize = unitsize;
+    logic.data_error = packet->data_error;
+    logic.error_pattern = packet->error_pattern;
+    logic.data = expanded;
+
+    replay_packet.type = SR_DF_LOGIC;
+    replay_packet.status = packet->status;
+    replay_packet.payload = &logic;
+    status = g_bridge_api.sr_output_send(output, &replay_packet, &chunk);
+    if (status == SR_OK) {
+        status = dsview_bridge_append_output_chunk(assembled_output, chunk);
+    } else if (chunk != NULL) {
+        g_string_free(chunk, TRUE);
+    }
+
+    free(expanded);
+    return status;
+}
+
 static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *request, const struct dsview_recorded_stream *stream, struct dsview_export_buffer *out_buffer)
 {
     struct sr_dev_inst *sdi = NULL;
@@ -2015,10 +2139,12 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     const struct sr_output *output = NULL;
     GString *assembled_output = NULL;
     size_t index;
+    unsigned long long exported_sample_count = 0;
     int status = SR_OK;
     int saw_meta = 0;
     int saw_end = 0;
     unsigned long long replay_samplerate_hz;
+    uint16_t request_enabled_channel_count;
 
     if (request == NULL || out_buffer == NULL || stream == NULL) {
         return DSVIEW_BRIDGE_ERR_ARG;
@@ -2039,8 +2165,12 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     if (request->samplerate_hz == 0) {
         return DSVIEW_EXPORT_ERR_MISSING_SAMPLERATE;
     }
+    if (request->enabled_channel_count == 0) {
+        return DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS;
+    }
 
     replay_samplerate_hz = stream->samplerate_hz != 0 ? stream->samplerate_hz : request->samplerate_hz;
+    request_enabled_channel_count = (uint16_t)request->enabled_channel_count;
 
     module = g_bridge_api.sr_output_find("vcd");
     if (module == NULL) {
@@ -2081,7 +2211,24 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
             saw_end = 1;
         }
 
-        status = dsview_bridge_emit_packet(output, &replay_packet, &assembled_output);
+        if (replay_packet.type == DSVIEW_EXPORT_PACKET_LOGIC
+            && replay_packet.format == LA_CROSS_DATA) {
+            exported_sample_count +=
+                ((unsigned long long)replay_packet.length * 8ULL)
+                / (unsigned long long)request_enabled_channel_count;
+            status = dsview_bridge_emit_cross_logic_packet(
+                output,
+                &replay_packet,
+                request_enabled_channel_count,
+                &assembled_output);
+        } else {
+            if (replay_packet.type == DSVIEW_EXPORT_PACKET_LOGIC) {
+                uint16_t logic_unitsize = replay_packet.unitsize != 0 ? replay_packet.unitsize : 1;
+                exported_sample_count +=
+                    (unsigned long long)(replay_packet.length / logic_unitsize);
+            }
+            status = dsview_bridge_emit_packet(output, &replay_packet, &assembled_output);
+        }
         if (status != SR_OK) {
             goto cleanup;
         }
@@ -2112,7 +2259,7 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     out_buffer->data = (uint8_t *)g_string_free(assembled_output, FALSE);
     assembled_output = NULL;
     out_buffer->len = out_buffer->data != NULL ? strlen((char *)out_buffer->data) : 0;
-    out_buffer->sample_count = stream->sample_count;
+    out_buffer->sample_count = exported_sample_count;
     out_buffer->packet_count = stream->packet_count;
     status = SR_OK;
 
@@ -2166,6 +2313,7 @@ int dsview_bridge_render_vcd_from_samples(
 
     packets[1].type = DSVIEW_EXPORT_PACKET_LOGIC;
     packets[1].status = SR_PKT_OK;
+    packets[1].format = LA_SPLIT_DATA;
     packets[1].length = sample_bytes_len;
     packets[1].unitsize = unitsize;
     packets[1].data = malloc(sample_bytes_len);
@@ -2238,6 +2386,7 @@ int dsview_bridge_render_vcd_from_logic_packets(
 
         logic_packet->type = DSVIEW_EXPORT_PACKET_LOGIC;
         logic_packet->status = SR_PKT_OK;
+        logic_packet->format = LA_SPLIT_DATA;
         logic_packet->length = packet_length;
         logic_packet->unitsize = unitsize;
         logic_packet->data = malloc(packet_length);
@@ -2265,6 +2414,99 @@ int dsview_bridge_render_vcd_from_logic_packets(
     stream.samplerate_hz = request->samplerate_hz;
     stream.has_samplerate = 1;
     stream.sample_count = sample_bytes_len / unitsize;
+
+    status = dsview_bridge_export_stream(request, &stream, out_buffer);
+
+cleanup:
+    if (packets != NULL) {
+        for (packet_index = 0; packet_index < logic_packet_count; packet_index++) {
+            free(packets[packet_index + 1].data);
+        }
+        free(packets);
+    }
+    return status;
+}
+
+int dsview_bridge_render_vcd_from_cross_logic_packets(
+    const struct dsview_vcd_export_request *request,
+    const uint8_t *sample_bytes,
+    size_t sample_bytes_len,
+    const size_t *logic_packet_lengths,
+    size_t logic_packet_count,
+    struct dsview_export_buffer *out_buffer)
+{
+    struct dsview_recorded_stream stream;
+    struct dsview_retained_packet *packets = NULL;
+    size_t packet_index;
+    size_t offset = 0;
+    size_t cross_unitsize;
+    int status;
+
+    if (request == NULL || sample_bytes == NULL || sample_bytes_len == 0 || logic_packet_lengths == NULL
+        || logic_packet_count == 0 || out_buffer == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (request->enabled_channel_count == 0) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    cross_unitsize = request->enabled_channel_count * sizeof(uint64_t);
+    if (cross_unitsize == 0 || (sample_bytes_len % cross_unitsize) != 0) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    memset(&stream, 0, sizeof(stream));
+    memset(out_buffer, 0, sizeof(*out_buffer));
+
+    packets = calloc(logic_packet_count + 2, sizeof(*packets));
+    if (packets == NULL) {
+        return SR_ERR_MALLOC;
+    }
+
+    packets[0].type = DSVIEW_EXPORT_PACKET_META;
+    packets[0].status = SR_PKT_OK;
+    packets[0].samplerate_hz = request->samplerate_hz;
+
+    for (packet_index = 0; packet_index < logic_packet_count; packet_index++) {
+        size_t packet_length = logic_packet_lengths[packet_index];
+        struct dsview_retained_packet *logic_packet = &packets[packet_index + 1];
+
+        if (packet_length == 0 || (packet_length % cross_unitsize) != 0 || offset > sample_bytes_len
+            || packet_length > sample_bytes_len - offset) {
+            status = DSVIEW_BRIDGE_ERR_ARG;
+            goto cleanup;
+        }
+
+        logic_packet->type = DSVIEW_EXPORT_PACKET_LOGIC;
+        logic_packet->status = SR_PKT_OK;
+        logic_packet->format = LA_CROSS_DATA;
+        logic_packet->length = packet_length;
+        logic_packet->unitsize = 1;
+        logic_packet->data = malloc(packet_length);
+        if (logic_packet->data == NULL) {
+            status = SR_ERR_MALLOC;
+            goto cleanup;
+        }
+        memcpy(logic_packet->data, sample_bytes + offset, packet_length);
+        offset += packet_length;
+    }
+
+    if (offset != sample_bytes_len) {
+        status = DSVIEW_BRIDGE_ERR_ARG;
+        goto cleanup;
+    }
+
+    packets[logic_packet_count + 1].type = DSVIEW_EXPORT_PACKET_END;
+    packets[logic_packet_count + 1].status = SR_PKT_OK;
+
+    stream.packets = packets;
+    stream.packet_count = logic_packet_count + 2;
+    stream.saw_logic_packet = 1;
+    stream.saw_end_packet = 1;
+    stream.end_packet_status = SR_PKT_OK;
+    stream.samplerate_hz = request->samplerate_hz;
+    stream.has_samplerate = 1;
+    stream.enabled_channel_count = (uint16_t)request->enabled_channel_count;
 
     status = dsview_bridge_export_stream(request, &stream, out_buffer);
 

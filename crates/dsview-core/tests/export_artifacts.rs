@@ -196,7 +196,7 @@ fn export_request(completion: CaptureCompletion) -> CaptureExportRequest {
         vcd_path: PathBuf::from("/tmp/capture.vcd"),
         metadata_path: None,
         tool_name: "dsview-cli".to_string(),
-        tool_version: "0.1.0".to_string(),
+        tool_version: "1.1.1".to_string(),
         capture_started_at: UNIX_EPOCH + Duration::from_secs(1_744_018_496),
         device_model: "DSLogic Plus".to_string(),
         device_stable_id: "dslogic-plus".to_string(),
@@ -409,7 +409,7 @@ fn metadata_schema_version_is_2_when_device_option_facts_are_present() {
         schema_version: 2,
         tool: dsview_core::MetadataToolInfo {
             name: "dsview-cli".to_string(),
-            version: "0.1.0".to_string(),
+            version: "1.1.1".to_string(),
         },
         capture: dsview_core::MetadataCaptureInfo {
             timestamp_utc: "2025-04-07T10:14:56Z".to_string(),
