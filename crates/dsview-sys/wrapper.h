@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "libsigrok.h"
+#include "libsigrokdecode.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,6 +56,18 @@ enum dsview_bridge_status {
     DSVIEW_BRIDGE_ERR_NOT_LOADED = -2,
     DSVIEW_BRIDGE_ERR_DLOPEN = -3,
     DSVIEW_BRIDGE_ERR_DLSYM = -4,
+};
+
+enum dsview_decode_status {
+    DSVIEW_DECODE_OK = 0,
+    DSVIEW_DECODE_ERR_ARG = -20,
+    DSVIEW_DECODE_ERR_NOT_LOADED = -21,
+    DSVIEW_DECODE_ERR_DECODER_DIR = -22,
+    DSVIEW_DECODE_ERR_PYTHON = -23,
+    DSVIEW_DECODE_ERR_DECODER_LOAD = -24,
+    DSVIEW_DECODE_ERR_UNKNOWN_DECODER = -25,
+    DSVIEW_DECODE_ERR_UPSTREAM = -26,
+    DSVIEW_DECODE_ERR_MALLOC = -27,
 };
 
 struct dsview_channel_mode {
@@ -153,6 +166,70 @@ struct dsview_samplerate_list {
     unsigned long long values[64];
 };
 
+struct dsview_decode_channel {
+    char *id;
+    char *name;
+    char *desc;
+    int order;
+    int type;
+    char *idn;
+};
+
+struct dsview_decode_option {
+    char *id;
+    char *idn;
+    char *desc;
+    char *default_value;
+    char **values;
+    size_t value_count;
+};
+
+struct dsview_decode_annotation {
+    char *id;
+    char *label;
+    char *description;
+    int type;
+};
+
+struct dsview_decode_annotation_row {
+    char *id;
+    char *desc;
+    size_t *annotation_classes;
+    size_t annotation_class_count;
+};
+
+struct dsview_decode_list_entry {
+    char *id;
+    char *name;
+    char *longname;
+    char *desc;
+    char *license;
+};
+
+struct dsview_decode_metadata {
+    char *id;
+    char *name;
+    char *longname;
+    char *desc;
+    char *license;
+    char **inputs;
+    size_t input_count;
+    char **outputs;
+    size_t output_count;
+    char **tags;
+    size_t tag_count;
+    struct dsview_decode_channel *required_channels;
+    size_t required_channel_count;
+    struct dsview_decode_channel *optional_channels;
+    size_t optional_channel_count;
+    struct dsview_decode_option *options;
+    size_t option_count;
+    struct dsview_decode_annotation *annotations;
+    size_t annotation_count;
+    struct dsview_decode_annotation_row *annotation_rows;
+    size_t annotation_row_count;
+};
+
 int dsview_bridge_load_library(const char *path);
 void dsview_bridge_unload_library(void);
 int dsview_bridge_is_loaded(void);
@@ -213,6 +290,18 @@ int dsview_bridge_render_vcd_from_cross_logic_packets(
     size_t logic_packet_count,
     struct dsview_export_buffer *out_buffer);
 void dsview_bridge_free_export_buffer(struct dsview_export_buffer *buffer);
+
+int dsview_decode_runtime_load(const char *path);
+void dsview_decode_runtime_unload(void);
+int dsview_decode_runtime_init(const char *decoder_dir);
+int dsview_decode_runtime_exit(void);
+const char *dsview_decode_last_loader_error(void);
+const char *dsview_decode_last_error(void);
+const char *dsview_decode_last_error_name(void);
+int dsview_decode_list(struct dsview_decode_list_entry **out_list, size_t *out_count);
+void dsview_decode_free_list(struct dsview_decode_list_entry *list, size_t count);
+int dsview_decode_inspect(const char *decoder_id, struct dsview_decode_metadata *out_metadata);
+void dsview_decode_free_metadata(struct dsview_decode_metadata *metadata);
 
 #ifdef __cplusplus
 }

@@ -36,6 +36,14 @@ typedef const struct sr_output_module *(*sr_output_find_fn)(char *id);
 typedef const struct sr_output *(*sr_output_new_fn)(const struct sr_output_module *omod, GHashTable *options, const struct sr_dev_inst *sdi);
 typedef int (*sr_output_send_fn)(const struct sr_output *o, const struct sr_datafeed_packet *packet, GString **out);
 typedef int (*sr_output_free_fn)(const struct sr_output *o);
+typedef int (*srd_init_fn)(const char *path);
+typedef int (*srd_exit_fn)(void);
+typedef const GSList *(*srd_decoder_list_fn)(void);
+typedef struct srd_decoder *(*srd_decoder_get_by_id_fn)(const char *id);
+typedef int (*srd_decoder_load_all_fn)(void);
+typedef GSList *(*srd_searchpaths_get_fn)(void);
+typedef const char *(*srd_strerror_fn)(int error_code);
+typedef const char *(*srd_strerror_name_fn)(int error_code);
 
 typedef void (*dslib_event_callback_t)(int event);
 typedef void (*ds_datafeed_callback_t)(const struct sr_dev_inst *sdi, const struct sr_datafeed_packet *packet);
@@ -84,6 +92,23 @@ struct dsview_bridge_api {
     char last_error[512];
 };
 
+struct dsview_decode_runtime_api {
+    void *library_handle;
+    srd_init_fn srd_init;
+    srd_exit_fn srd_exit;
+    srd_decoder_list_fn srd_decoder_list;
+    srd_decoder_get_by_id_fn srd_decoder_get_by_id;
+    srd_decoder_load_all_fn srd_decoder_load_all;
+    srd_searchpaths_get_fn srd_searchpaths_get;
+    srd_strerror_fn srd_strerror;
+    srd_strerror_name_fn srd_strerror_name;
+    char last_loader_error[512];
+    char last_error[512];
+    char last_error_name[128];
+    int last_error_code;
+    int initialized;
+};
+
 struct dsview_retained_packet {
     int type;
     int status;
@@ -115,6 +140,7 @@ struct dsview_recorded_stream {
 };
 
 static struct dsview_bridge_api g_bridge_api;
+static struct dsview_decode_runtime_api g_decode_runtime_api;
 static struct dsview_bridge_acquisition_summary g_acquisition_summary;
 static int g_acquisition_callback_registration_active = 0;
 static struct dsview_recorded_stream g_recorded_stream;
@@ -229,6 +255,896 @@ static void *dsview_bridge_load_symbol(const char *name, int *status_out)
     }
 
     return symbol;
+}
+
+static void dsview_decode_copy_text(char *dst, size_t dst_len, const char *src)
+{
+    if (dst == NULL || dst_len == 0) {
+        return;
+    }
+
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+
+    strncpy(dst, src, dst_len - 1);
+    dst[dst_len - 1] = '\0';
+}
+
+static char *dsview_decode_strdup(const char *value)
+{
+    size_t len;
+    char *copy;
+
+    if (value == NULL) {
+        return NULL;
+    }
+
+    len = strlen(value) + 1;
+    copy = (char *)malloc(len);
+    if (copy == NULL) {
+        return NULL;
+    }
+
+    memcpy(copy, value, len);
+    return copy;
+}
+
+static void dsview_decode_clear_error_state(void)
+{
+    g_decode_runtime_api.last_error[0] = '\0';
+    g_decode_runtime_api.last_error_name[0] = '\0';
+    g_decode_runtime_api.last_error_code = DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_set_loader_error_text(const char *message)
+{
+    dsview_decode_copy_text(
+        g_decode_runtime_api.last_loader_error,
+        sizeof(g_decode_runtime_api.last_loader_error),
+        message);
+}
+
+#if defined(_WIN32)
+static void dsview_decode_set_loader_error_from_loader(void)
+{
+    DWORD error = GetLastError();
+    char buffer[128];
+
+    if (error == ERROR_SUCCESS) {
+        dsview_decode_set_loader_error_text("unknown dynamic loader error");
+        return;
+    }
+
+    snprintf(buffer, sizeof(buffer), "dynamic loader error code %lu", (unsigned long)error);
+    dsview_decode_set_loader_error_text(buffer);
+}
+#else
+static void dsview_decode_set_loader_error_from_loader(void)
+{
+    const char *error = dlerror();
+    dsview_decode_set_loader_error_text(error != NULL ? error : "unknown dynamic loader error");
+}
+#endif
+
+static void dsview_decode_set_error_detail(int code, const char *name, const char *detail)
+{
+    g_decode_runtime_api.last_error_code = code;
+    dsview_decode_copy_text(
+        g_decode_runtime_api.last_error_name,
+        sizeof(g_decode_runtime_api.last_error_name),
+        name);
+    dsview_decode_copy_text(
+        g_decode_runtime_api.last_error,
+        sizeof(g_decode_runtime_api.last_error),
+        detail);
+}
+
+static int dsview_decode_map_upstream_status(int status, int during_decoder_load)
+{
+    if (status == SRD_ERR_DECODERS_DIR) {
+        return DSVIEW_DECODE_ERR_DECODER_DIR;
+    }
+    if (status == SRD_ERR_PYTHON) {
+        return during_decoder_load ? DSVIEW_DECODE_ERR_DECODER_LOAD : DSVIEW_DECODE_ERR_PYTHON;
+    }
+    if (status == SRD_ERR_MALLOC) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+    if (during_decoder_load) {
+        return DSVIEW_DECODE_ERR_DECODER_LOAD;
+    }
+    return DSVIEW_DECODE_ERR_UPSTREAM;
+}
+
+static void dsview_decode_capture_upstream_error(int status, int during_decoder_load)
+{
+    const char *name = NULL;
+    const char *detail = NULL;
+    int mapped_code = dsview_decode_map_upstream_status(status, during_decoder_load);
+
+    if (g_decode_runtime_api.srd_strerror_name != NULL) {
+        name = g_decode_runtime_api.srd_strerror_name(status);
+    }
+    if (g_decode_runtime_api.srd_strerror != NULL) {
+        detail = g_decode_runtime_api.srd_strerror(status);
+    }
+
+    dsview_decode_set_error_detail(
+        mapped_code,
+        name != NULL ? name : "unknown error code",
+        detail != NULL ? detail : "unknown error");
+}
+
+static int dsview_decode_not_loaded(void)
+{
+    dsview_decode_set_error_detail(
+        DSVIEW_DECODE_ERR_NOT_LOADED,
+        "decode runtime not loaded",
+        "load the decode runtime library before calling this operation");
+    return DSVIEW_DECODE_ERR_NOT_LOADED;
+}
+
+static int dsview_decode_not_initialized(void)
+{
+    dsview_decode_set_error_detail(
+        DSVIEW_DECODE_ERR_NOT_LOADED,
+        "decode runtime not initialized",
+        "initialize the decode runtime before listing or inspecting decoders");
+    return DSVIEW_DECODE_ERR_NOT_LOADED;
+}
+
+static void *dsview_decode_load_symbol(const char *name, int *status_out)
+{
+    void *symbol = NULL;
+
+    dsview_bridge_clear_loader_error();
+    symbol = dsview_bridge_dlsym(g_decode_runtime_api.library_handle, name);
+    if (symbol == NULL) {
+        dsview_decode_set_loader_error_from_loader();
+        if (status_out != NULL) {
+            *status_out = DSVIEW_BRIDGE_ERR_DLSYM;
+        }
+    }
+
+    return symbol;
+}
+
+static void dsview_decode_free_string_array(char **items, size_t count)
+{
+    size_t index;
+
+    if (items == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(items[index]);
+    }
+    free(items);
+}
+
+static int dsview_decode_copy_string_array(const GSList *source, char ***out_items, size_t *out_count)
+{
+    const GSList *node;
+    char **items = NULL;
+    size_t count = 0;
+    size_t index = 0;
+
+    if (out_items == NULL || out_count == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    *out_items = NULL;
+    *out_count = 0;
+
+    count = (size_t)g_slist_length((GSList *)source);
+    if (count == 0) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    items = (char **)calloc(count, sizeof(char *));
+    if (items == NULL) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    for (node = source; node != NULL; node = node->next, index++) {
+        items[index] = dsview_decode_strdup((const char *)node->data);
+        if (items[index] == NULL) {
+            dsview_decode_free_string_array(items, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+    }
+
+    *out_items = items;
+    *out_count = count;
+    return DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_free_channels(struct dsview_decode_channel *channels, size_t count)
+{
+    size_t index;
+
+    if (channels == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(channels[index].id);
+        free(channels[index].name);
+        free(channels[index].desc);
+        free(channels[index].idn);
+    }
+    free(channels);
+}
+
+static int dsview_decode_copy_channels(
+    const GSList *source,
+    struct dsview_decode_channel **out_channels,
+    size_t *out_count)
+{
+    const GSList *node;
+    struct dsview_decode_channel *channels = NULL;
+    size_t count = 0;
+    size_t index = 0;
+    const struct srd_channel *source_channel;
+
+    if (out_channels == NULL || out_count == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    *out_channels = NULL;
+    *out_count = 0;
+    count = (size_t)g_slist_length((GSList *)source);
+    if (count == 0) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    channels = (struct dsview_decode_channel *)calloc(count, sizeof(*channels));
+    if (channels == NULL) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    for (node = source; node != NULL; node = node->next, index++) {
+        source_channel = (const struct srd_channel *)node->data;
+        channels[index].id = dsview_decode_strdup(source_channel->id);
+        channels[index].name = dsview_decode_strdup(source_channel->name);
+        channels[index].desc = dsview_decode_strdup(source_channel->desc);
+        channels[index].idn = dsview_decode_strdup(source_channel->idn);
+        channels[index].order = source_channel->order;
+        channels[index].type = source_channel->type;
+
+        if (source_channel->id != NULL && channels[index].id == NULL) {
+            dsview_decode_free_channels(channels, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+        if (source_channel->name != NULL && channels[index].name == NULL) {
+            dsview_decode_free_channels(channels, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+        if (source_channel->desc != NULL && channels[index].desc == NULL) {
+            dsview_decode_free_channels(channels, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+        if (source_channel->idn != NULL && channels[index].idn == NULL) {
+            dsview_decode_free_channels(channels, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+    }
+
+    *out_channels = channels;
+    *out_count = count;
+    return DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_free_options(struct dsview_decode_option *options, size_t count)
+{
+    size_t index;
+
+    if (options == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(options[index].id);
+        free(options[index].idn);
+        free(options[index].desc);
+        free(options[index].default_value);
+        dsview_decode_free_string_array(options[index].values, options[index].value_count);
+    }
+    free(options);
+}
+
+static int dsview_decode_copy_options(
+    const GSList *source,
+    struct dsview_decode_option **out_options,
+    size_t *out_count)
+{
+    const GSList *node;
+    struct dsview_decode_option *options = NULL;
+    size_t count = 0;
+    size_t index = 0;
+
+    if (out_options == NULL || out_count == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    *out_options = NULL;
+    *out_count = 0;
+    count = (size_t)g_slist_length((GSList *)source);
+    if (count == 0) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    options = (struct dsview_decode_option *)calloc(count, sizeof(*options));
+    if (options == NULL) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    for (node = source; node != NULL; node = node->next, index++) {
+        const struct srd_decoder_option *source_option =
+            (const struct srd_decoder_option *)node->data;
+        gchar *printed = NULL;
+
+        options[index].id = dsview_decode_strdup(source_option->id);
+        options[index].idn = dsview_decode_strdup(source_option->idn);
+        options[index].desc = dsview_decode_strdup(source_option->desc);
+        if (source_option->def != NULL) {
+            printed = g_variant_print(source_option->def, TRUE);
+            options[index].default_value = dsview_decode_strdup(printed);
+            g_free(printed);
+        }
+        if (source_option->values != NULL) {
+            const GSList *value_node;
+            size_t value_count = (size_t)g_slist_length(source_option->values);
+
+            options[index].values = (char **)calloc(value_count, sizeof(char *));
+            if (options[index].values == NULL) {
+                dsview_decode_free_options(options, count);
+                return DSVIEW_DECODE_ERR_MALLOC;
+            }
+            options[index].value_count = value_count;
+            for (value_node = source_option->values; value_node != NULL; value_node = value_node->next) {
+                gchar *value_text = g_variant_print((GVariant *)value_node->data, TRUE);
+                options[index].values[options[index].value_count - value_count] =
+                    dsview_decode_strdup(value_text);
+                g_free(value_text);
+                if (options[index].values[options[index].value_count - value_count] == NULL) {
+                    dsview_decode_free_options(options, count);
+                    return DSVIEW_DECODE_ERR_MALLOC;
+                }
+                value_count--;
+            }
+        }
+        if ((source_option->id != NULL && options[index].id == NULL) ||
+            (source_option->idn != NULL && options[index].idn == NULL) ||
+            (source_option->desc != NULL && options[index].desc == NULL) ||
+            (source_option->def != NULL && options[index].default_value == NULL)) {
+            dsview_decode_free_options(options, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+    }
+
+    *out_options = options;
+    *out_count = count;
+    return DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_free_annotations(struct dsview_decode_annotation *annotations, size_t count)
+{
+    size_t index;
+
+    if (annotations == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(annotations[index].id);
+        free(annotations[index].label);
+        free(annotations[index].description);
+    }
+    free(annotations);
+}
+
+static int dsview_decode_copy_annotations(
+    const GSList *source,
+    const GSList *types,
+    struct dsview_decode_annotation **out_annotations,
+    size_t *out_count)
+{
+    const GSList *node;
+    const GSList *type_node;
+    struct dsview_decode_annotation *annotations = NULL;
+    size_t count = 0;
+    size_t index = 0;
+
+    if (out_annotations == NULL || out_count == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    *out_annotations = NULL;
+    *out_count = 0;
+    count = (size_t)g_slist_length((GSList *)source);
+    if (count == 0) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    annotations = (struct dsview_decode_annotation *)calloc(count, sizeof(*annotations));
+    if (annotations == NULL) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    type_node = types;
+    for (node = source; node != NULL; node = node->next, index++) {
+        char **entry = (char **)node->data;
+        annotations[index].id = dsview_decode_strdup(entry != NULL ? entry[0] : NULL);
+        annotations[index].label = dsview_decode_strdup(entry != NULL ? entry[1] : NULL);
+        annotations[index].description = dsview_decode_strdup(entry != NULL ? entry[2] : NULL);
+        annotations[index].type =
+            type_node != NULL ? GPOINTER_TO_INT(type_node->data) : -1;
+        if ((entry != NULL && entry[0] != NULL && annotations[index].id == NULL) ||
+            (entry != NULL && entry[1] != NULL && annotations[index].label == NULL) ||
+            (entry != NULL && entry[2] != NULL && annotations[index].description == NULL)) {
+            dsview_decode_free_annotations(annotations, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+        if (type_node != NULL) {
+            type_node = type_node->next;
+        }
+    }
+
+    *out_annotations = annotations;
+    *out_count = count;
+    return DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_free_annotation_rows(
+    struct dsview_decode_annotation_row *rows,
+    size_t count)
+{
+    size_t index;
+
+    if (rows == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(rows[index].id);
+        free(rows[index].desc);
+        free(rows[index].annotation_classes);
+    }
+    free(rows);
+}
+
+static int dsview_decode_copy_annotation_rows(
+    const GSList *source,
+    struct dsview_decode_annotation_row **out_rows,
+    size_t *out_count)
+{
+    const GSList *node;
+    struct dsview_decode_annotation_row *rows = NULL;
+    size_t count = 0;
+    size_t index = 0;
+
+    if (out_rows == NULL || out_count == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    *out_rows = NULL;
+    *out_count = 0;
+    count = (size_t)g_slist_length((GSList *)source);
+    if (count == 0) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    rows = (struct dsview_decode_annotation_row *)calloc(count, sizeof(*rows));
+    if (rows == NULL) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    for (node = source; node != NULL; node = node->next, index++) {
+        const struct srd_decoder_annotation_row *source_row =
+            (const struct srd_decoder_annotation_row *)node->data;
+        const GSList *class_node;
+        size_t class_count = (size_t)g_slist_length(source_row->ann_classes);
+        size_t class_index = 0;
+
+        rows[index].id = dsview_decode_strdup(source_row->id);
+        rows[index].desc = dsview_decode_strdup(source_row->desc);
+        rows[index].annotation_class_count = class_count;
+        if ((source_row->id != NULL && rows[index].id == NULL) ||
+            (source_row->desc != NULL && rows[index].desc == NULL)) {
+            dsview_decode_free_annotation_rows(rows, count);
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+
+        if (class_count > 0) {
+            rows[index].annotation_classes =
+                (size_t *)calloc(class_count, sizeof(size_t));
+            if (rows[index].annotation_classes == NULL) {
+                dsview_decode_free_annotation_rows(rows, count);
+                return DSVIEW_DECODE_ERR_MALLOC;
+            }
+        }
+
+        for (class_node = source_row->ann_classes; class_node != NULL; class_node = class_node->next) {
+            rows[index].annotation_classes[class_index++] =
+                (size_t)GPOINTER_TO_SIZE(class_node->data);
+        }
+    }
+
+    *out_rows = rows;
+    *out_count = count;
+    return DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_free_list_entries(struct dsview_decode_list_entry *list, size_t count)
+{
+    size_t index;
+
+    if (list == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(list[index].id);
+        free(list[index].name);
+        free(list[index].longname);
+        free(list[index].desc);
+        free(list[index].license);
+    }
+    free(list);
+}
+
+static int dsview_decode_copy_list_entry(
+    const struct srd_decoder *source,
+    struct dsview_decode_list_entry *entry)
+{
+    entry->id = dsview_decode_strdup(source->id);
+    entry->name = dsview_decode_strdup(source->name);
+    entry->longname = dsview_decode_strdup(source->longname);
+    entry->desc = dsview_decode_strdup(source->desc);
+    entry->license = dsview_decode_strdup(source->license);
+
+    if ((source->id != NULL && entry->id == NULL) ||
+        (source->name != NULL && entry->name == NULL) ||
+        (source->longname != NULL && entry->longname == NULL) ||
+        (source->desc != NULL && entry->desc == NULL) ||
+        (source->license != NULL && entry->license == NULL)) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    return DSVIEW_DECODE_OK;
+}
+
+int dsview_decode_runtime_load(const char *path)
+{
+    int status = DSVIEW_DECODE_OK;
+
+    if (path == NULL || path[0] == '\0') {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    if (g_decode_runtime_api.library_handle != NULL) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    dsview_decode_set_loader_error_text(NULL);
+    dsview_decode_clear_error_state();
+
+    dsview_bridge_clear_loader_error();
+    g_decode_runtime_api.library_handle = dsview_bridge_dlopen(path);
+    if (g_decode_runtime_api.library_handle == NULL) {
+        dsview_decode_set_loader_error_from_loader();
+        return DSVIEW_BRIDGE_ERR_DLOPEN;
+    }
+
+    g_decode_runtime_api.srd_init =
+        (srd_init_fn)dsview_decode_load_symbol("srd_init", &status);
+    if (g_decode_runtime_api.srd_init == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_exit =
+        (srd_exit_fn)dsview_decode_load_symbol("srd_exit", &status);
+    if (g_decode_runtime_api.srd_exit == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_decoder_list =
+        (srd_decoder_list_fn)dsview_decode_load_symbol("srd_decoder_list", &status);
+    if (g_decode_runtime_api.srd_decoder_list == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_decoder_get_by_id =
+        (srd_decoder_get_by_id_fn)dsview_decode_load_symbol("srd_decoder_get_by_id", &status);
+    if (g_decode_runtime_api.srd_decoder_get_by_id == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_decoder_load_all =
+        (srd_decoder_load_all_fn)dsview_decode_load_symbol("srd_decoder_load_all", &status);
+    if (g_decode_runtime_api.srd_decoder_load_all == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_searchpaths_get =
+        (srd_searchpaths_get_fn)dsview_decode_load_symbol("srd_searchpaths_get", &status);
+    if (g_decode_runtime_api.srd_searchpaths_get == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_strerror =
+        (srd_strerror_fn)dsview_decode_load_symbol("srd_strerror", &status);
+    if (g_decode_runtime_api.srd_strerror == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_strerror_name =
+        (srd_strerror_name_fn)dsview_decode_load_symbol("srd_strerror_name", &status);
+    if (g_decode_runtime_api.srd_strerror_name == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+
+    return DSVIEW_DECODE_OK;
+}
+
+void dsview_decode_runtime_unload(void)
+{
+    if (g_decode_runtime_api.initialized && g_decode_runtime_api.srd_exit != NULL) {
+        g_decode_runtime_api.srd_exit();
+    }
+    if (g_decode_runtime_api.library_handle != NULL) {
+        dsview_bridge_dlclose(g_decode_runtime_api.library_handle);
+    }
+    memset(&g_decode_runtime_api, 0, sizeof(g_decode_runtime_api));
+}
+
+int dsview_decode_runtime_init(const char *decoder_dir)
+{
+    const GSList *decoders;
+    int status;
+
+    if (g_decode_runtime_api.library_handle == NULL) {
+        return dsview_decode_not_loaded();
+    }
+    if (decoder_dir == NULL || decoder_dir[0] == '\0') {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+    if (!g_file_test(decoder_dir, G_FILE_TEST_IS_DIR)) {
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_DECODER_DIR,
+            "decoder directory missing",
+            "decode runtime init requires an explicit decoder directory that exists");
+        return DSVIEW_DECODE_ERR_DECODER_DIR;
+    }
+
+    if (g_decode_runtime_api.initialized && g_decode_runtime_api.srd_exit != NULL) {
+        g_decode_runtime_api.srd_exit();
+        g_decode_runtime_api.initialized = 0;
+    }
+
+    dsview_decode_clear_error_state();
+    status = g_decode_runtime_api.srd_init(decoder_dir);
+    if (status != SRD_OK) {
+        dsview_decode_capture_upstream_error(status, 0);
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+    g_decode_runtime_api.initialized = 1;
+
+    status = g_decode_runtime_api.srd_decoder_load_all();
+    if (status != SRD_OK) {
+        dsview_decode_capture_upstream_error(status, 1);
+        g_decode_runtime_api.srd_exit();
+        g_decode_runtime_api.initialized = 0;
+        return dsview_decode_map_upstream_status(status, 1);
+    }
+
+    decoders = g_decode_runtime_api.srd_decoder_list();
+    if (decoders == NULL || g_slist_length((GSList *)decoders) == 0) {
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_DECODER_LOAD,
+            "decoder load failed",
+            "decode runtime init completed but no decoders were loaded");
+        g_decode_runtime_api.srd_exit();
+        g_decode_runtime_api.initialized = 0;
+        return DSVIEW_DECODE_ERR_DECODER_LOAD;
+    }
+
+    return DSVIEW_DECODE_OK;
+}
+
+int dsview_decode_runtime_exit(void)
+{
+    int status;
+
+    if (g_decode_runtime_api.library_handle == NULL) {
+        return dsview_decode_not_loaded();
+    }
+    if (!g_decode_runtime_api.initialized) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    status = g_decode_runtime_api.srd_exit();
+    if (status != SRD_OK) {
+        dsview_decode_capture_upstream_error(status, 0);
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+
+    g_decode_runtime_api.initialized = 0;
+    dsview_decode_clear_error_state();
+    return DSVIEW_DECODE_OK;
+}
+
+const char *dsview_decode_last_loader_error(void)
+{
+    return g_decode_runtime_api.last_loader_error;
+}
+
+const char *dsview_decode_last_error(void)
+{
+    return g_decode_runtime_api.last_error;
+}
+
+const char *dsview_decode_last_error_name(void)
+{
+    return g_decode_runtime_api.last_error_name;
+}
+
+int dsview_decode_list(struct dsview_decode_list_entry **out_list, size_t *out_count)
+{
+    const GSList *node;
+    const GSList *decoders;
+    struct dsview_decode_list_entry *list = NULL;
+    size_t count = 0;
+    size_t index = 0;
+    int status;
+
+    if (out_list == NULL || out_count == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+    *out_list = NULL;
+    *out_count = 0;
+
+    if (g_decode_runtime_api.library_handle == NULL) {
+        return dsview_decode_not_loaded();
+    }
+    if (!g_decode_runtime_api.initialized) {
+        return dsview_decode_not_initialized();
+    }
+
+    decoders = g_decode_runtime_api.srd_decoder_list();
+    count = (size_t)g_slist_length((GSList *)decoders);
+    if (count == 0) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    list = (struct dsview_decode_list_entry *)calloc(count, sizeof(*list));
+    if (list == NULL) {
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_MALLOC,
+            "memory allocation error",
+            "failed to allocate decode_list snapshot");
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    for (node = decoders; node != NULL; node = node->next, index++) {
+        status = dsview_decode_copy_list_entry((const struct srd_decoder *)node->data, &list[index]);
+        if (status != DSVIEW_DECODE_OK) {
+            dsview_decode_free_list_entries(list, count);
+            dsview_decode_set_error_detail(
+                status,
+                "memory allocation error",
+                "failed to copy decode_list snapshot");
+            return status;
+        }
+    }
+
+    *out_list = list;
+    *out_count = count;
+    return DSVIEW_DECODE_OK;
+}
+
+void dsview_decode_free_list(struct dsview_decode_list_entry *list, size_t count)
+{
+    dsview_decode_free_list_entries(list, count);
+}
+
+void dsview_decode_free_metadata(struct dsview_decode_metadata *metadata)
+{
+    if (metadata == NULL) {
+        return;
+    }
+
+    free(metadata->id);
+    free(metadata->name);
+    free(metadata->longname);
+    free(metadata->desc);
+    free(metadata->license);
+    dsview_decode_free_string_array(metadata->inputs, metadata->input_count);
+    dsview_decode_free_string_array(metadata->outputs, metadata->output_count);
+    dsview_decode_free_string_array(metadata->tags, metadata->tag_count);
+    dsview_decode_free_channels(metadata->required_channels, metadata->required_channel_count);
+    dsview_decode_free_channels(metadata->optional_channels, metadata->optional_channel_count);
+    dsview_decode_free_options(metadata->options, metadata->option_count);
+    dsview_decode_free_annotations(metadata->annotations, metadata->annotation_count);
+    dsview_decode_free_annotation_rows(metadata->annotation_rows, metadata->annotation_row_count);
+    memset(metadata, 0, sizeof(*metadata));
+}
+
+int dsview_decode_inspect(const char *decoder_id, struct dsview_decode_metadata *out_metadata)
+{
+    const struct srd_decoder *decoder = NULL;
+    int status;
+
+    if (decoder_id == NULL || out_metadata == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+    memset(out_metadata, 0, sizeof(*out_metadata));
+
+    if (g_decode_runtime_api.library_handle == NULL) {
+        return dsview_decode_not_loaded();
+    }
+    if (!g_decode_runtime_api.initialized) {
+        return dsview_decode_not_initialized();
+    }
+
+    decoder = g_decode_runtime_api.srd_decoder_get_by_id(decoder_id);
+    if (decoder == NULL) {
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_UNKNOWN_DECODER,
+            "unknown decoder",
+            "decode inspect requested an unknown decoder id");
+        return DSVIEW_DECODE_ERR_UNKNOWN_DECODER;
+    }
+
+    out_metadata->id = dsview_decode_strdup(decoder->id);
+    out_metadata->name = dsview_decode_strdup(decoder->name);
+    out_metadata->longname = dsview_decode_strdup(decoder->longname);
+    out_metadata->desc = dsview_decode_strdup(decoder->desc);
+    out_metadata->license = dsview_decode_strdup(decoder->license);
+    if ((decoder->id != NULL && out_metadata->id == NULL) ||
+        (decoder->name != NULL && out_metadata->name == NULL) ||
+        (decoder->longname != NULL && out_metadata->longname == NULL) ||
+        (decoder->desc != NULL && out_metadata->desc == NULL) ||
+        (decoder->license != NULL && out_metadata->license == NULL)) {
+        dsview_decode_free_metadata(out_metadata);
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_MALLOC,
+            "memory allocation error",
+            "failed to allocate decode_inspect metadata");
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    status = dsview_decode_copy_string_array(decoder->inputs, &out_metadata->inputs, &out_metadata->input_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+    status = dsview_decode_copy_string_array(decoder->outputs, &out_metadata->outputs, &out_metadata->output_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+    status = dsview_decode_copy_string_array(decoder->tags, &out_metadata->tags, &out_metadata->tag_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+    status = dsview_decode_copy_channels(decoder->channels, &out_metadata->required_channels, &out_metadata->required_channel_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+    status = dsview_decode_copy_channels(decoder->opt_channels, &out_metadata->optional_channels, &out_metadata->optional_channel_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+    status = dsview_decode_copy_options(decoder->options, &out_metadata->options, &out_metadata->option_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+    status = dsview_decode_copy_annotations(decoder->annotations, decoder->ann_types, &out_metadata->annotations, &out_metadata->annotation_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+    status = dsview_decode_copy_annotation_rows(decoder->annotation_rows, &out_metadata->annotation_rows, &out_metadata->annotation_row_count);
+    if (status != DSVIEW_DECODE_OK) goto fail;
+
+    return DSVIEW_DECODE_OK;
+
+fail:
+    dsview_decode_free_metadata(out_metadata);
+    dsview_decode_set_error_detail(
+        status,
+        "memory allocation error",
+        "failed to copy decode_inspect metadata");
+    return status;
 }
 
 static int dsview_bridge_get_uint64_config(int key, unsigned long long *value)

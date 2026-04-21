@@ -126,6 +126,22 @@ unsafe extern "C" {
         out_buffer: *mut RawExportBuffer,
     ) -> c_int;
     fn dsview_bridge_free_export_buffer(buffer: *mut RawExportBuffer);
+    fn dsview_decode_runtime_load(path: *const c_char) -> c_int;
+    fn dsview_decode_runtime_init(decoder_dir: *const c_char) -> c_int;
+    fn dsview_decode_runtime_exit() -> c_int;
+    fn dsview_decode_last_loader_error() -> *const c_char;
+    fn dsview_decode_last_error() -> *const c_char;
+    fn dsview_decode_last_error_name() -> *const c_char;
+    fn dsview_decode_list(
+        out_list: *mut *mut RawDecodeListEntry,
+        out_count: *mut usize,
+    ) -> c_int;
+    fn dsview_decode_free_list(list: *mut RawDecodeListEntry, count: usize);
+    fn dsview_decode_inspect(
+        decoder_id: *const c_char,
+        out_metadata: *mut RawDecodeMetadata,
+    ) -> c_int;
+    fn dsview_decode_free_metadata(metadata: *mut RawDecodeMetadata);
 }
 
 const SR_OK: i32 = 0;
@@ -155,6 +171,14 @@ const DSVIEW_EXPORT_ERR_MISSING_SAMPLERATE: i32 = -104;
 const DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS: i32 = -105;
 const DSVIEW_EXPORT_ERR_OUTPUT_MODULE: i32 = -106;
 const DSVIEW_EXPORT_ERR_RUNTIME: i32 = -107;
+const DSVIEW_DECODE_ERR_ARG: i32 = -20;
+const DSVIEW_DECODE_ERR_NOT_LOADED: i32 = -21;
+const DSVIEW_DECODE_ERR_DECODER_DIR: i32 = -22;
+const DSVIEW_DECODE_ERR_PYTHON: i32 = -23;
+const DSVIEW_DECODE_ERR_DECODER_LOAD: i32 = -24;
+const DSVIEW_DECODE_ERR_UNKNOWN_DECODER: i32 = -25;
+const DSVIEW_DECODE_ERR_UPSTREAM: i32 = -26;
+const DSVIEW_DECODE_ERR_MALLOC: i32 = -27;
 
 const DEVICE_NAME_CAPACITY: usize = 150;
 const OPTION_LABEL_CAPACITY: usize = 64;
@@ -298,6 +322,82 @@ struct RawExportBuffer {
     packet_count: usize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeChannel {
+    id: *mut c_char,
+    name: *mut c_char,
+    desc: *mut c_char,
+    order: c_int,
+    channel_type: c_int,
+    idn: *mut c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeOption {
+    id: *mut c_char,
+    idn: *mut c_char,
+    desc: *mut c_char,
+    default_value: *mut c_char,
+    values: *mut *mut c_char,
+    value_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeAnnotation {
+    id: *mut c_char,
+    label: *mut c_char,
+    description: *mut c_char,
+    annotation_type: c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeAnnotationRow {
+    id: *mut c_char,
+    desc: *mut c_char,
+    annotation_classes: *mut usize,
+    annotation_class_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeListEntry {
+    id: *mut c_char,
+    name: *mut c_char,
+    longname: *mut c_char,
+    desc: *mut c_char,
+    license: *mut c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeMetadata {
+    id: *mut c_char,
+    name: *mut c_char,
+    longname: *mut c_char,
+    desc: *mut c_char,
+    license: *mut c_char,
+    inputs: *mut *mut c_char,
+    input_count: usize,
+    outputs: *mut *mut c_char,
+    output_count: usize,
+    tags: *mut *mut c_char,
+    tag_count: usize,
+    required_channels: *mut RawDecodeChannel,
+    required_channel_count: usize,
+    optional_channels: *mut RawDecodeChannel,
+    optional_channel_count: usize,
+    options: *mut RawDecodeOption,
+    option_count: usize,
+    annotations: *mut RawDecodeAnnotation,
+    annotation_count: usize,
+    annotation_rows: *mut RawDecodeAnnotationRow,
+    annotation_row_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VcdExportRequest {
     pub samplerate_hz: u64,
@@ -359,6 +459,113 @@ impl ExportErrorCode {
             Self::Unknown(_) => "export_unknown",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeRuntimeErrorCode {
+    DecoderDirectory,
+    Python,
+    DecoderLoad,
+    UnknownDecoder,
+    Upstream,
+    OutOfMemory,
+    Unknown(i32),
+}
+
+impl DecodeRuntimeErrorCode {
+    fn from_raw(raw: i32) -> Self {
+        match raw {
+            DSVIEW_DECODE_ERR_DECODER_DIR => Self::DecoderDirectory,
+            DSVIEW_DECODE_ERR_PYTHON => Self::Python,
+            DSVIEW_DECODE_ERR_DECODER_LOAD => Self::DecoderLoad,
+            DSVIEW_DECODE_ERR_UNKNOWN_DECODER => Self::UnknownDecoder,
+            DSVIEW_DECODE_ERR_UPSTREAM => Self::Upstream,
+            DSVIEW_DECODE_ERR_MALLOC => Self::OutOfMemory,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum DecodeRuntimeError {
+    #[error("decode runtime bridge rejected argument: {0}")]
+    InvalidArgument(String),
+    #[error("decode runtime bridge shared library is not loaded")]
+    BridgeNotLoaded,
+    #[error("failed to load decode runtime shared library `{path}`: {detail}")]
+    LibraryLoad { path: PathBuf, detail: String },
+    #[error("failed to resolve required srd_* symbols from `{path}`: {detail}")]
+    SymbolLoad { path: PathBuf, detail: String },
+    #[error("decode native call `{operation}` failed with {code:?}: {detail}")]
+    NativeCall {
+        operation: &'static str,
+        code: DecodeRuntimeErrorCode,
+        detail: String,
+    },
+    #[error("path contains an interior NUL byte: {path}")]
+    PathContainsNul { path: PathBuf },
+    #[error("decode metadata contains invalid UTF-8")]
+    InvalidUtf8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeListEntry {
+    pub id: String,
+    pub name: String,
+    pub longname: String,
+    pub description: String,
+    pub license: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeChannel {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub order: i32,
+    pub channel_type: i32,
+    pub idn: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeOption {
+    pub id: String,
+    pub idn: Option<String>,
+    pub description: Option<String>,
+    pub default_value: Option<String>,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeAnnotation {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub annotation_type: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeAnnotationRow {
+    pub id: String,
+    pub description: Option<String>,
+    pub annotation_classes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeMetadata {
+    pub id: String,
+    pub name: String,
+    pub longname: String,
+    pub description: String,
+    pub license: String,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub tags: Vec<String>,
+    pub required_channels: Vec<DecodeChannel>,
+    pub optional_channels: Vec<DecodeChannel>,
+    pub options: Vec<DecodeOption>,
+    pub annotations: Vec<DecodeAnnotation>,
+    pub annotation_rows: Vec<DecodeAnnotationRow>,
 }
 
 #[repr(C)]
@@ -1503,6 +1710,129 @@ impl Drop for RuntimeBridge {
     }
 }
 
+#[derive(Debug)]
+pub struct DecodeRuntimeBridge {
+    library_path: PathBuf,
+}
+
+impl DecodeRuntimeBridge {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, DecodeRuntimeError> {
+        let path = path.as_ref();
+        let c_path = path_to_decode_cstring(path)?;
+        let status = unsafe { dsview_decode_runtime_load(c_path.as_ptr()) };
+
+        match status {
+            0 => Ok(Self {
+                library_path: path.to_path_buf(),
+            }),
+            DSVIEW_BRIDGE_ERR_ARG | DSVIEW_DECODE_ERR_ARG => Err(DecodeRuntimeError::InvalidArgument(
+                "decode runtime library path must not be empty".to_string(),
+            )),
+            DSVIEW_BRIDGE_ERR_DLOPEN => Err(DecodeRuntimeError::LibraryLoad {
+                path: path.to_path_buf(),
+                detail: decode_last_loader_error(),
+            }),
+            DSVIEW_BRIDGE_ERR_DLSYM => Err(DecodeRuntimeError::SymbolLoad {
+                path: path.to_path_buf(),
+                detail: decode_last_loader_error(),
+            }),
+            DSVIEW_BRIDGE_ERR_NOT_LOADED | DSVIEW_DECODE_ERR_NOT_LOADED => {
+                Err(DecodeRuntimeError::BridgeNotLoaded)
+            }
+            other => Err(DecodeRuntimeError::InvalidArgument(format!(
+                "unexpected decode bridge status {other}"
+            ))),
+        }
+    }
+
+    pub fn library_path(&self) -> &Path {
+        &self.library_path
+    }
+
+    pub fn init(&self, decoder_dir: impl AsRef<Path>) -> Result<(), DecodeRuntimeError> {
+        let c_path = path_to_decode_cstring(decoder_dir.as_ref())?;
+        decode_native_call_status("decode runtime init", unsafe {
+            dsview_decode_runtime_init(c_path.as_ptr())
+        })
+    }
+
+    pub fn exit(&self) -> Result<(), DecodeRuntimeError> {
+        decode_native_call_status("decode runtime exit", unsafe {
+            dsview_decode_runtime_exit()
+        })
+    }
+
+    pub fn list_decoders(&self) -> Result<Vec<DecodeListEntry>, DecodeRuntimeError> {
+        let mut raw_list: *mut RawDecodeListEntry = std::ptr::null_mut();
+        let mut count = 0_usize;
+        decode_native_call_status("decode_list", unsafe {
+            dsview_decode_list(&mut raw_list, &mut count)
+        })?;
+
+        if raw_list.is_null() || count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let result = unsafe {
+            let slice = std::slice::from_raw_parts(raw_list, count);
+            slice
+                .iter()
+                .map(decode_list_entry_from_raw)
+                .collect::<Result<Vec<_>, DecodeRuntimeError>>()
+        };
+
+        unsafe { dsview_decode_free_list(raw_list, count) };
+        result
+    }
+
+    pub fn inspect_decoder(
+        &self,
+        decoder_id: &str,
+    ) -> Result<DecodeMetadata, DecodeRuntimeError> {
+        let decoder_id = CString::new(decoder_id).map_err(|_| DecodeRuntimeError::InvalidArgument(
+            "decoder id must not contain interior NUL bytes".to_string(),
+        ))?;
+        let mut raw = RawDecodeMetadata {
+            id: std::ptr::null_mut(),
+            name: std::ptr::null_mut(),
+            longname: std::ptr::null_mut(),
+            desc: std::ptr::null_mut(),
+            license: std::ptr::null_mut(),
+            inputs: std::ptr::null_mut(),
+            input_count: 0,
+            outputs: std::ptr::null_mut(),
+            output_count: 0,
+            tags: std::ptr::null_mut(),
+            tag_count: 0,
+            required_channels: std::ptr::null_mut(),
+            required_channel_count: 0,
+            optional_channels: std::ptr::null_mut(),
+            optional_channel_count: 0,
+            options: std::ptr::null_mut(),
+            option_count: 0,
+            annotations: std::ptr::null_mut(),
+            annotation_count: 0,
+            annotation_rows: std::ptr::null_mut(),
+            annotation_row_count: 0,
+        };
+        decode_native_call_status("decode inspect", unsafe {
+            dsview_decode_inspect(decoder_id.as_ptr(), &mut raw)
+        })?;
+
+        let metadata = decode_metadata_from_raw(&raw);
+        unsafe { dsview_decode_free_metadata(&mut raw) };
+        metadata
+    }
+}
+
+impl Drop for DecodeRuntimeBridge {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = dsview_decode_runtime_exit();
+        };
+    }
+}
+
 /// Reports whether the sys boundary is wired to the DSView public frontend API.
 pub fn native_boundary_ready() -> bool {
     cfg!(dsview_native_boundary)
@@ -1607,6 +1937,229 @@ fn bridge_last_error() -> String {
             CStr::from_ptr(raw).to_string_lossy().into_owned()
         }
     }
+}
+
+fn decode_last_loader_error() -> String {
+    unsafe {
+        let raw = dsview_decode_last_loader_error();
+        if raw.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(raw).to_string_lossy().into_owned()
+        }
+    }
+}
+
+fn decode_last_error() -> String {
+    unsafe {
+        let raw = dsview_decode_last_error();
+        if raw.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(raw).to_string_lossy().into_owned()
+        }
+    }
+}
+
+fn decode_last_error_name() -> String {
+    unsafe {
+        let raw = dsview_decode_last_error_name();
+        if raw.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(raw).to_string_lossy().into_owned()
+        }
+    }
+}
+
+fn decode_native_call_status(
+    operation: &'static str,
+    status: i32,
+) -> Result<(), DecodeRuntimeError> {
+    match status {
+        SR_OK => Ok(()),
+        DSVIEW_BRIDGE_ERR_NOT_LOADED | DSVIEW_DECODE_ERR_NOT_LOADED => {
+            Err(DecodeRuntimeError::BridgeNotLoaded)
+        }
+        DSVIEW_BRIDGE_ERR_ARG | DSVIEW_DECODE_ERR_ARG => {
+            Err(DecodeRuntimeError::InvalidArgument(decode_last_error()))
+        }
+        other => Err(DecodeRuntimeError::NativeCall {
+            operation,
+            code: DecodeRuntimeErrorCode::from_raw(other),
+            detail: if decode_last_error().is_empty() {
+                decode_last_error_name()
+            } else {
+                let name = decode_last_error_name();
+                let detail = decode_last_error();
+                if name.is_empty() {
+                    detail
+                } else {
+                    format!("{name}: {detail}")
+                }
+            },
+        }),
+    }
+}
+
+fn decode_optional_c_string(raw: *const c_char) -> Result<Option<String>, DecodeRuntimeError> {
+    if raw.is_null() {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        unsafe { CStr::from_ptr(raw) }
+            .to_str()
+            .map_err(|_| DecodeRuntimeError::InvalidUtf8)?
+            .to_string(),
+    ))
+}
+
+fn decode_required_c_string(raw: *const c_char) -> Result<String, DecodeRuntimeError> {
+    decode_optional_c_string(raw)?
+        .ok_or_else(|| DecodeRuntimeError::InvalidArgument("expected non-null decode string".to_string()))
+}
+
+fn decode_string_array(
+    raw: *const *mut c_char,
+    count: usize,
+) -> Result<Vec<String>, DecodeRuntimeError> {
+    if raw.is_null() || count == 0 {
+        return Ok(Vec::new());
+    }
+
+    unsafe { std::slice::from_raw_parts(raw, count) }
+        .iter()
+        .map(|value| decode_required_c_string(*value as *const c_char))
+        .collect()
+}
+
+fn decode_channel_from_raw(raw: &RawDecodeChannel) -> Result<DecodeChannel, DecodeRuntimeError> {
+    Ok(DecodeChannel {
+        id: decode_required_c_string(raw.id.cast_const())?,
+        name: decode_required_c_string(raw.name.cast_const())?,
+        description: decode_required_c_string(raw.desc.cast_const())?,
+        order: raw.order,
+        channel_type: raw.channel_type,
+        idn: decode_optional_c_string(raw.idn.cast_const())?,
+    })
+}
+
+fn decode_option_from_raw(raw: &RawDecodeOption) -> Result<DecodeOption, DecodeRuntimeError> {
+    Ok(DecodeOption {
+        id: decode_required_c_string(raw.id.cast_const())?,
+        idn: decode_optional_c_string(raw.idn.cast_const())?,
+        description: decode_optional_c_string(raw.desc.cast_const())?,
+        default_value: decode_optional_c_string(raw.default_value.cast_const())?,
+        values: decode_string_array(raw.values.cast_const(), raw.value_count)?,
+    })
+}
+
+fn decode_annotation_from_raw(
+    raw: &RawDecodeAnnotation,
+) -> Result<DecodeAnnotation, DecodeRuntimeError> {
+    Ok(DecodeAnnotation {
+        id: decode_required_c_string(raw.id.cast_const())?,
+        label: decode_optional_c_string(raw.label.cast_const())?,
+        description: decode_optional_c_string(raw.description.cast_const())?,
+        annotation_type: raw.annotation_type,
+    })
+}
+
+fn decode_annotation_row_from_raw(
+    raw: &RawDecodeAnnotationRow,
+) -> Result<DecodeAnnotationRow, DecodeRuntimeError> {
+    let annotation_classes = if raw.annotation_classes.is_null() || raw.annotation_class_count == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(raw.annotation_classes, raw.annotation_class_count) }
+            .to_vec()
+    };
+
+    Ok(DecodeAnnotationRow {
+        id: decode_required_c_string(raw.id.cast_const())?,
+        description: decode_optional_c_string(raw.desc.cast_const())?,
+        annotation_classes,
+    })
+}
+
+fn decode_list_entry_from_raw(raw: &RawDecodeListEntry) -> Result<DecodeListEntry, DecodeRuntimeError> {
+    Ok(DecodeListEntry {
+        id: decode_required_c_string(raw.id.cast_const())?,
+        name: decode_required_c_string(raw.name.cast_const())?,
+        longname: decode_required_c_string(raw.longname.cast_const())?,
+        description: decode_required_c_string(raw.desc.cast_const())?,
+        license: decode_required_c_string(raw.license.cast_const())?,
+    })
+}
+
+fn decode_metadata_from_raw(raw: &RawDecodeMetadata) -> Result<DecodeMetadata, DecodeRuntimeError> {
+    let required_channels = if raw.required_channels.is_null() || raw.required_channel_count == 0 {
+        Vec::new()
+    } else {
+        unsafe {
+            std::slice::from_raw_parts(raw.required_channels, raw.required_channel_count)
+                .iter()
+                .map(decode_channel_from_raw)
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    let optional_channels = if raw.optional_channels.is_null() || raw.optional_channel_count == 0 {
+        Vec::new()
+    } else {
+        unsafe {
+            std::slice::from_raw_parts(raw.optional_channels, raw.optional_channel_count)
+                .iter()
+                .map(decode_channel_from_raw)
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    let options = if raw.options.is_null() || raw.option_count == 0 {
+        Vec::new()
+    } else {
+        unsafe {
+            std::slice::from_raw_parts(raw.options, raw.option_count)
+                .iter()
+                .map(decode_option_from_raw)
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    let annotations = if raw.annotations.is_null() || raw.annotation_count == 0 {
+        Vec::new()
+    } else {
+        unsafe {
+            std::slice::from_raw_parts(raw.annotations, raw.annotation_count)
+                .iter()
+                .map(decode_annotation_from_raw)
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    let annotation_rows = if raw.annotation_rows.is_null() || raw.annotation_row_count == 0 {
+        Vec::new()
+    } else {
+        unsafe {
+            std::slice::from_raw_parts(raw.annotation_rows, raw.annotation_row_count)
+                .iter()
+                .map(decode_annotation_row_from_raw)
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+
+    Ok(DecodeMetadata {
+        id: decode_required_c_string(raw.id.cast_const())?,
+        name: decode_required_c_string(raw.name.cast_const())?,
+        longname: decode_required_c_string(raw.longname.cast_const())?,
+        description: decode_required_c_string(raw.desc.cast_const())?,
+        license: decode_required_c_string(raw.license.cast_const())?,
+        inputs: decode_string_array(raw.inputs.cast_const(), raw.input_count)?,
+        outputs: decode_string_array(raw.outputs.cast_const(), raw.output_count)?,
+        tags: decode_string_array(raw.tags.cast_const(), raw.tag_count)?,
+        required_channels,
+        optional_channels,
+        options,
+        annotations,
+        annotation_rows,
+    })
 }
 
 fn get_u64_config(
@@ -1866,6 +2419,14 @@ fn decode_optional_code(flag: c_int, value: i32) -> Option<i16> {
 fn path_to_cstring(path: &Path) -> Result<CString, RuntimeError> {
     CString::new(path.as_os_str().to_string_lossy().as_bytes()).map_err(|_| {
         RuntimeError::PathContainsNul {
+            path: path.to_path_buf(),
+        }
+    })
+}
+
+fn path_to_decode_cstring(path: &Path) -> Result<CString, DecodeRuntimeError> {
+    CString::new(path.as_os_str().to_string_lossy().as_bytes()).map_err(|_| {
+        DecodeRuntimeError::PathContainsNul {
             path: path.to_path_buf(),
         }
     })

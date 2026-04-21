@@ -4,8 +4,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dsview_sys::{
-    runtime_library_name, source_runtime_library_path, upstream_header_path, ExportErrorCode, RuntimeBridge,
-    RuntimeError, VcdExportRequest,
+    decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
+    source_runtime_library_path, upstream_header_path, DecodeRuntimeBridge, DecodeRuntimeError,
+    DecodeRuntimeErrorCode, ExportErrorCode, RuntimeBridge, RuntimeError, VcdExportRequest,
 };
 
 fn runtime_test_guard() -> &'static Mutex<()> {
@@ -20,6 +21,21 @@ fn load_runtime() -> Option<RuntimeBridge> {
 
 fn skip_windows_vcd_goldens() -> bool {
     cfg!(target_os = "windows")
+}
+
+fn load_decode_runtime() -> Option<DecodeRuntimeBridge> {
+    let path = source_decode_runtime_library_path()?;
+    DecodeRuntimeBridge::load(path).ok()
+}
+
+fn source_decoder_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root should exist")
+        .join("DSView")
+        .join("libsigrokdecode4DSL")
+        .join("decoders")
 }
 
 fn vcd_string(bytes: &[u8]) -> String {
@@ -155,6 +171,99 @@ fn source_runtime_path_shape_matches_cfg_state() {
         assert!(Path::new(path).is_absolute());
         assert!(path.to_string_lossy().ends_with(runtime_library_name()));
     }
+}
+
+#[test]
+fn source_decode_runtime_path_shape_matches_cfg_state() {
+    if let Some(path) = source_decode_runtime_library_path() {
+        assert!(Path::new(path).is_absolute());
+        assert!(path.to_string_lossy().ends_with(decode_runtime_library_name()));
+    }
+}
+
+#[test]
+fn decode_runtime_reports_loader_failures() {
+    let missing = std::env::temp_dir().join(format!(
+        "missing-{}-{}",
+        decode_runtime_library_name(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let error = DecodeRuntimeBridge::load(&missing).unwrap_err();
+
+    assert!(matches!(
+        error,
+        DecodeRuntimeError::LibraryLoad { path, .. } if path == missing
+    ));
+}
+
+#[test]
+fn decode_runtime_init_shapes_decoder_directory_errors() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_decode_runtime() else {
+        return;
+    };
+    let missing = std::env::temp_dir().join(format!(
+        "missing-decoders-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let error = runtime.init(&missing).unwrap_err();
+
+    assert!(matches!(
+        error,
+        DecodeRuntimeError::NativeCall {
+            operation: "decode runtime init",
+            code: DecodeRuntimeErrorCode::DecoderDirectory,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn decode_runtime_lists_and_inspects_decoder_metadata() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_decode_runtime() else {
+        return;
+    };
+    let decoder_dir = source_decoder_dir();
+    if !decoder_dir.exists() {
+        return;
+    }
+
+    runtime
+        .init(&decoder_dir)
+        .expect("decode runtime should initialize with source decoder dir");
+    let list = runtime.list_decoders().expect("decode_list should succeed");
+    assert!(
+        list.iter().any(|decoder| decoder.id == "0:i2c"),
+        "expected canonical upstream decoder ids in decode runtime list"
+    );
+
+    let decoder = runtime
+        .inspect_decoder("0:i2c")
+        .expect("decode_inspect should return decoder metadata");
+    assert_eq!(decoder.id, "0:i2c");
+    assert!(!decoder.required_channels.is_empty());
+    assert!(!decoder.annotation_rows.is_empty());
+    assert!(!decoder.inputs.is_empty());
+    assert!(!decoder.outputs.is_empty());
+
+    let unknown = runtime.inspect_decoder("missing-decoder").unwrap_err();
+    assert!(matches!(
+        unknown,
+        DecodeRuntimeError::NativeCall {
+            operation: "decode inspect",
+            code: DecodeRuntimeErrorCode::UnknownDecoder,
+            ..
+        }
+    ));
+
+    runtime.exit().expect("decode runtime exit should succeed");
 }
 
 #[test]

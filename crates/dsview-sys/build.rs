@@ -86,6 +86,7 @@ fn main() {
     let dsview_root = dsview_repo_root.join("DSView");
     let libsigrok_root = dsview_root.join("libsigrok4DSL");
     let common_root = dsview_root.join("common");
+    let libsigrokdecode_root = dsview_root.join("libsigrokdecode4DSL");
     let smoke_shim = manifest_dir.join("smoke_version_shim.c");
     let runtime_bridge = manifest_dir.join("bridge_runtime.c");
     let wrapper_header = manifest_dir.join("wrapper.h");
@@ -205,6 +206,7 @@ fn main() {
             format!("-I{}", compat_root.display()),
             format!("-I{}", dsview_root.display()),
             format!("-I{}", libsigrok_root.display()),
+            format!("-I{}", libsigrokdecode_root.display()),
             format!("-I{}", common_root.display()),
             format!("-I{}", manifest_dir.display()),
             format!("-I{}", native_root.display()),
