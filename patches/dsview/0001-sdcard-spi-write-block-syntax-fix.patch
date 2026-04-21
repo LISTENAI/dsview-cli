@@ -1,0 +1,13 @@
+diff --git a/libsigrokdecode4DSL/decoders/sdcard_spi/pd.py b/libsigrokdecode4DSL/decoders/sdcard_spi/pd.py
+index 72702677..1a363812 100644
+--- a/libsigrokdecode4DSL/decoders/sdcard_spi/pd.py
++++ b/libsigrokdecode4DSL/decoders/sdcard_spi/pd.py
+@@ -231,7 +231,7 @@ class Decoder(srd.Decoder):
+ 
+     def handle_cmd24(self):
+         # CMD24: WRITE_BLOCK
+-        self.putc(Ann.CMD24, 'Write a block to address {$}', self.arg))
++        self.putc(Ann.CMD24, 'Write a block to address {$}', self.arg)
+         self.is_cmd24 = True
+         self.state = 'GET RESPONSE R1'
+
