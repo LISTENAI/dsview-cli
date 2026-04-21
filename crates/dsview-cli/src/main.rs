@@ -529,6 +529,7 @@ fn decode_fixture_descriptor() -> dsview_core::DecoderDescriptor {
             id: "address_format".to_string(),
             idn: Some("address_format".to_string()),
             description: Some("Whether addresses render as 7-bit or 8-bit".to_string()),
+            value_kind: dsview_core::DecodeOptionValueKind::String,
             default_value: Some("7-bit".to_string()),
             values: vec!["7-bit".to_string(), "8-bit".to_string()],
         }],
@@ -2393,6 +2394,96 @@ mod tests {
 
         assert_eq!(response.code, "channel_mode_unsupported");
         assert!(response.message.contains("invalid-token"));
+    }
+
+    #[test]
+    fn validation_error_codes_remain_stable_for_decode_config_failures() {
+        let invalid_json = dsview_core::parse_decode_config("{").expect_err("json should fail");
+        let schema_error = dsview_core::parse_decode_config(
+            r#"{
+                "decoder": {
+                    "id": 7,
+                    "channels": {},
+                    "options": {}
+                }
+            }"#,
+        )
+        .expect_err("schema should fail");
+
+        let cases = [
+            (
+                classify_decode_config_parse_error(&invalid_json).code,
+                "decode_config_parse_failed",
+            ),
+            (
+                classify_decode_config_parse_error(&schema_error).code,
+                "decode_config_schema_invalid",
+            ),
+            (
+                classify_decode_config_validation_error(
+                    &dsview_core::DecodeConfigValidationError::UnsupportedVersion { version: 99 },
+                )
+                .code,
+                "decode_config_schema_invalid",
+            ),
+            (
+                classify_decode_config_validation_error(
+                    &dsview_core::DecodeConfigValidationError::UnknownDecoder {
+                        decoder_id: "decoder:404".to_string(),
+                    },
+                )
+                .code,
+                "decode_decoder_not_found",
+            ),
+            (
+                classify_decode_config_validation_error(
+                    &dsview_core::DecodeConfigValidationError::MissingRequiredChannel {
+                        decoder_id: "0:i2c".to_string(),
+                        channel_id: "sda".to_string(),
+                    },
+                )
+                .code,
+                "decode_missing_required_channel",
+            ),
+            (
+                classify_decode_config_validation_error(
+                    &dsview_core::DecodeConfigValidationError::UnknownOption {
+                        decoder_id: "0:i2c".to_string(),
+                        option_id: "address_format".to_string(),
+                    },
+                )
+                .code,
+                "decode_unknown_option",
+            ),
+            (
+                classify_decode_config_validation_error(
+                    &dsview_core::DecodeConfigValidationError::InvalidOptionValueType {
+                        decoder_id: "0:i2c".to_string(),
+                        option_id: "address_format".to_string(),
+                        expected: dsview_core::DecodeOptionValueKind::String,
+                        actual: dsview_core::DecodeOptionValueKind::Integer,
+                    },
+                )
+                .code,
+                "decode_option_value_invalid",
+            ),
+            (
+                classify_decode_config_validation_error(
+                    &dsview_core::DecodeConfigValidationError::IncompatibleStackLink {
+                        upstream_decoder_id: "0:i2c".to_string(),
+                        downstream_decoder_id: "spi-frames".to_string(),
+                        upstream_outputs: vec!["i2c".to_string()],
+                        downstream_inputs: vec!["spi".to_string()],
+                    },
+                )
+                .code,
+                "decode_stack_incompatible",
+            ),
+        ];
+
+        for (actual, expected) in cases {
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
