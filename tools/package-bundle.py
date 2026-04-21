@@ -34,6 +34,18 @@ def ensure_exists(path: Path, label: str) -> None:
         raise FileNotFoundError(f"{label} not found: {path}")
 
 
+def ensure_file(path: Path, label: str) -> None:
+    ensure_exists(path, label)
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} is not a file: {path}")
+
+
+def ensure_directory(path: Path, label: str) -> None:
+    ensure_exists(path, label)
+    if not path.is_dir():
+        raise FileNotFoundError(f"{label} is not a directory: {path}")
+
+
 def add_file(archive: tarfile.TarFile, source: Path, destination: str) -> None:
     archive.add(source, arcname=destination, recursive=False)
 
@@ -41,9 +53,9 @@ def add_file(archive: tarfile.TarFile, source: Path, destination: str) -> None:
 def main() -> int:
     args = parse_args()
 
-    ensure_exists(args.exe, "Executable")
-    ensure_exists(args.runtime, "Runtime library")
-    ensure_exists(args.resources, "Resources directory")
+    ensure_file(args.exe, "Executable")
+    ensure_file(args.runtime, "Runtime library")
+    ensure_directory(args.resources, "Resources directory")
 
     archive_root = f"dsview-cli-{args.version}-{args.target}"
     exe_name = "dsview-cli.exe" if "windows" in args.target else "dsview-cli"

@@ -74,19 +74,34 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --target ${{ matrix.target }}
 
-      - name: Find runtime library
-        if: matrix.package_bundle
-        id: find-runtime
+      - name: Find runtime library (Windows)
+        if: matrix.package_bundle && contains(matrix.target, 'windows')
+        id: find-runtime-windows
+        shell: pwsh
+        run: |
+          $runtime = Get-ChildItem "target/${{ matrix.target }}/release/build" -Recurse -Filter "dsview_runtime.dll" -ErrorAction Stop |
+            Sort-Object FullName |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $runtime) {
+            throw "Windows runtime library was not found under target/${{ matrix.target }}/release/build"
+          }
+          "runtime-lib=$runtime" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Find runtime library (Unix)
+        if: matrix.package_bundle && !contains(matrix.target, 'windows')
+        id: find-runtime-unix
         shell: bash
         run: |
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "dsview_runtime.dll" | head -n 1)
-          elif [[ "${{ matrix.target }}" == *"darwin"* ]] || [[ "${{ matrix.target }}" == *"macos"* ]]; then
-            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "libdsview_runtime.dylib" | head -n 1)
+          if [[ "${{ matrix.target }}" == *"darwin"* ]] || [[ "${{ matrix.target }}" == *"macos"* ]]; then
+            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "libdsview_runtime.dylib" -print -quit)
           else
-            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "libdsview_runtime.so" | head -n 1)
+            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-runtime-build -name "libdsview_runtime.so" -print -quit)
           fi
-          echo "runtime-lib=$RUNTIME_LIB" >> $GITHUB_OUTPUT
+          if [[ -z "$RUNTIME_LIB" ]]; then
+            echo "runtime library was not found for ${{ matrix.target }}" >&2
+            exit 1
+          fi
+          echo "runtime-lib=$RUNTIME_LIB" >> "$GITHUB_OUTPUT"
 
       - name: Determine executable path
         if: matrix.package_bundle
@@ -106,4 +121,4 @@ jobs:
           target: ${{ matrix.target }}
           version: ${{ steps.version.outputs.version }}
           exe-path: ${{ steps.exe-path.outputs.exe }}
-          runtime-path: ${{ steps.find-runtime.outputs.runtime-lib }}
+          runtime-path: ${{ contains(matrix.target, 'windows') && steps.find-runtime-windows.outputs.runtime-lib || steps.find-runtime-unix.outputs.runtime-lib }}
