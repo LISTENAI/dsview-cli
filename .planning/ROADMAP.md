@@ -88,7 +88,7 @@ Phases execute in numeric order: 14 -> 15 -> 16 -> 17
 |-------|----------------|--------|-----------|
 | 14. Decode Runtime Boundary and Decoder Registry | 3/3 | Complete    | 2026-04-21 |
 | 15. Decode Config Model and Validation | 3/3 | Complete    | 2026-04-21 |
-| 16. Offline Decode Execution | 0/3 | Not started | - |
+| 16. Offline Decode Execution | 1/3 | In Progress|  |
 | 17. Decode Output and Workflow Reporting | 0/3 | Not started | - |
 
 ## Archived Milestones
