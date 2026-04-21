@@ -515,4 +515,32 @@ mod tests {
         assert!(text.contains("inputs: logic"));
         assert!(text.contains("outputs: i2c, i2c-messages"));
     }
+
+    #[test]
+    fn decode_validate_response_and_text_summarize_valid_config() {
+        let response = build_decode_validate_response(
+            1,
+            "0:i2c",
+            &["scl".to_string(), "sda".to_string()],
+            1,
+        );
+        let value = serde_json::to_value(&response).expect("validate response should serialize");
+
+        assert_eq!(
+            value,
+            json!({
+                "valid": true,
+                "config_version": 1,
+                "root_decoder_id": "0:i2c",
+                "stack_depth": 1,
+                "bound_channel_ids": ["scl", "sda"]
+            })
+        );
+
+        let text = render_decode_validate_text(&response);
+        assert!(text.contains("decode config valid"));
+        assert!(text.contains("root decoder: 0:i2c"));
+        assert!(text.contains("stack depth: 1"));
+        assert!(text.contains("bound channels: scl, sda"));
+    }
 }
