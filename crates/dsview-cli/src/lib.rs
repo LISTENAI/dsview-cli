@@ -441,6 +441,7 @@ mod tests {
                 id: "address_format".to_string(),
                 idn: Some("address_format".to_string()),
                 description: Some("Whether addresses render as 7-bit or 8-bit".to_string()),
+                value_kind: dsview_core::DecodeOptionValueKind::String,
                 default_value: Some("7-bit".to_string()),
                 values: vec!["7-bit".to_string(), "8-bit".to_string()],
             }],

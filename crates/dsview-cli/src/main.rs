@@ -16,7 +16,7 @@ use dsview_cli::{
     DeviceOptionsResponse,
 };
 use dsview_core::{
-    DecodeBringUpError,
+    DecodeBringUpError, DecodeConfigParseError, DecodeConfigValidationError,
     DecoderRuntimeError, DecoderRuntimeErrorCode,
     describe_native_error, resolve_capture_artifact_paths,
     decode_inspect as core_decode_inspect, decode_list as core_decode_list,
@@ -1154,6 +1154,116 @@ fn classify_decode_runtime_error(error: &DecoderRuntimeError) -> ErrorResponse {
             code: "decode_runtime_error",
             message: other.to_string(),
             detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+    }
+}
+
+fn classify_decode_config_parse_error(error: &DecodeConfigParseError) -> ErrorResponse {
+    match error {
+        DecodeConfigParseError::InvalidJson { detail, .. } => ErrorResponse {
+            code: "decode_config_parse_failed",
+            message: format!("failed to parse decode config JSON: {detail}"),
+            detail: Some(
+                "Check the JSON syntax and file contents before retrying decode validation."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigParseError::Schema { detail, .. } => ErrorResponse {
+            code: "decode_config_schema_invalid",
+            message: format!("decode config JSON did not match the expected schema: {detail}"),
+            detail: Some(
+                "Check required fields, canonical ids, and typed option values against `decode inspect <DECODER_ID>`."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+    }
+}
+
+fn classify_decode_config_validation_error(error: &DecodeConfigValidationError) -> ErrorResponse {
+    match error {
+        DecodeConfigValidationError::UnsupportedVersion { .. } => ErrorResponse {
+            code: "decode_config_schema_invalid",
+            message: error.to_string(),
+            detail: Some(
+                "Only the current decode config schema version is accepted for validation."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigValidationError::UnknownDecoder { .. } => ErrorResponse {
+            code: "decode_decoder_not_found",
+            message: error.to_string(),
+            detail: Some(
+                "Run `decode list` to inspect canonical upstream decoder ids before authoring the config."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigValidationError::MissingRequiredChannel { .. } => ErrorResponse {
+            code: "decode_missing_required_channel",
+            message: error.to_string(),
+            detail: Some(
+                "Run `decode inspect <DECODER_ID>` to confirm the decoder's required channel ids."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigValidationError::UnknownChannelBinding { .. } => ErrorResponse {
+            code: "decode_unknown_channel",
+            message: error.to_string(),
+            detail: Some(
+                "Run `decode inspect <DECODER_ID>` to confirm the decoder's canonical channel ids."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigValidationError::UnknownOption { .. } => ErrorResponse {
+            code: "decode_unknown_option",
+            message: error.to_string(),
+            detail: Some(
+                "Run `decode inspect <DECODER_ID>` to confirm the decoder's canonical option ids."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigValidationError::InvalidOptionValueType { .. }
+        | DecodeConfigValidationError::InvalidOptionValue { .. } => ErrorResponse {
+            code: "decode_option_value_invalid",
+            message: error.to_string(),
+            detail: Some(
+                "Match the option value type and allowed values from `decode inspect <DECODER_ID>`."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigValidationError::IncompatibleStackLink { .. } => ErrorResponse {
+            code: "decode_stack_incompatible",
+            message: error.to_string(),
+            detail: Some(
+                "Each stacked decoder must accept at least one output id from the decoder immediately before it."
+                    .to_string(),
+            ),
             native_error: None,
             terminal_event: None,
             cleanup: None,
