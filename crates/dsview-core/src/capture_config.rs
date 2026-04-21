@@ -41,7 +41,10 @@ impl CaptureConfigError {
     pub fn from_runtime_error(error: RuntimeError) -> Self {
         match error {
             RuntimeError::NativeCall {
-                operation: _,
+                operation:
+                    "ds_get_current_channel_mode"
+                    | "ds_get_channel_modes"
+                    | "ds_get_valid_channel_count",
                 code: NativeErrorCode::NotApplicable,
             } => Self::UnknownChannelMode { mode: -1 },
             other => Self::Runtime(other.to_string()),
@@ -162,7 +165,7 @@ impl CaptureCapabilities {
     }
 }
 
-fn align_sample_limit(value: u64, alignment: u64) -> u64 {
+pub(crate) fn align_sample_limit(value: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
         value
     } else {
@@ -170,12 +173,12 @@ fn align_sample_limit(value: u64, alignment: u64) -> u64 {
         if remainder == 0 {
             value
         } else {
-            value + (alignment - remainder)
+            value.checked_add(alignment - remainder).unwrap_or(u64::MAX)
         }
     }
 }
 
-fn align_down(value: u64, alignment: u64) -> u64 {
+pub(crate) fn align_down(value: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
         value
     } else {
@@ -336,5 +339,32 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn rejects_sample_limit_that_overflows_during_alignment() {
+        let capabilities = dslogic_plus_capabilities();
+        let error = capabilities
+            .validate_request(&request(100_000_000, u64::MAX, &[0, 1, 2, 3]))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CaptureConfigError::SampleLimitExceedsCapacity {
+                effective_sample_limit: u64::MAX,
+                enabled_channel_count: 4,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unrelated_not_applicable_errors_stay_runtime_errors() {
+        let error = CaptureConfigError::from_runtime_error(RuntimeError::NativeCall {
+            operation: "ds_get_hw_depth",
+            code: NativeErrorCode::NotApplicable,
+        });
+
+        assert!(matches!(error, CaptureConfigError::Runtime(_)));
     }
 }

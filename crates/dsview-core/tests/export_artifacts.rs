@@ -2,10 +2,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use dsview_core::{
-    metadata_path_for_vcd, resolve_capture_artifact_paths, AcquisitionSummary,
-    AcquisitionTerminalEvent, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion,
-    CaptureExportError, CaptureExportFailureKind, CaptureExportRequest, CaptureRunSummary,
-    NativeErrorCode, ValidatedCaptureConfig,
+    build_capture_device_option_facts, metadata_path_for_vcd, resolve_capture_artifact_paths,
+    AcquisitionSummary, AcquisitionTerminalEvent, CaptureArtifactPathError, CaptureCleanup,
+    CaptureCompletion, CaptureDeviceOptionFacts, CaptureDeviceOptionSnapshot, CaptureExportError,
+    CaptureExportFailureKind, CaptureExportRequest, CaptureRunSummary, ChannelModeGroupSnapshot,
+    ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DeviceIdentitySnapshot,
+    DeviceOptionsSnapshot, EnumOptionSnapshot, NativeErrorCode, ThresholdCapabilitySnapshot,
+    ValidatedCaptureConfig, ValidatedDeviceOptionRequest, EffectiveDeviceOptionState,
 };
 use dsview_sys::{
     AcquisitionPacketStatus, ExportErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest,
@@ -41,6 +44,7 @@ fn clean_capture() -> CaptureRunSummary {
             release_succeeded: true,
             ..CaptureCleanup::default()
         },
+        effective_device_options: None,
     }
 }
 
@@ -54,20 +58,151 @@ fn validated_config() -> ValidatedCaptureConfig {
     }
 }
 
+fn device_option_snapshot() -> DeviceOptionsSnapshot {
+    DeviceOptionsSnapshot {
+        device: DeviceIdentitySnapshot {
+            selection_handle: 7,
+            native_handle: 77,
+            stable_id: "dslogic-plus".to_string(),
+            kind: "DSLogic Plus".to_string(),
+            name: "DSLogic Plus".to_string(),
+        },
+        current: CurrentDeviceOptionValues {
+            operation_mode_id: Some("operation-mode:0".to_string()),
+            operation_mode_code: Some(0),
+            stop_option_id: Some("stop-option:1".to_string()),
+            stop_option_code: Some(1),
+            filter_id: Some("filter:0".to_string()),
+            filter_code: Some(0),
+            channel_mode_id: Some("channel-mode:20".to_string()),
+            channel_mode_code: Some(20),
+        },
+        operation_modes: vec![
+            EnumOptionSnapshot {
+                id: "operation-mode:0".to_string(),
+                native_code: 0,
+                label: "Buffer Mode".to_string(),
+            },
+            EnumOptionSnapshot {
+                id: "operation-mode:1".to_string(),
+                native_code: 1,
+                label: "Stream Mode".to_string(),
+            },
+        ],
+        stop_options: vec![
+            EnumOptionSnapshot {
+                id: "stop-option:0".to_string(),
+                native_code: 0,
+                label: "Immediate".to_string(),
+            },
+            EnumOptionSnapshot {
+                id: "stop-option:1".to_string(),
+                native_code: 1,
+                label: "Stop after samples".to_string(),
+            },
+        ],
+        filters: vec![
+            EnumOptionSnapshot {
+                id: "filter:0".to_string(),
+                native_code: 0,
+                label: "Off".to_string(),
+            },
+            EnumOptionSnapshot {
+                id: "filter:1".to_string(),
+                native_code: 1,
+                label: "1 Sample".to_string(),
+            },
+        ],
+        channel_modes_by_operation_mode: vec![
+            ChannelModeGroupSnapshot {
+                operation_mode_id: "operation-mode:0".to_string(),
+                operation_mode_code: 0,
+                current_channel_mode_id: Some("channel-mode:20".to_string()),
+                current_channel_mode_code: Some(20),
+                channel_modes: vec![
+                    ChannelModeOptionSnapshot {
+                        id: "channel-mode:20".to_string(),
+                        native_code: 20,
+                        label: "Buffer 100x16".to_string(),
+                        max_enabled_channels: 16,
+                    },
+                    ChannelModeOptionSnapshot {
+                        id: "channel-mode:21".to_string(),
+                        native_code: 21,
+                        label: "Buffer 200x8".to_string(),
+                        max_enabled_channels: 8,
+                    },
+                ],
+            },
+            ChannelModeGroupSnapshot {
+                operation_mode_id: "operation-mode:1".to_string(),
+                operation_mode_code: 1,
+                current_channel_mode_id: None,
+                current_channel_mode_code: None,
+                channel_modes: vec![ChannelModeOptionSnapshot {
+                    id: "channel-mode:30".to_string(),
+                    native_code: 30,
+                    label: "Stream 100x16".to_string(),
+                    max_enabled_channels: 16,
+                }],
+            },
+        ],
+        threshold: ThresholdCapabilitySnapshot {
+            id: "threshold:vth-range".to_string(),
+            kind: "voltage-range".to_string(),
+            current_volts: Some(1.8),
+            min_volts: 0.0,
+            max_volts: 5.0,
+            step_volts: 0.1,
+            legacy_metadata: None,
+        },
+    }
+}
+
+fn validated_device_options() -> ValidatedDeviceOptionRequest {
+    ValidatedDeviceOptionRequest {
+        operation_mode_id: "operation-mode:1".to_string(),
+        operation_mode_code: 1,
+        stop_option_id: None,
+        stop_option_code: None,
+        channel_mode_id: "channel-mode:30".to_string(),
+        channel_mode_code: 30,
+        sample_rate_hz: 200_000_000,
+        requested_sample_limit: 4097,
+        effective_sample_limit: 4096,
+        enabled_channels: vec![0, 2, 4, 6],
+        threshold_volts: Some(2.4),
+        filter_id: Some("filter:1".to_string()),
+        filter_code: Some(1),
+    }
+}
+
 fn export_request(completion: CaptureCompletion) -> CaptureExportRequest {
     let mut capture = clean_capture();
     capture.completion = completion;
+    capture.effective_device_options = Some(EffectiveDeviceOptionState {
+        operation_mode_code: Some(1),
+        stop_option_code: None,
+        channel_mode_code: Some(30),
+        threshold_volts: Some(2.4),
+        filter_code: Some(1),
+        enabled_channels: vec![0, 2, 4, 6],
+        sample_limit: Some(4096),
+        sample_rate_hz: Some(200_000_000),
+    });
     CaptureExportRequest {
         capture,
         validated_config: validated_config(),
         vcd_path: PathBuf::from("/tmp/capture.vcd"),
         metadata_path: None,
         tool_name: "dsview-cli".to_string(),
-        tool_version: "0.1.0".to_string(),
+        tool_version: "1.1.1".to_string(),
         capture_started_at: UNIX_EPOCH + Duration::from_secs(1_744_018_496),
         device_model: "DSLogic Plus".to_string(),
         device_stable_id: "dslogic-plus".to_string(),
         selected_handle: dsview_core::SelectionHandle::new(7).unwrap(),
+        validated_device_options: Some(validated_device_options()),
+        device_options_snapshot: device_option_snapshot(),
     }
 }
 
@@ -171,7 +306,7 @@ fn metadata_sidecar_schema_uses_numeric_capture_fields_and_utc_timestamp() {
     };
     let metadata_json = serde_json::to_value(
         dsview_core::CaptureMetadata {
-            schema_version: 1,
+            schema_version: 2,
             tool: dsview_core::MetadataToolInfo {
                 name: request.tool_name.clone(),
                 version: request.tool_version.clone(),
@@ -197,11 +332,33 @@ fn metadata_sidecar_schema_uses_numeric_capture_fields_and_utc_timestamp() {
                 vcd_path: request.vcd_path.display().to_string(),
                 metadata_path: metadata_path.display().to_string(),
             },
+            device_options: CaptureDeviceOptionFacts {
+                requested: CaptureDeviceOptionSnapshot {
+                    operation_mode_id: "operation-mode:0".to_string(),
+                    stop_option_id: Some("stop-option:1".to_string()),
+                    channel_mode_id: "channel-mode:20".to_string(),
+                    enabled_channels: vec![0, 1, 2, 3],
+                    threshold_volts: Some(1.8),
+                    filter_id: Some("filter:0".to_string()),
+                    sample_rate_hz: 100_000_000,
+                    sample_limit: 2048,
+                },
+                effective: CaptureDeviceOptionSnapshot {
+                    operation_mode_id: "operation-mode:1".to_string(),
+                    stop_option_id: None,
+                    channel_mode_id: "channel-mode:30".to_string(),
+                    enabled_channels: vec![0, 2, 4, 6],
+                    threshold_volts: Some(2.4),
+                    filter_id: Some("filter:1".to_string()),
+                    sample_rate_hz: 200_000_000,
+                    sample_limit: 4096,
+                },
+            },
         }
     )
     .unwrap();
 
-    assert_eq!(metadata_json["schema_version"], 1);
+    assert_eq!(metadata_json["schema_version"], 2);
     assert_eq!(metadata_json["tool"]["name"], "dsview-cli");
     assert!(metadata_json["capture"]["timestamp_utc"]
         .as_str()
@@ -214,6 +371,109 @@ fn metadata_sidecar_schema_uses_numeric_capture_fields_and_utc_timestamp() {
     assert_eq!(metadata_json["capture"]["enabled_channels"], serde_json::json!([0, 1, 2, 3]));
     assert_eq!(metadata_json["artifacts"]["vcd_path"], "/tmp/capture.vcd");
     assert_eq!(metadata_json["artifacts"]["metadata_path"], "/tmp/capture.json");
+    assert_eq!(
+        metadata_json["device_options"]["requested"]["operation_mode_id"],
+        "operation-mode:0"
+    );
+    assert_eq!(
+        metadata_json["device_options"]["effective"]["channel_mode_id"],
+        "channel-mode:30"
+    );
+    assert_eq!(
+        metadata_json["device_options"]["effective"]["sample_limit"],
+        4096
+    );
+}
+
+#[test]
+fn metadata_sidecar_includes_requested_and_effective_device_options() {
+    let facts = build_capture_device_option_facts(&export_request(CaptureCompletion::CleanSuccess))
+        .expect("device option facts should build");
+    let metadata_json = serde_json::to_value(facts).unwrap();
+
+    assert_eq!(
+        metadata_json["requested"]["operation_mode_id"],
+        "operation-mode:1"
+    );
+    assert_eq!(metadata_json["requested"]["filter_id"], "filter:1");
+    assert_eq!(
+        metadata_json["effective"]["channel_mode_id"],
+        "channel-mode:30"
+    );
+    assert_eq!(metadata_json["effective"]["sample_rate_hz"], 200_000_000);
+}
+
+#[test]
+fn metadata_schema_version_is_2_when_device_option_facts_are_present() {
+    let metadata = dsview_core::CaptureMetadata {
+        schema_version: 2,
+        tool: dsview_core::MetadataToolInfo {
+            name: "dsview-cli".to_string(),
+            version: "1.1.1".to_string(),
+        },
+        capture: dsview_core::MetadataCaptureInfo {
+            timestamp_utc: "2025-04-07T10:14:56Z".to_string(),
+            device_model: "DSLogic Plus".to_string(),
+            device_stable_id: "dslogic-plus".to_string(),
+            selected_handle: 7,
+            sample_rate_hz: 100_000_000,
+            requested_sample_limit: 2048,
+            actual_sample_count: 1536,
+            enabled_channels: vec![0, 1, 2, 3],
+        },
+        acquisition: dsview_core::MetadataAcquisitionInfo {
+            completion: "clean_success".to_string(),
+            terminal_event: "normal_end".to_string(),
+            saw_logic_packet: true,
+            saw_end_packet: true,
+            end_packet_status: Some("ok".to_string()),
+        },
+        artifacts: dsview_core::MetadataArtifactInfo {
+            vcd_path: "/tmp/capture.vcd".to_string(),
+            metadata_path: "/tmp/capture.json".to_string(),
+        },
+        device_options: build_capture_device_option_facts(&export_request(CaptureCompletion::CleanSuccess))
+            .expect("device option facts should build"),
+    };
+
+    assert_eq!(serde_json::to_value(metadata).unwrap()["schema_version"], 2);
+}
+
+#[test]
+fn requested_and_effective_sample_limit_values_can_differ() {
+    let facts = build_capture_device_option_facts(&export_request(CaptureCompletion::CleanSuccess))
+        .expect("device option facts should build");
+
+    assert_eq!(facts.requested.sample_limit, 4097);
+    assert_eq!(facts.effective.sample_limit, 4096);
+}
+
+#[test]
+fn baseline_capture_metadata_includes_inherited_effective_device_options() {
+    let mut request = export_request(CaptureCompletion::CleanSuccess);
+    request.validated_device_options = None;
+    request.capture.effective_device_options = None;
+    request.validated_config.sample_rate_hz = 50_000_000;
+    request.validated_config.effective_sample_limit = 8192;
+    request.validated_config.enabled_channels = vec![0, 1, 3, 5];
+
+    let facts = build_capture_device_option_facts(&request)
+        .expect("baseline device option facts should be inherited from current values");
+
+    assert_eq!(
+        facts.requested,
+        CaptureDeviceOptionSnapshot {
+            operation_mode_id: "operation-mode:0".to_string(),
+            stop_option_id: Some("stop-option:1".to_string()),
+            channel_mode_id: "channel-mode:20".to_string(),
+            enabled_channels: vec![0, 1, 3, 5],
+            threshold_volts: Some(1.8),
+            filter_id: Some("filter:0".to_string()),
+            sample_rate_hz: 50_000_000,
+            sample_limit: 8192,
+        }
+    );
+    assert_eq!(facts.effective, facts.requested);
 }
 
 #[test]

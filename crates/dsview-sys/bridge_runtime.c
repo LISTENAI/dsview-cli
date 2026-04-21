@@ -13,6 +13,8 @@
 
 #include "libsigrok-internal.h"
 
+#define DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY 64
+
 typedef int (*ds_lib_init_fn)(void);
 typedef int (*ds_lib_exit_fn)(void);
 typedef void (*ds_set_firmware_resource_dir_fn)(const char *dir);
@@ -85,6 +87,7 @@ struct dsview_bridge_api {
 struct dsview_retained_packet {
     int type;
     int status;
+    int format;
     unsigned long long samplerate_hz;
     size_t length;
     uint16_t unitsize;
@@ -108,12 +111,14 @@ struct dsview_recorded_stream {
     unsigned long long sample_count;
     uint16_t max_unitsize;
     uint16_t expected_unitsize;
+    uint16_t enabled_channel_count;
 };
 
 static struct dsview_bridge_api g_bridge_api;
 static struct dsview_bridge_acquisition_summary g_acquisition_summary;
 static int g_acquisition_callback_registration_active = 0;
 static struct dsview_recorded_stream g_recorded_stream;
+static uint8_t g_enabled_channel_state[DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY];
 
 static void dsview_bridge_clear_registered_callbacks(void);
 static void dsview_bridge_reset_recorded_stream(void);
@@ -123,7 +128,19 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
 static int dsview_bridge_build_vcd_device(const struct dsview_vcd_export_request *request, struct sr_dev_inst **out_sdi);
 static void dsview_bridge_free_vcd_device(struct sr_dev_inst *sdi);
 static int dsview_bridge_emit_packet(const struct sr_output *output, const struct dsview_retained_packet *packet, GString **assembled_output);
+static int dsview_bridge_emit_cross_logic_packet(
+    const struct sr_output *output,
+    const struct dsview_retained_packet *packet,
+    uint16_t enabled_channel_count,
+    GString **assembled_output);
 static uint16_t dsview_bridge_expected_logic_unitsize(void);
+static int dsview_bridge_get_optional_int16_config(int key, int *has_value, int *value);
+static int dsview_bridge_get_optional_double_config(int key, int *has_value, double *value);
+static int dsview_bridge_set_int16_config(int key, int value);
+static int dsview_bridge_copy_option_values(int key, struct dsview_option_value *out_values, int max_values, unsigned short *out_count);
+static int dsview_bridge_copy_channel_modes_for_current_operation(struct dsview_channel_mode *out_modes, int max_modes, unsigned short *out_count);
+static int dsview_bridge_restore_device_modes(int has_operation_mode, int operation_mode, int has_channel_mode, int channel_mode);
+static void dsview_bridge_copy_string(char *dst, size_t dst_len, const char *src);
 
 static void dsview_bridge_set_error_from_text(const char *message)
 {
@@ -289,6 +306,339 @@ static int dsview_bridge_get_double_config(int key, double *value)
     return SR_OK;
 }
 
+static int dsview_bridge_get_optional_int16_config(int key, int *has_value, int *value)
+{
+    GVariant *data = NULL;
+    int status;
+
+    if (has_value == NULL || value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    *has_value = 0;
+    *value = 0;
+
+    status = g_bridge_api.ds_get_actived_device_config(NULL, NULL, key, &data);
+    if (status == SR_ERR_NA) {
+        return SR_OK;
+    }
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *value = g_variant_get_int16(data);
+    *has_value = 1;
+    g_variant_unref(data);
+    return SR_OK;
+}
+
+static int dsview_bridge_get_optional_double_config(int key, int *has_value, double *value)
+{
+    GVariant *data = NULL;
+    int status;
+
+    if (has_value == NULL || value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    *has_value = 0;
+    *value = 0.0;
+
+    status = g_bridge_api.ds_get_actived_device_config(NULL, NULL, key, &data);
+    if (status == SR_ERR_NA) {
+        return SR_OK;
+    }
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *value = g_variant_get_double(data);
+    *has_value = 1;
+    g_variant_unref(data);
+    return SR_OK;
+}
+
+static int dsview_bridge_set_int16_config(int key, int value)
+{
+    GVariant *data;
+
+    if (g_bridge_api.ds_set_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    data = g_variant_new_int16((gint16)value);
+    return g_bridge_api.ds_set_actived_device_config(NULL, NULL, key, data);
+}
+
+static void dsview_bridge_copy_string(char *dst, size_t dst_len, const char *src)
+{
+    if (dst == NULL || dst_len == 0) {
+        return;
+    }
+
+    memset(dst, 0, dst_len);
+    if (src != NULL) {
+        strncpy(dst, src, dst_len - 1);
+    }
+}
+
+static int dsview_bridge_copy_option_values(
+    int key,
+    struct dsview_option_value *out_values,
+    int max_values,
+    unsigned short *out_count)
+{
+    GVariant *data = NULL;
+    struct sr_list_item *items = NULL;
+    int index = 0;
+    int status;
+
+    if (out_count == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config_list == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    *out_count = 0;
+    status = g_bridge_api.ds_get_actived_device_config_list(NULL, key, &data);
+    if (status == SR_ERR_NA) {
+        return SR_OK;
+    }
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    items = (struct sr_list_item *)(uintptr_t)g_variant_get_uint64(data);
+    while (items != NULL && items[index].id >= 0) {
+        if (out_values != NULL && index < max_values) {
+            out_values[index].code = items[index].id;
+            dsview_bridge_copy_string(
+                out_values[index].label,
+                sizeof(out_values[index].label),
+                items[index].name);
+        }
+        index++;
+    }
+
+    g_variant_unref(data);
+    *out_count = (unsigned short)((index < max_values) ? index : max_values);
+    return SR_OK;
+}
+
+static int dsview_bridge_copy_channel_modes_for_current_operation(
+    struct dsview_channel_mode *out_modes,
+    int max_modes,
+    unsigned short *out_count)
+{
+    GVariant *data = NULL;
+    struct sr_list_item *items = NULL;
+    int index = 0;
+    int status;
+
+    if (out_count == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config_list == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    *out_count = 0;
+    status = g_bridge_api.ds_get_actived_device_config_list(NULL, SR_CONF_CHANNEL_MODE, &data);
+    if (status == SR_ERR_NA) {
+        return SR_OK;
+    }
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    items = (struct sr_list_item *)(uintptr_t)g_variant_get_uint64(data);
+    while (items != NULL && items[index].id >= 0) {
+        if (out_modes != NULL && index < max_modes) {
+            int has_valid_channel_count = 0;
+            int valid_channel_count = 0;
+
+            out_modes[index].id = items[index].id;
+            dsview_bridge_copy_string(
+                out_modes[index].name,
+                sizeof(out_modes[index].name),
+                items[index].name);
+
+            status = dsview_bridge_set_int16_config(SR_CONF_CHANNEL_MODE, items[index].id);
+            if (status != SR_OK) {
+                g_variant_unref(data);
+                return status;
+            }
+
+            status = dsview_bridge_get_optional_int16_config(
+                SR_CONF_VLD_CH_NUM,
+                &has_valid_channel_count,
+                &valid_channel_count);
+            if (status != SR_OK) {
+                g_variant_unref(data);
+                return status;
+            }
+
+            out_modes[index].max_enabled_channels =
+                has_valid_channel_count ? (unsigned short)valid_channel_count : 0;
+        }
+        index++;
+    }
+
+    g_variant_unref(data);
+    *out_count = (unsigned short)((index < max_modes) ? index : max_modes);
+    return SR_OK;
+}
+
+static int dsview_bridge_copy_validation_channel_modes_for_current_operation(
+    struct dsview_validation_channel_mode *out_modes,
+    int max_modes,
+    unsigned short *out_count,
+    unsigned short *out_total_channel_count,
+    unsigned long long *out_hardware_sample_capacity)
+{
+    GVariant *data = NULL;
+    struct sr_list_item *items = NULL;
+    int index = 0;
+    int status;
+
+    if (out_count == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.ds_get_actived_device_config_list == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    *out_count = 0;
+    status = g_bridge_api.ds_get_actived_device_config_list(NULL, SR_CONF_CHANNEL_MODE, &data);
+    if (status == SR_ERR_NA) {
+        return SR_OK;
+    }
+    if (status != SR_OK) {
+        return status;
+    }
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    items = (struct sr_list_item *)(uintptr_t)g_variant_get_uint64(data);
+    while (items != NULL && items[index].id >= 0) {
+        if (out_modes != NULL && index < max_modes) {
+            struct dsview_samplerate_list samplerates;
+            int has_valid_channel_count = 0;
+            int valid_channel_count = 0;
+
+            memset(&samplerates, 0, sizeof(samplerates));
+            memset(&out_modes[index], 0, sizeof(out_modes[index]));
+            out_modes[index].code = items[index].id;
+            dsview_bridge_copy_string(
+                out_modes[index].label,
+                sizeof(out_modes[index].label),
+                items[index].name);
+
+            status = dsview_bridge_set_int16_config(SR_CONF_CHANNEL_MODE, items[index].id);
+            if (status != SR_OK) {
+                g_variant_unref(data);
+                return status;
+            }
+
+            status = dsview_bridge_get_optional_int16_config(
+                SR_CONF_VLD_CH_NUM,
+                &has_valid_channel_count,
+                &valid_channel_count);
+            if (status != SR_OK) {
+                g_variant_unref(data);
+                return status;
+            }
+
+            out_modes[index].max_enabled_channels =
+                has_valid_channel_count ? (unsigned short)valid_channel_count : 0;
+
+            status = dsview_bridge_ds_get_samplerates(&samplerates);
+            if (status != SR_OK) {
+                g_variant_unref(data);
+                return status;
+            }
+            if (samplerates.count > DSVIEW_SAMPLERATE_CAPACITY) {
+                samplerates.count = DSVIEW_SAMPLERATE_CAPACITY;
+            }
+            out_modes[index].samplerate_count = samplerates.count;
+            memcpy(
+                out_modes[index].samplerates,
+                samplerates.values,
+                samplerates.count * sizeof(samplerates.values[0]));
+
+            if (out_total_channel_count != NULL && *out_total_channel_count == 0) {
+                int total_channel_count = 0;
+
+                status = dsview_bridge_ds_get_total_channel_count(&total_channel_count);
+                if (status != SR_OK) {
+                    g_variant_unref(data);
+                    return status;
+                }
+                *out_total_channel_count = (unsigned short)total_channel_count;
+            }
+
+            if (out_hardware_sample_capacity != NULL && *out_hardware_sample_capacity == 0) {
+                status = dsview_bridge_ds_get_hw_depth(out_hardware_sample_capacity);
+                if (status != SR_OK) {
+                    g_variant_unref(data);
+                    return status;
+                }
+            }
+
+        }
+        index++;
+    }
+
+    g_variant_unref(data);
+    *out_count = (unsigned short)((index < max_modes) ? index : max_modes);
+    return SR_OK;
+}
+
+static int dsview_bridge_restore_device_modes(
+    int has_operation_mode,
+    int operation_mode,
+    int has_channel_mode,
+    int channel_mode)
+{
+    int status;
+
+    if (has_operation_mode) {
+        status = dsview_bridge_set_int16_config(SR_CONF_OPERATION_MODE, operation_mode);
+        if (status != SR_OK) {
+            return status;
+        }
+    }
+
+    if (has_channel_mode) {
+        status = dsview_bridge_set_int16_config(SR_CONF_CHANNEL_MODE, channel_mode);
+        if (status != SR_OK) {
+            return status;
+        }
+    }
+
+    return SR_OK;
+}
+
 static unsigned short dsview_bridge_mode_max_enabled_channels(const char *name)
 {
     const char *marker;
@@ -348,6 +698,8 @@ static int dsview_bridge_prepare_recording_capacity(void)
 {
     unsigned long long sample_limit = 0;
     int valid_channel_count = 0;
+    int enabled_channel_count = 0;
+    size_t enabled_index;
     size_t unitsize;
     size_t packet_capacity;
     size_t payload_capacity;
@@ -360,11 +712,18 @@ static int dsview_bridge_prepare_recording_capacity(void)
     if (dsview_bridge_get_int16_config(SR_CONF_VLD_CH_NUM, &valid_channel_count) != SR_OK) {
         return DSVIEW_EXPORT_ERR_RUNTIME;
     }
-    if (sample_limit == 0 || valid_channel_count <= 0) {
+    for (enabled_index = 0; enabled_index < G_N_ELEMENTS(g_enabled_channel_state); enabled_index++) {
+        enabled_channel_count += g_enabled_channel_state[enabled_index] != 0;
+    }
+    if (enabled_channel_count <= 0) {
+        enabled_channel_count = valid_channel_count;
+    }
+
+    if (sample_limit == 0 || enabled_channel_count <= 0) {
         return DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS;
     }
 
-    unitsize = (size_t)((valid_channel_count + 7) / 8);
+    unitsize = (size_t)((enabled_channel_count + 7) / 8);
     if (unitsize == 0) {
         unitsize = 1;
     }
@@ -387,6 +746,7 @@ static int dsview_bridge_prepare_recording_capacity(void)
     g_recorded_stream.packet_capacity = packet_capacity;
     g_recorded_stream.payload_capacity = payload_capacity;
     g_recorded_stream.expected_unitsize = (uint16_t)unitsize;
+    g_recorded_stream.enabled_channel_count = (uint16_t)enabled_channel_count;
     return SR_OK;
 }
 
@@ -463,6 +823,7 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
     memset(&retained, 0, sizeof(retained));
     retained.type = DSVIEW_EXPORT_PACKET_LOGIC;
     retained.status = packet->status;
+    retained.format = logic->format;
     retained.length = (size_t)logic->length;
     retained.unitsize = unitsize;
     retained.data_error = logic->data_error;
@@ -473,7 +834,17 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
     }
     memcpy(retained.data, logic->data, retained.length);
 
-    packet_samples = logic->length / unitsize;
+    if (logic->format == LA_CROSS_DATA) {
+        if (g_recorded_stream.enabled_channel_count == 0
+            || ((size_t)logic->length % ((size_t)g_recorded_stream.enabled_channel_count * sizeof(uint64_t))) != 0) {
+            free(retained.data);
+            return DSVIEW_EXPORT_ERR_GENERIC;
+        }
+        packet_samples = ((unsigned long long)logic->length * 8ULL)
+            / (unsigned long long)g_recorded_stream.enabled_channel_count;
+    } else {
+        packet_samples = logic->length / unitsize;
+    }
     if (g_recorded_stream.sample_count > G_MAXUINT64 - packet_samples) {
         free(retained.data);
         g_recorded_stream.overflowed = 1;
@@ -795,6 +1166,21 @@ int dsview_bridge_ds_get_current_sample_limit(unsigned long long *value)
     return dsview_bridge_get_uint64_config(SR_CONF_LIMIT_SAMPLES, value);
 }
 
+int dsview_bridge_ds_get_current_operation_mode(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_OPERATION_MODE, value);
+}
+
+int dsview_bridge_ds_get_current_stop_option(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_BUFFER_OPTIONS, value);
+}
+
+int dsview_bridge_ds_get_current_filter(int *value)
+{
+    return dsview_bridge_get_int16_config(SR_CONF_FILTER, value);
+}
+
 int dsview_bridge_ds_get_total_channel_count(int *value)
 {
     return dsview_bridge_get_int16_config(SR_CONF_TOTAL_CH_NUM, value);
@@ -867,44 +1253,372 @@ int dsview_bridge_ds_get_samplerates(struct dsview_samplerate_list *out_list)
 
 int dsview_bridge_ds_get_channel_modes(struct dsview_channel_mode *out_modes, int max_modes, int *out_count)
 {
-    GVariant *data = NULL;
-    struct sr_list_item *items = NULL;
-    int index = 0;
+    int has_original_channel_mode = 0;
+    int original_channel_mode = 0;
+    unsigned short copied_count = 0;
     int status;
+    int restore_status = SR_OK;
 
     if (out_count == NULL) {
         return DSVIEW_BRIDGE_ERR_ARG;
     }
-    if (g_bridge_api.ds_get_actived_device_config_list == NULL) {
-        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
-    }
 
-    *out_count = 0;
-    status = g_bridge_api.ds_get_actived_device_config_list(NULL, SR_CONF_CHANNEL_MODE, &data);
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_CHANNEL_MODE,
+        &has_original_channel_mode,
+        &original_channel_mode);
     if (status != SR_OK) {
         return status;
     }
-    if (data == NULL) {
+
+    status = dsview_bridge_copy_channel_modes_for_current_operation(
+        out_modes,
+        max_modes,
+        &copied_count);
+
+    if (has_original_channel_mode) {
+        restore_status = dsview_bridge_set_int16_config(SR_CONF_CHANNEL_MODE, original_channel_mode);
+    }
+
+    if (status != SR_OK) {
+        return (restore_status == SR_OK) ? status : restore_status;
+    }
+
+    *out_count = (int)copied_count;
+    return restore_status;
+}
+
+int dsview_bridge_ds_get_device_options(struct dsview_device_options_snapshot *out_snapshot)
+{
+    int has_original_operation_mode = 0;
+    int original_operation_mode = 0;
+    int has_original_channel_mode = 0;
+    int original_channel_mode = 0;
+    int active_operation_mode = 0;
+    int has_current_vth = 0;
+    int has_current_threshold_code = 0;
+    int index;
+    int status;
+    int restore_status = SR_OK;
+
+    if (out_snapshot == NULL) {
         return DSVIEW_BRIDGE_ERR_ARG;
     }
 
-    items = (struct sr_list_item *)(uintptr_t)g_variant_get_uint64(data);
-    while (items != NULL && items[index].id >= 0) {
-        if (out_modes != NULL && index < max_modes) {
-            out_modes[index].id = items[index].id;
-            out_modes[index].max_enabled_channels = 0;
-            memset(out_modes[index].name, 0, sizeof(out_modes[index].name));
-            if (items[index].name != NULL) {
-                strncpy(out_modes[index].name, items[index].name, sizeof(out_modes[index].name) - 1);
-                out_modes[index].max_enabled_channels = dsview_bridge_mode_max_enabled_channels(items[index].name);
-            }
-        }
-        index++;
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    dsview_bridge_copy_string(
+        out_snapshot->threshold.kind,
+        sizeof(out_snapshot->threshold.kind),
+        "voltage-range");
+    dsview_bridge_copy_string(
+        out_snapshot->threshold.id,
+        sizeof(out_snapshot->threshold.id),
+        "threshold:vth-range");
+    out_snapshot->threshold.min_volts = 0.0;
+    out_snapshot->threshold.max_volts = 5.0;
+    out_snapshot->threshold.step_volts = 0.1;
+
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_OPERATION_MODE,
+        &out_snapshot->has_current_operation_mode,
+        &out_snapshot->current_operation_mode_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_BUFFER_OPTIONS,
+        &out_snapshot->has_current_stop_option,
+        &out_snapshot->current_stop_option_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_FILTER,
+        &out_snapshot->has_current_filter,
+        &out_snapshot->current_filter_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_CHANNEL_MODE,
+        &out_snapshot->has_current_channel_mode,
+        &out_snapshot->current_channel_mode_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    if (!out_snapshot->has_current_operation_mode || !out_snapshot->has_current_channel_mode) {
+        return SR_ERR_NA;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_THRESHOLD,
+        &has_current_threshold_code,
+        &out_snapshot->threshold.current_legacy_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    out_snapshot->threshold.has_current_legacy_code = has_current_threshold_code;
+    status = dsview_bridge_get_optional_double_config(
+        SR_CONF_VTH,
+        &has_current_vth,
+        &out_snapshot->threshold.current_volts);
+    if (status != SR_OK) {
+        return status;
+    }
+    out_snapshot->threshold.has_current_volts = has_current_vth;
+
+    status = dsview_bridge_copy_option_values(
+        SR_CONF_OPERATION_MODE,
+        out_snapshot->operation_modes,
+        DSVIEW_OPTION_VALUE_CAPACITY,
+        &out_snapshot->operation_mode_count);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_copy_option_values(
+        SR_CONF_BUFFER_OPTIONS,
+        out_snapshot->stop_options,
+        DSVIEW_OPTION_VALUE_CAPACITY,
+        &out_snapshot->stop_option_count);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_copy_option_values(
+        SR_CONF_FILTER,
+        out_snapshot->filters,
+        DSVIEW_OPTION_VALUE_CAPACITY,
+        &out_snapshot->filter_count);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_copy_option_values(
+        SR_CONF_THRESHOLD,
+        out_snapshot->threshold.legacy_options,
+        DSVIEW_OPTION_VALUE_CAPACITY,
+        &out_snapshot->threshold.legacy_option_count);
+    if (status != SR_OK) {
+        return status;
     }
 
-    g_variant_unref(data);
-    *out_count = index;
-    return SR_OK;
+    has_original_operation_mode = out_snapshot->has_current_operation_mode;
+    original_operation_mode = out_snapshot->current_operation_mode_code;
+    has_original_channel_mode = out_snapshot->has_current_channel_mode;
+    original_channel_mode = out_snapshot->current_channel_mode_code;
+    active_operation_mode = original_operation_mode;
+
+    for (index = 0;
+         index < out_snapshot->operation_mode_count &&
+         index < DSVIEW_CHANNEL_MODE_GROUP_CAPACITY;
+         index++) {
+        struct dsview_channel_mode_group *group = &out_snapshot->channel_mode_groups[index];
+        int operation_mode_code = out_snapshot->operation_modes[index].code;
+
+        group->operation_mode_code = operation_mode_code;
+        if (!has_original_operation_mode || active_operation_mode != operation_mode_code) {
+            status = dsview_bridge_set_int16_config(SR_CONF_OPERATION_MODE, operation_mode_code);
+            if (status != SR_OK) {
+                goto restore;
+            }
+            active_operation_mode = operation_mode_code;
+        }
+
+        status = dsview_bridge_copy_channel_modes_for_current_operation(
+            group->channel_modes,
+            DSVIEW_CHANNEL_MODE_CAPACITY,
+            &group->channel_mode_count);
+        if (status != SR_OK) {
+            goto restore;
+        }
+
+        out_snapshot->channel_mode_group_count++;
+    }
+
+restore:
+    if (has_original_operation_mode || has_original_channel_mode) {
+        restore_status = dsview_bridge_restore_device_modes(
+            has_original_operation_mode,
+            original_operation_mode,
+            has_original_channel_mode,
+            original_channel_mode);
+    }
+
+    if (status != SR_OK) {
+        return (restore_status == SR_OK) ? status : restore_status;
+    }
+
+    return restore_status;
+}
+
+int dsview_bridge_ds_get_validation_capabilities(
+    struct dsview_validation_capabilities_snapshot *out_snapshot)
+{
+    struct dsview_option_value operation_modes[DSVIEW_OPTION_VALUE_CAPACITY];
+    unsigned short operation_mode_count = 0;
+    int has_current_vth = 0;
+    int has_current_threshold_code = 0;
+    int index;
+    int status = SR_OK;
+    int restore_status = SR_OK;
+    int has_original_operation_mode = 0;
+    int original_operation_mode = 0;
+    int has_original_channel_mode = 0;
+    int original_channel_mode = 0;
+    int active_operation_mode = 0;
+
+    if (out_snapshot == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    memset(operation_modes, 0, sizeof(operation_modes));
+    dsview_bridge_copy_string(
+        out_snapshot->threshold.kind,
+        sizeof(out_snapshot->threshold.kind),
+        "voltage-range");
+    dsview_bridge_copy_string(
+        out_snapshot->threshold.id,
+        sizeof(out_snapshot->threshold.id),
+        "threshold:vth-range");
+    out_snapshot->threshold.min_volts = 0.0;
+    out_snapshot->threshold.max_volts = 5.0;
+    out_snapshot->threshold.step_volts = 0.1;
+
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_OPERATION_MODE,
+        &out_snapshot->has_current_operation_mode,
+        &out_snapshot->current_operation_mode_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_BUFFER_OPTIONS,
+        &out_snapshot->has_current_stop_option,
+        &out_snapshot->current_stop_option_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_FILTER,
+        &out_snapshot->has_current_filter,
+        &out_snapshot->current_filter_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_CHANNEL_MODE,
+        &out_snapshot->has_current_channel_mode,
+        &out_snapshot->current_channel_mode_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    if (!out_snapshot->has_current_operation_mode || !out_snapshot->has_current_channel_mode) {
+        return SR_ERR_NA;
+    }
+    status = dsview_bridge_get_optional_int16_config(
+        SR_CONF_THRESHOLD,
+        &has_current_threshold_code,
+        &out_snapshot->threshold.current_legacy_code);
+    if (status != SR_OK) {
+        return status;
+    }
+    out_snapshot->threshold.has_current_legacy_code = has_current_threshold_code;
+    status = dsview_bridge_get_optional_double_config(
+        SR_CONF_VTH,
+        &has_current_vth,
+        &out_snapshot->threshold.current_volts);
+    if (status != SR_OK) {
+        return status;
+    }
+    out_snapshot->threshold.has_current_volts = has_current_vth;
+
+    status = dsview_bridge_copy_option_values(
+        SR_CONF_FILTER,
+        out_snapshot->filters,
+        DSVIEW_OPTION_VALUE_CAPACITY,
+        &out_snapshot->filter_count);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_copy_option_values(
+        SR_CONF_THRESHOLD,
+        out_snapshot->threshold.legacy_options,
+        DSVIEW_OPTION_VALUE_CAPACITY,
+        &out_snapshot->threshold.legacy_option_count);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = dsview_bridge_copy_option_values(
+        SR_CONF_OPERATION_MODE,
+        operation_modes,
+        DSVIEW_OPTION_VALUE_CAPACITY,
+        &operation_mode_count);
+    if (status != SR_OK) {
+        return status;
+    }
+
+    out_snapshot->operation_mode_count = operation_mode_count;
+    has_original_operation_mode = out_snapshot->has_current_operation_mode;
+    original_operation_mode = out_snapshot->current_operation_mode_code;
+    has_original_channel_mode = out_snapshot->has_current_channel_mode;
+    original_channel_mode = out_snapshot->current_channel_mode_code;
+    active_operation_mode = original_operation_mode;
+
+    for (index = 0;
+         index < operation_mode_count && index < DSVIEW_CHANNEL_MODE_GROUP_CAPACITY;
+         index++) {
+        struct dsview_validation_operation_mode *operation_mode = &out_snapshot->operation_modes[index];
+        int operation_mode_code = operation_modes[index].code;
+
+        memset(operation_mode, 0, sizeof(*operation_mode));
+        operation_mode->code = operation_mode_code;
+        dsview_bridge_copy_string(
+            operation_mode->label,
+            sizeof(operation_mode->label),
+            operation_modes[index].label);
+
+        if (!has_original_operation_mode || active_operation_mode != operation_mode_code) {
+            status = dsview_bridge_set_int16_config(SR_CONF_OPERATION_MODE, operation_mode_code);
+            if (status != SR_OK) {
+                goto restore;
+            }
+            active_operation_mode = operation_mode_code;
+        }
+
+        if (operation_mode_code == LO_OP_BUFFER) {
+            status = dsview_bridge_copy_option_values(
+                SR_CONF_BUFFER_OPTIONS,
+                operation_mode->stop_options,
+                DSVIEW_OPTION_VALUE_CAPACITY,
+                &operation_mode->stop_option_count);
+            if (status != SR_OK) {
+                goto restore;
+            }
+        }
+
+        status = dsview_bridge_copy_validation_channel_modes_for_current_operation(
+            operation_mode->channel_modes,
+            DSVIEW_CHANNEL_MODE_CAPACITY,
+            &operation_mode->channel_mode_count,
+            &out_snapshot->total_channel_count,
+            &out_snapshot->hardware_sample_capacity);
+        if (status != SR_OK) {
+            goto restore;
+        }
+    }
+
+restore:
+    if (has_original_operation_mode || has_original_channel_mode) {
+        restore_status = dsview_bridge_restore_device_modes(
+            has_original_operation_mode,
+            original_operation_mode,
+            has_original_channel_mode,
+            original_channel_mode);
+    }
+
+    if (status != SR_OK) {
+        return (restore_status == SR_OK) ? status : restore_status;
+    }
+
+    return restore_status;
 }
 
 int dsview_bridge_ds_set_samplerate(unsigned long long value)
@@ -917,6 +1631,38 @@ int dsview_bridge_ds_set_samplerate(unsigned long long value)
 
     data = g_variant_new_uint64(value);
     return g_bridge_api.ds_set_actived_device_config(NULL, NULL, SR_CONF_SAMPLERATE, data);
+}
+
+int dsview_bridge_ds_set_operation_mode(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_OPERATION_MODE, value);
+}
+
+int dsview_bridge_ds_set_stop_option(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_BUFFER_OPTIONS, value);
+}
+
+int dsview_bridge_ds_set_channel_mode(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_CHANNEL_MODE, value);
+}
+
+int dsview_bridge_ds_set_vth(double value)
+{
+    GVariant *data;
+
+    if (g_bridge_api.ds_set_actived_device_config == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    data = g_variant_new_double(value);
+    return g_bridge_api.ds_set_actived_device_config(NULL, NULL, SR_CONF_VTH, data);
+}
+
+int dsview_bridge_ds_set_filter(int value)
+{
+    return dsview_bridge_set_int16_config(SR_CONF_FILTER, value);
 }
 
 int dsview_bridge_ds_set_sample_limit(unsigned long long value)
@@ -933,11 +1679,19 @@ int dsview_bridge_ds_set_sample_limit(unsigned long long value)
 
 int dsview_bridge_ds_enable_channel(int channel_index, int enable)
 {
+    int status;
+
     if (g_bridge_api.ds_enable_device_channel_index == NULL) {
         return DSVIEW_BRIDGE_ERR_NOT_LOADED;
     }
 
-    return g_bridge_api.ds_enable_device_channel_index(channel_index, enable ? TRUE : FALSE);
+    status = g_bridge_api.ds_enable_device_channel_index(channel_index, enable ? TRUE : FALSE);
+    if (status == SR_OK && channel_index >= 0
+        && channel_index < (int)G_N_ELEMENTS(g_enabled_channel_state)) {
+        g_enabled_channel_state[channel_index] = enable ? 1 : 0;
+    }
+
+    return status;
 }
 
 static void dsview_bridge_record_terminal_event(int terminal_event)
@@ -1266,6 +2020,7 @@ static int dsview_bridge_emit_packet(const struct sr_output *output, const struc
     case DSVIEW_EXPORT_PACKET_LOGIC:
         memset(&logic, 0, sizeof(logic));
         logic.length = packet->length;
+        logic.format = packet->format;
         logic.unitsize = packet->unitsize;
         logic.data_error = packet->data_error;
         logic.error_pattern = packet->error_pattern;
@@ -1293,6 +2048,90 @@ static int dsview_bridge_emit_packet(const struct sr_output *output, const struc
     return dsview_bridge_append_output_chunk(assembled_output, chunk);
 }
 
+static int dsview_bridge_emit_cross_logic_packet(
+    const struct sr_output *output,
+    const struct dsview_retained_packet *packet,
+    uint16_t enabled_channel_count,
+    GString **assembled_output)
+{
+    struct sr_datafeed_packet replay_packet;
+    struct sr_datafeed_logic logic;
+    GString *chunk = NULL;
+    uint8_t *expanded = NULL;
+    size_t sample_blocks;
+    size_t sample_count;
+    uint16_t unitsize;
+    size_t output_len;
+    size_t block_index;
+    size_t channel_index;
+    int status;
+
+    if (packet == NULL || packet->data == NULL || enabled_channel_count == 0) {
+        return DSVIEW_EXPORT_ERR_GENERIC;
+    }
+    if ((packet->length % ((size_t)enabled_channel_count * sizeof(uint64_t))) != 0) {
+        return DSVIEW_EXPORT_ERR_GENERIC;
+    }
+
+    sample_blocks = packet->length / ((size_t)enabled_channel_count * sizeof(uint64_t));
+    sample_count = sample_blocks * 64U;
+    unitsize = (uint16_t)((enabled_channel_count + 7U) / 8U);
+    if (unitsize == 0) {
+        unitsize = 1;
+    }
+    if (sample_count > (SIZE_MAX / unitsize)) {
+        return DSVIEW_EXPORT_ERR_OVERFLOW;
+    }
+
+    output_len = sample_count * unitsize;
+    expanded = calloc(output_len, 1);
+    if (expanded == NULL) {
+        return SR_ERR_MALLOC;
+    }
+
+    for (block_index = 0; block_index < sample_blocks; block_index++) {
+        const uint8_t *block = packet->data
+            + block_index * (size_t)enabled_channel_count * sizeof(uint64_t);
+
+        for (channel_index = 0; channel_index < enabled_channel_count; channel_index++) {
+            uint64_t bits = 0;
+            size_t bit_index;
+
+            memcpy(&bits, block + channel_index * sizeof(uint64_t), sizeof(bits));
+            bits = GUINT64_FROM_LE(bits);
+
+            for (bit_index = 0; bit_index < 64U; bit_index++) {
+                if (((bits >> bit_index) & 1U) != 0) {
+                    size_t sample_offset = (block_index * 64U + bit_index) * unitsize;
+                    expanded[sample_offset + channel_index / 8U] |=
+                        (uint8_t)(1U << (channel_index % 8U));
+                }
+            }
+        }
+    }
+
+    memset(&logic, 0, sizeof(logic));
+    logic.length = output_len;
+    logic.format = LA_SPLIT_DATA;
+    logic.unitsize = unitsize;
+    logic.data_error = packet->data_error;
+    logic.error_pattern = packet->error_pattern;
+    logic.data = expanded;
+
+    replay_packet.type = SR_DF_LOGIC;
+    replay_packet.status = packet->status;
+    replay_packet.payload = &logic;
+    status = g_bridge_api.sr_output_send(output, &replay_packet, &chunk);
+    if (status == SR_OK) {
+        status = dsview_bridge_append_output_chunk(assembled_output, chunk);
+    } else if (chunk != NULL) {
+        g_string_free(chunk, TRUE);
+    }
+
+    free(expanded);
+    return status;
+}
+
 static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *request, const struct dsview_recorded_stream *stream, struct dsview_export_buffer *out_buffer)
 {
     struct sr_dev_inst *sdi = NULL;
@@ -1300,10 +2139,12 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     const struct sr_output *output = NULL;
     GString *assembled_output = NULL;
     size_t index;
+    unsigned long long exported_sample_count = 0;
     int status = SR_OK;
     int saw_meta = 0;
     int saw_end = 0;
     unsigned long long replay_samplerate_hz;
+    uint16_t request_enabled_channel_count;
 
     if (request == NULL || out_buffer == NULL || stream == NULL) {
         return DSVIEW_BRIDGE_ERR_ARG;
@@ -1324,8 +2165,12 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     if (request->samplerate_hz == 0) {
         return DSVIEW_EXPORT_ERR_MISSING_SAMPLERATE;
     }
+    if (request->enabled_channel_count == 0) {
+        return DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS;
+    }
 
     replay_samplerate_hz = stream->samplerate_hz != 0 ? stream->samplerate_hz : request->samplerate_hz;
+    request_enabled_channel_count = (uint16_t)request->enabled_channel_count;
 
     module = g_bridge_api.sr_output_find("vcd");
     if (module == NULL) {
@@ -1366,7 +2211,24 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
             saw_end = 1;
         }
 
-        status = dsview_bridge_emit_packet(output, &replay_packet, &assembled_output);
+        if (replay_packet.type == DSVIEW_EXPORT_PACKET_LOGIC
+            && replay_packet.format == LA_CROSS_DATA) {
+            exported_sample_count +=
+                ((unsigned long long)replay_packet.length * 8ULL)
+                / (unsigned long long)request_enabled_channel_count;
+            status = dsview_bridge_emit_cross_logic_packet(
+                output,
+                &replay_packet,
+                request_enabled_channel_count,
+                &assembled_output);
+        } else {
+            if (replay_packet.type == DSVIEW_EXPORT_PACKET_LOGIC) {
+                uint16_t logic_unitsize = replay_packet.unitsize != 0 ? replay_packet.unitsize : 1;
+                exported_sample_count +=
+                    (unsigned long long)(replay_packet.length / logic_unitsize);
+            }
+            status = dsview_bridge_emit_packet(output, &replay_packet, &assembled_output);
+        }
         if (status != SR_OK) {
             goto cleanup;
         }
@@ -1397,7 +2259,7 @@ static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *r
     out_buffer->data = (uint8_t *)g_string_free(assembled_output, FALSE);
     assembled_output = NULL;
     out_buffer->len = out_buffer->data != NULL ? strlen((char *)out_buffer->data) : 0;
-    out_buffer->sample_count = stream->sample_count;
+    out_buffer->sample_count = exported_sample_count;
     out_buffer->packet_count = stream->packet_count;
     status = SR_OK;
 
@@ -1451,6 +2313,7 @@ int dsview_bridge_render_vcd_from_samples(
 
     packets[1].type = DSVIEW_EXPORT_PACKET_LOGIC;
     packets[1].status = SR_PKT_OK;
+    packets[1].format = LA_SPLIT_DATA;
     packets[1].length = sample_bytes_len;
     packets[1].unitsize = unitsize;
     packets[1].data = malloc(sample_bytes_len);
@@ -1523,6 +2386,7 @@ int dsview_bridge_render_vcd_from_logic_packets(
 
         logic_packet->type = DSVIEW_EXPORT_PACKET_LOGIC;
         logic_packet->status = SR_PKT_OK;
+        logic_packet->format = LA_SPLIT_DATA;
         logic_packet->length = packet_length;
         logic_packet->unitsize = unitsize;
         logic_packet->data = malloc(packet_length);
@@ -1563,6 +2427,99 @@ cleanup:
     return status;
 }
 
+int dsview_bridge_render_vcd_from_cross_logic_packets(
+    const struct dsview_vcd_export_request *request,
+    const uint8_t *sample_bytes,
+    size_t sample_bytes_len,
+    const size_t *logic_packet_lengths,
+    size_t logic_packet_count,
+    struct dsview_export_buffer *out_buffer)
+{
+    struct dsview_recorded_stream stream;
+    struct dsview_retained_packet *packets = NULL;
+    size_t packet_index;
+    size_t offset = 0;
+    size_t cross_unitsize;
+    int status;
+
+    if (request == NULL || sample_bytes == NULL || sample_bytes_len == 0 || logic_packet_lengths == NULL
+        || logic_packet_count == 0 || out_buffer == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (request->enabled_channel_count == 0) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    cross_unitsize = request->enabled_channel_count * sizeof(uint64_t);
+    if (cross_unitsize == 0 || (sample_bytes_len % cross_unitsize) != 0) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    memset(&stream, 0, sizeof(stream));
+    memset(out_buffer, 0, sizeof(*out_buffer));
+
+    packets = calloc(logic_packet_count + 2, sizeof(*packets));
+    if (packets == NULL) {
+        return SR_ERR_MALLOC;
+    }
+
+    packets[0].type = DSVIEW_EXPORT_PACKET_META;
+    packets[0].status = SR_PKT_OK;
+    packets[0].samplerate_hz = request->samplerate_hz;
+
+    for (packet_index = 0; packet_index < logic_packet_count; packet_index++) {
+        size_t packet_length = logic_packet_lengths[packet_index];
+        struct dsview_retained_packet *logic_packet = &packets[packet_index + 1];
+
+        if (packet_length == 0 || (packet_length % cross_unitsize) != 0 || offset > sample_bytes_len
+            || packet_length > sample_bytes_len - offset) {
+            status = DSVIEW_BRIDGE_ERR_ARG;
+            goto cleanup;
+        }
+
+        logic_packet->type = DSVIEW_EXPORT_PACKET_LOGIC;
+        logic_packet->status = SR_PKT_OK;
+        logic_packet->format = LA_CROSS_DATA;
+        logic_packet->length = packet_length;
+        logic_packet->unitsize = 1;
+        logic_packet->data = malloc(packet_length);
+        if (logic_packet->data == NULL) {
+            status = SR_ERR_MALLOC;
+            goto cleanup;
+        }
+        memcpy(logic_packet->data, sample_bytes + offset, packet_length);
+        offset += packet_length;
+    }
+
+    if (offset != sample_bytes_len) {
+        status = DSVIEW_BRIDGE_ERR_ARG;
+        goto cleanup;
+    }
+
+    packets[logic_packet_count + 1].type = DSVIEW_EXPORT_PACKET_END;
+    packets[logic_packet_count + 1].status = SR_PKT_OK;
+
+    stream.packets = packets;
+    stream.packet_count = logic_packet_count + 2;
+    stream.saw_logic_packet = 1;
+    stream.saw_end_packet = 1;
+    stream.end_packet_status = SR_PKT_OK;
+    stream.samplerate_hz = request->samplerate_hz;
+    stream.has_samplerate = 1;
+    stream.enabled_channel_count = (uint16_t)request->enabled_channel_count;
+
+    status = dsview_bridge_export_stream(request, &stream, out_buffer);
+
+cleanup:
+    if (packets != NULL) {
+        for (packet_index = 0; packet_index < logic_packet_count; packet_index++) {
+            free(packets[packet_index + 1].data);
+        }
+        free(packets);
+    }
+    return status;
+}
+
 void dsview_bridge_free_export_buffer(struct dsview_export_buffer *buffer)
 {
     if (buffer == NULL) {
@@ -1573,4 +2530,825 @@ void dsview_bridge_free_export_buffer(struct dsview_export_buffer *buffer)
         g_free(buffer->data);
     }
     memset(buffer, 0, sizeof(*buffer));
+}
+
+struct dsview_test_list_item {
+    int id;
+    char name[64];
+};
+
+struct dsview_test_channel_mode {
+    int id;
+    char name[64];
+    unsigned short max_enabled_channels;
+};
+
+#define DSVIEW_TEST_APPLY_LOG_CAPACITY 256
+#define DSVIEW_TEST_APPLY_FAILURE_CAPACITY 16
+#define DSVIEW_TEST_CHANNEL_ENABLE_FAILURE_CAPACITY 16
+#define DSVIEW_TEST_APPLY_KEY_CHANNEL_ENABLE (-70000)
+
+struct dsview_test_mock_u64_state {
+    int has_value;
+    unsigned long long value;
+    int status;
+};
+
+struct dsview_test_mock_int_state {
+    int has_value;
+    int value;
+    int status;
+};
+
+struct dsview_test_mock_double_state {
+    int has_value;
+    double value;
+    int status;
+};
+
+struct dsview_test_mock_list_state {
+    int status;
+    int count;
+    struct sr_list_item list[DSVIEW_OPTION_VALUE_CAPACITY + 1];
+    char labels[DSVIEW_OPTION_VALUE_CAPACITY][64];
+};
+
+struct dsview_test_mock_channel_group_state {
+    int operation_mode_code;
+    int status;
+    int count;
+    struct sr_list_item list[DSVIEW_CHANNEL_MODE_CAPACITY + 1];
+    char labels[DSVIEW_CHANNEL_MODE_CAPACITY][64];
+    unsigned short max_enabled_channels[DSVIEW_CHANNEL_MODE_CAPACITY];
+    int samplerate_status[DSVIEW_CHANNEL_MODE_CAPACITY];
+    unsigned int samplerate_count[DSVIEW_CHANNEL_MODE_CAPACITY];
+    unsigned long long samplerates[DSVIEW_CHANNEL_MODE_CAPACITY][DSVIEW_SAMPLERATE_CAPACITY];
+};
+
+struct dsview_test_mock_apply_call {
+    int key;
+    long long value;
+};
+
+struct dsview_test_mock_apply_failure {
+    int key;
+    int status;
+};
+
+struct dsview_test_mock_channel_enable_failure {
+    int channel_index;
+    int enable;
+    int status;
+};
+
+struct dsview_test_mock_state {
+    struct dsview_test_mock_int_state current_operation_mode;
+    struct dsview_test_mock_int_state current_stop_option;
+    struct dsview_test_mock_int_state current_filter;
+    struct dsview_test_mock_int_state current_channel_mode;
+    struct dsview_test_mock_int_state current_threshold;
+    struct dsview_test_mock_int_state current_valid_channel_count;
+    struct dsview_test_mock_int_state current_total_channel_count;
+    struct dsview_test_mock_double_state current_vth;
+    struct dsview_test_mock_u64_state current_samplerate;
+    struct dsview_test_mock_u64_state current_sample_limit;
+    struct dsview_test_mock_u64_state current_hw_depth;
+    struct dsview_test_mock_list_state operation_modes;
+    struct dsview_test_mock_list_state stop_options;
+    struct dsview_test_mock_list_state filters;
+    struct dsview_test_mock_list_state legacy_thresholds;
+    struct dsview_test_mock_channel_group_state channel_groups[DSVIEW_CHANNEL_MODE_GROUP_CAPACITY];
+    struct dsview_test_mock_apply_call apply_log[DSVIEW_TEST_APPLY_LOG_CAPACITY];
+    struct dsview_test_mock_apply_failure apply_failures[DSVIEW_TEST_APPLY_FAILURE_CAPACITY];
+    struct dsview_test_mock_channel_enable_failure
+        channel_enable_failures[DSVIEW_TEST_CHANNEL_ENABLE_FAILURE_CAPACITY];
+    int channel_group_count;
+    int apply_log_count;
+    int apply_failure_count;
+    int channel_enable_failure_count;
+    int operation_mode_set_calls;
+    int channel_mode_set_calls;
+};
+
+static struct dsview_test_mock_state g_test_mock_state;
+
+static struct dsview_test_mock_int_state *dsview_test_mock_int_state_for_key(int key)
+{
+    switch (key) {
+    case SR_CONF_OPERATION_MODE:
+        return &g_test_mock_state.current_operation_mode;
+    case SR_CONF_BUFFER_OPTIONS:
+        return &g_test_mock_state.current_stop_option;
+    case SR_CONF_FILTER:
+        return &g_test_mock_state.current_filter;
+    case SR_CONF_CHANNEL_MODE:
+        return &g_test_mock_state.current_channel_mode;
+    case SR_CONF_THRESHOLD:
+        return &g_test_mock_state.current_threshold;
+    case SR_CONF_VLD_CH_NUM:
+        return &g_test_mock_state.current_valid_channel_count;
+    case SR_CONF_TOTAL_CH_NUM:
+        return &g_test_mock_state.current_total_channel_count;
+    default:
+        return NULL;
+    }
+}
+
+static struct dsview_test_mock_u64_state *dsview_test_mock_u64_state_for_key(int key)
+{
+    switch (key) {
+    case SR_CONF_SAMPLERATE:
+        return &g_test_mock_state.current_samplerate;
+    case SR_CONF_LIMIT_SAMPLES:
+        return &g_test_mock_state.current_sample_limit;
+    case SR_CONF_HW_DEPTH:
+        return &g_test_mock_state.current_hw_depth;
+    default:
+        return NULL;
+    }
+}
+
+static struct dsview_test_mock_list_state *dsview_test_mock_list_state_for_key(int key)
+{
+    switch (key) {
+    case SR_CONF_OPERATION_MODE:
+        return &g_test_mock_state.operation_modes;
+    case SR_CONF_BUFFER_OPTIONS:
+        return &g_test_mock_state.stop_options;
+    case SR_CONF_FILTER:
+        return &g_test_mock_state.filters;
+    case SR_CONF_THRESHOLD:
+        return &g_test_mock_state.legacy_thresholds;
+    default:
+        return NULL;
+    }
+}
+
+static struct dsview_test_mock_channel_group_state *dsview_test_mock_find_channel_group(int operation_mode_code)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.channel_group_count; index++) {
+        if (g_test_mock_state.channel_groups[index].operation_mode_code == operation_mode_code) {
+            return &g_test_mock_state.channel_groups[index];
+        }
+    }
+
+    return NULL;
+}
+
+static const struct dsview_test_mock_channel_group_state *dsview_test_mock_current_channel_group(void)
+{
+    if (!g_test_mock_state.current_operation_mode.has_value) {
+        return NULL;
+    }
+
+    return dsview_test_mock_find_channel_group(g_test_mock_state.current_operation_mode.value);
+}
+
+static void dsview_test_mock_record_apply_call(int key, long long value)
+{
+    if (g_test_mock_state.apply_log_count >= DSVIEW_TEST_APPLY_LOG_CAPACITY) {
+        return;
+    }
+
+    g_test_mock_state.apply_log[g_test_mock_state.apply_log_count].key = key;
+    g_test_mock_state.apply_log[g_test_mock_state.apply_log_count].value = value;
+    g_test_mock_state.apply_log_count++;
+}
+
+static int dsview_test_mock_lookup_apply_failure(int key)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.apply_failure_count; index++) {
+        if (g_test_mock_state.apply_failures[index].key == key) {
+            return g_test_mock_state.apply_failures[index].status;
+        }
+    }
+
+    return SR_OK;
+}
+
+static int dsview_test_mock_lookup_channel_enable_failure(int channel_index, int enable)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.channel_enable_failure_count; index++) {
+        if (g_test_mock_state.channel_enable_failures[index].channel_index == channel_index
+            && g_test_mock_state.channel_enable_failures[index].enable == enable) {
+            return g_test_mock_state.channel_enable_failures[index].status;
+        }
+    }
+
+    return SR_OK;
+}
+
+static int dsview_test_mock_valid_channels_for_mode(int channel_mode_code, unsigned short *out_value)
+{
+    const struct dsview_test_mock_channel_group_state *group = dsview_test_mock_current_channel_group();
+    int index;
+
+    if (out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (group == NULL) {
+        return SR_ERR_NA;
+    }
+
+    for (index = 0; index < group->count; index++) {
+        if (group->list[index].id == channel_mode_code) {
+            *out_value = group->max_enabled_channels[index];
+            return SR_OK;
+        }
+    }
+
+    return SR_ERR_ARG;
+}
+
+static int dsview_test_mock_samplerates_for_mode(
+    int channel_mode_code,
+    const unsigned long long **out_values,
+    unsigned int *out_count)
+{
+    const struct dsview_test_mock_channel_group_state *group = dsview_test_mock_current_channel_group();
+    int index;
+
+    if (out_values == NULL || out_count == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (group == NULL) {
+        return SR_ERR_NA;
+    }
+
+    for (index = 0; index < group->count; index++) {
+        if (group->list[index].id == channel_mode_code) {
+            *out_values = group->samplerates[index];
+            *out_count = group->samplerate_count[index];
+            return group->samplerate_status[index];
+        }
+    }
+
+    return SR_ERR_ARG;
+}
+
+static int dsview_test_mock_get_config(
+    const struct sr_channel *ch,
+    const struct sr_channel_group *cg,
+    int key,
+    GVariant **data)
+{
+    struct dsview_test_mock_int_state *int_state;
+    struct dsview_test_mock_u64_state *u64_state;
+
+    (void)ch;
+    (void)cg;
+
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    if (key == SR_CONF_VTH) {
+        if (g_test_mock_state.current_vth.status != SR_OK) {
+            return g_test_mock_state.current_vth.status;
+        }
+        if (!g_test_mock_state.current_vth.has_value) {
+            return SR_ERR_NA;
+        }
+        *data = g_variant_new_double(g_test_mock_state.current_vth.value);
+        return SR_OK;
+    }
+
+    u64_state = dsview_test_mock_u64_state_for_key(key);
+    if (u64_state != NULL) {
+        if (u64_state->status != SR_OK) {
+            return u64_state->status;
+        }
+        if (!u64_state->has_value) {
+            return SR_ERR_NA;
+        }
+        *data = g_variant_new_uint64(u64_state->value);
+        return SR_OK;
+    }
+
+    if (key == SR_CONF_VLD_CH_NUM) {
+        unsigned short valid_channels = 0;
+        int status = dsview_test_mock_valid_channels_for_mode(
+            g_test_mock_state.current_channel_mode.value,
+            &valid_channels);
+        if (status == SR_OK) {
+            *data = g_variant_new_int16((gint16)valid_channels);
+            return SR_OK;
+        }
+        int_state = dsview_test_mock_int_state_for_key(key);
+        if (int_state != NULL && int_state->status == SR_OK && int_state->has_value) {
+            *data = g_variant_new_int16((gint16)int_state->value);
+            return SR_OK;
+        }
+        return status;
+    }
+
+    int_state = dsview_test_mock_int_state_for_key(key);
+    if (int_state == NULL) {
+        return SR_ERR_NA;
+    }
+    if (int_state->status != SR_OK) {
+        return int_state->status;
+    }
+    if (!int_state->has_value) {
+        return SR_ERR_NA;
+    }
+
+    *data = g_variant_new_int16((gint16)int_state->value);
+    return SR_OK;
+}
+
+static int dsview_test_mock_get_config_list(
+    const struct sr_channel_group *cg,
+    int key,
+    GVariant **data)
+{
+    const struct dsview_test_mock_channel_group_state *group;
+    struct dsview_test_mock_list_state *list_state;
+
+    (void)cg;
+
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    if (key == SR_CONF_CHANNEL_MODE) {
+        group = dsview_test_mock_current_channel_group();
+        if (group == NULL) {
+            return SR_ERR_NA;
+        }
+        if (group->status != SR_OK) {
+            return group->status;
+        }
+        *data = g_variant_new_uint64((guint64)(uintptr_t)group->list);
+        return SR_OK;
+    }
+
+    if (key == SR_CONF_SAMPLERATE) {
+        const unsigned long long *values = NULL;
+        unsigned int count = 0;
+        GVariantBuilder dict_builder;
+        GVariantBuilder samplerate_builder;
+        int index;
+        int status = dsview_test_mock_samplerates_for_mode(
+            g_test_mock_state.current_channel_mode.value,
+            &values,
+            &count);
+
+        if (status != SR_OK) {
+            return status;
+        }
+
+        g_variant_builder_init(&dict_builder, G_VARIANT_TYPE_VARDICT);
+        g_variant_builder_init(&samplerate_builder, G_VARIANT_TYPE("at"));
+        for (index = 0; index < (int)count; index++) {
+            g_variant_builder_add(&samplerate_builder, "t", values[index]);
+        }
+        g_variant_builder_add(
+            &dict_builder,
+            "{sv}",
+            "samplerates",
+            g_variant_builder_end(&samplerate_builder));
+        *data = g_variant_builder_end(&dict_builder);
+        return SR_OK;
+    }
+
+    list_state = dsview_test_mock_list_state_for_key(key);
+    if (list_state == NULL) {
+        return SR_ERR_NA;
+    }
+    if (list_state->status != SR_OK) {
+        return list_state->status;
+    }
+
+    *data = g_variant_new_uint64((guint64)(uintptr_t)list_state->list);
+    return SR_OK;
+}
+
+static int dsview_test_mock_set_config(
+    const struct sr_channel *ch,
+    const struct sr_channel_group *cg,
+    int key,
+    GVariant *data)
+{
+    struct dsview_test_mock_channel_group_state *group;
+    struct dsview_test_mock_u64_state *u64_state;
+    double double_value;
+    unsigned long long u64_value;
+    int value;
+    int index;
+    int failure_status;
+
+    (void)ch;
+    (void)cg;
+
+    if (data == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    if (key == SR_CONF_VTH) {
+        double_value = g_variant_get_double(data);
+        dsview_test_mock_record_apply_call(key, 0);
+        failure_status = dsview_test_mock_lookup_apply_failure(key);
+        if (failure_status != SR_OK) {
+            return failure_status;
+        }
+
+        g_test_mock_state.current_vth.has_value = 1;
+        g_test_mock_state.current_vth.value = double_value;
+        g_test_mock_state.current_vth.status = SR_OK;
+        return SR_OK;
+    }
+
+    u64_state = dsview_test_mock_u64_state_for_key(key);
+    if (u64_state != NULL) {
+        u64_value = g_variant_get_uint64(data);
+        dsview_test_mock_record_apply_call(key, (long long)u64_value);
+        failure_status = dsview_test_mock_lookup_apply_failure(key);
+        if (failure_status != SR_OK) {
+            return failure_status;
+        }
+
+        u64_state->has_value = 1;
+        u64_state->value = u64_value;
+        u64_state->status = SR_OK;
+        return SR_OK;
+    }
+
+    value = g_variant_get_int16(data);
+    dsview_test_mock_record_apply_call(key, value);
+    failure_status = dsview_test_mock_lookup_apply_failure(key);
+    if (failure_status != SR_OK) {
+        return failure_status;
+    }
+
+    if (key == SR_CONF_OPERATION_MODE) {
+        g_test_mock_state.operation_mode_set_calls++;
+        group = dsview_test_mock_find_channel_group(value);
+        if (group == NULL) {
+            return SR_ERR_ARG;
+        }
+
+        g_test_mock_state.current_operation_mode.has_value = 1;
+        g_test_mock_state.current_operation_mode.value = value;
+        g_test_mock_state.current_operation_mode.status = SR_OK;
+        if (group->count > 0) {
+            g_test_mock_state.current_channel_mode.has_value = 1;
+            g_test_mock_state.current_channel_mode.value = group->list[0].id;
+            g_test_mock_state.current_channel_mode.status = SR_OK;
+            g_test_mock_state.current_valid_channel_count.has_value = 1;
+            g_test_mock_state.current_valid_channel_count.value = group->max_enabled_channels[0];
+            g_test_mock_state.current_valid_channel_count.status = SR_OK;
+        }
+        return SR_OK;
+    }
+
+    if (key == SR_CONF_CHANNEL_MODE) {
+        g_test_mock_state.channel_mode_set_calls++;
+        group = dsview_test_mock_find_channel_group(g_test_mock_state.current_operation_mode.value);
+        if (group == NULL) {
+            return SR_ERR_ARG;
+        }
+
+        for (index = 0; index < group->count; index++) {
+            if (group->list[index].id == value) {
+                g_test_mock_state.current_channel_mode.has_value = 1;
+                g_test_mock_state.current_channel_mode.value = value;
+                g_test_mock_state.current_channel_mode.status = SR_OK;
+                g_test_mock_state.current_valid_channel_count.has_value = 1;
+                g_test_mock_state.current_valid_channel_count.value = group->max_enabled_channels[index];
+                g_test_mock_state.current_valid_channel_count.status = SR_OK;
+                return SR_OK;
+            }
+        }
+
+        return SR_ERR_ARG;
+    }
+
+    if (key == SR_CONF_BUFFER_OPTIONS) {
+        g_test_mock_state.current_stop_option.has_value = 1;
+        g_test_mock_state.current_stop_option.value = value;
+        g_test_mock_state.current_stop_option.status = SR_OK;
+        return SR_OK;
+    }
+
+    if (key == SR_CONF_FILTER) {
+        g_test_mock_state.current_filter.has_value = 1;
+        g_test_mock_state.current_filter.value = value;
+        g_test_mock_state.current_filter.status = SR_OK;
+        return SR_OK;
+    }
+
+    return SR_ERR_NA;
+}
+
+static int dsview_test_mock_enable_channel(int channel_index, gboolean enable)
+{
+    int enabled = enable ? 1 : 0;
+    int failure_status;
+
+    dsview_test_mock_record_apply_call(
+        DSVIEW_TEST_APPLY_KEY_CHANNEL_ENABLE,
+        ((long long)channel_index << 1) | enabled);
+    failure_status = dsview_test_mock_lookup_channel_enable_failure(channel_index, enabled);
+    if (failure_status != SR_OK) {
+        return failure_status;
+    }
+
+    return SR_OK;
+}
+
+void dsview_test_install_mock_option_api(void)
+{
+    g_bridge_api.ds_get_actived_device_config = dsview_test_mock_get_config;
+    g_bridge_api.ds_get_actived_device_config_list = dsview_test_mock_get_config_list;
+    g_bridge_api.ds_set_actived_device_config = dsview_test_mock_set_config;
+    g_bridge_api.ds_enable_device_channel_index = dsview_test_mock_enable_channel;
+}
+
+void dsview_test_reset_mock_option_api(void)
+{
+    memset(&g_test_mock_state, 0, sizeof(g_test_mock_state));
+    g_test_mock_state.current_operation_mode.status = SR_ERR_NA;
+    g_test_mock_state.current_stop_option.status = SR_ERR_NA;
+    g_test_mock_state.current_filter.status = SR_ERR_NA;
+    g_test_mock_state.current_channel_mode.status = SR_ERR_NA;
+    g_test_mock_state.current_threshold.status = SR_ERR_NA;
+    g_test_mock_state.current_valid_channel_count.status = SR_ERR_NA;
+    g_test_mock_state.current_total_channel_count.status = SR_ERR_NA;
+    g_test_mock_state.current_vth.status = SR_ERR_NA;
+    g_test_mock_state.current_samplerate.status = SR_ERR_NA;
+    g_test_mock_state.current_sample_limit.status = SR_ERR_NA;
+    g_test_mock_state.current_hw_depth.status = SR_ERR_NA;
+    g_test_mock_state.operation_modes.status = SR_ERR_NA;
+    g_test_mock_state.stop_options.status = SR_ERR_NA;
+    g_test_mock_state.filters.status = SR_ERR_NA;
+    g_test_mock_state.legacy_thresholds.status = SR_ERR_NA;
+}
+
+void dsview_test_mock_set_current_int(int key, int has_value, int value, int status)
+{
+    struct dsview_test_mock_int_state *state = dsview_test_mock_int_state_for_key(key);
+
+    if (state == NULL) {
+        return;
+    }
+
+    state->has_value = has_value != 0;
+    state->value = value;
+    state->status = status;
+}
+
+void dsview_test_mock_set_current_double(int key, int has_value, double value, int status)
+{
+    if (key != SR_CONF_VTH) {
+        return;
+    }
+
+    g_test_mock_state.current_vth.has_value = has_value != 0;
+    g_test_mock_state.current_vth.value = value;
+    g_test_mock_state.current_vth.status = status;
+}
+
+void dsview_test_mock_set_current_u64(int key, int has_value, unsigned long long value, int status)
+{
+    struct dsview_test_mock_u64_state *state = dsview_test_mock_u64_state_for_key(key);
+
+    if (state == NULL) {
+        return;
+    }
+
+    state->has_value = has_value != 0;
+    state->value = value;
+    state->status = status;
+}
+
+void dsview_test_mock_set_list_items(
+    int key,
+    const struct dsview_test_list_item *items,
+    int count,
+    int status)
+{
+    struct dsview_test_mock_list_state *state = dsview_test_mock_list_state_for_key(key);
+    int index;
+    int capped_count;
+
+    if (state == NULL) {
+        return;
+    }
+
+    memset(state, 0, sizeof(*state));
+    state->status = status;
+    if (items == NULL || count <= 0) {
+        state->list[0].id = -1;
+        return;
+    }
+
+    capped_count = (count < DSVIEW_OPTION_VALUE_CAPACITY) ? count : DSVIEW_OPTION_VALUE_CAPACITY;
+    state->count = capped_count;
+    for (index = 0; index < capped_count; index++) {
+        state->list[index].id = items[index].id;
+        dsview_bridge_copy_string(state->labels[index], sizeof(state->labels[index]), items[index].name);
+        state->list[index].name = state->labels[index];
+    }
+    state->list[capped_count].id = -1;
+    state->list[capped_count].name = NULL;
+}
+
+void dsview_test_mock_set_channel_mode_group(
+    int operation_mode_code,
+    const struct dsview_test_channel_mode *items,
+    int count,
+    int status)
+{
+    struct dsview_test_mock_channel_group_state *group =
+        dsview_test_mock_find_channel_group(operation_mode_code);
+    int index;
+    int capped_count;
+
+    if (group == NULL) {
+        if (g_test_mock_state.channel_group_count >= DSVIEW_CHANNEL_MODE_GROUP_CAPACITY) {
+            return;
+        }
+        group = &g_test_mock_state.channel_groups[g_test_mock_state.channel_group_count++];
+    }
+
+    memset(group, 0, sizeof(*group));
+    group->operation_mode_code = operation_mode_code;
+    group->status = status;
+    if (items == NULL || count <= 0) {
+        group->list[0].id = -1;
+        return;
+    }
+
+    capped_count = (count < DSVIEW_CHANNEL_MODE_CAPACITY) ? count : DSVIEW_CHANNEL_MODE_CAPACITY;
+    group->count = capped_count;
+    for (index = 0; index < capped_count; index++) {
+        group->list[index].id = items[index].id;
+        dsview_bridge_copy_string(group->labels[index], sizeof(group->labels[index]), items[index].name);
+        group->list[index].name = group->labels[index];
+        group->max_enabled_channels[index] = items[index].max_enabled_channels;
+    }
+    group->list[capped_count].id = -1;
+    group->list[capped_count].name = NULL;
+}
+
+void dsview_test_mock_set_channel_mode_samplerates(
+    int operation_mode_code,
+    int channel_mode_code,
+    const unsigned long long *values,
+    int count,
+    int status)
+{
+    struct dsview_test_mock_channel_group_state *group =
+        dsview_test_mock_find_channel_group(operation_mode_code);
+    int index;
+    int capped_count;
+
+    if (group == NULL) {
+        return;
+    }
+
+    for (index = 0; index < group->count; index++) {
+        if (group->list[index].id == channel_mode_code) {
+            group->samplerate_status[index] = status;
+            if (values == NULL || count <= 0) {
+                group->samplerate_count[index] = 0;
+                return;
+            }
+
+            capped_count = (count < DSVIEW_SAMPLERATE_CAPACITY)
+                ? count
+                : DSVIEW_SAMPLERATE_CAPACITY;
+            group->samplerate_count[index] = (unsigned int)capped_count;
+            memcpy(
+                group->samplerates[index],
+                values,
+                capped_count * sizeof(values[0]));
+            return;
+        }
+    }
+}
+
+int dsview_test_mock_get_current_int(int key, int *out_has_value, int *out_value)
+{
+    const struct dsview_test_mock_int_state *state = dsview_test_mock_int_state_for_key(key);
+
+    if (state == NULL || out_has_value == NULL || out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_has_value = state->has_value;
+    *out_value = state->value;
+    return state->status;
+}
+
+int dsview_test_mock_get_current_double(int key, int *out_has_value, double *out_value)
+{
+    if (key != SR_CONF_VTH || out_has_value == NULL || out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_has_value = g_test_mock_state.current_vth.has_value;
+    *out_value = g_test_mock_state.current_vth.value;
+    return g_test_mock_state.current_vth.status;
+}
+
+int dsview_test_mock_get_current_u64(int key, int *out_has_value, unsigned long long *out_value)
+{
+    const struct dsview_test_mock_u64_state *state = dsview_test_mock_u64_state_for_key(key);
+
+    if (state == NULL || out_has_value == NULL || out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_has_value = state->has_value;
+    *out_value = state->value;
+    return state->status;
+}
+
+void dsview_test_mock_set_apply_failure(int key, int status)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.apply_failure_count; index++) {
+        if (g_test_mock_state.apply_failures[index].key == key) {
+            g_test_mock_state.apply_failures[index].status = status;
+            return;
+        }
+    }
+
+    if (g_test_mock_state.apply_failure_count >= DSVIEW_TEST_APPLY_FAILURE_CAPACITY) {
+        return;
+    }
+
+    g_test_mock_state.apply_failures[g_test_mock_state.apply_failure_count].key = key;
+    g_test_mock_state.apply_failures[g_test_mock_state.apply_failure_count].status = status;
+    g_test_mock_state.apply_failure_count++;
+}
+
+void dsview_test_mock_set_channel_enable_failure(int channel_index, int enable, int status)
+{
+    int index;
+
+    for (index = 0; index < g_test_mock_state.channel_enable_failure_count; index++) {
+        if (g_test_mock_state.channel_enable_failures[index].channel_index == channel_index
+            && g_test_mock_state.channel_enable_failures[index].enable == enable) {
+            g_test_mock_state.channel_enable_failures[index].status = status;
+            return;
+        }
+    }
+
+    if (g_test_mock_state.channel_enable_failure_count
+        >= DSVIEW_TEST_CHANNEL_ENABLE_FAILURE_CAPACITY) {
+        return;
+    }
+
+    g_test_mock_state.channel_enable_failures[g_test_mock_state.channel_enable_failure_count]
+        .channel_index = channel_index;
+    g_test_mock_state.channel_enable_failures[g_test_mock_state.channel_enable_failure_count]
+        .enable = enable;
+    g_test_mock_state.channel_enable_failures[g_test_mock_state.channel_enable_failure_count]
+        .status = status;
+    g_test_mock_state.channel_enable_failure_count++;
+}
+
+void dsview_test_mock_reset_apply_log(void)
+{
+    g_test_mock_state.apply_log_count = 0;
+    g_test_mock_state.apply_failure_count = 0;
+    g_test_mock_state.channel_enable_failure_count = 0;
+}
+
+int dsview_test_mock_get_apply_call_count(void)
+{
+    return g_test_mock_state.apply_log_count;
+}
+
+int dsview_test_mock_get_apply_call(int index, int *out_key, long long *out_value)
+{
+    if (index < 0 || index >= g_test_mock_state.apply_log_count || out_key == NULL || out_value == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_key = g_test_mock_state.apply_log[index].key;
+    *out_value = g_test_mock_state.apply_log[index].value;
+    return SR_OK;
+}
+
+int dsview_test_mock_get_set_call_count(int key)
+{
+    if (key == SR_CONF_OPERATION_MODE) {
+        return g_test_mock_state.operation_mode_set_calls;
+    }
+    if (key == SR_CONF_CHANNEL_MODE) {
+        return g_test_mock_state.channel_mode_set_calls;
+    }
+
+    return 0;
 }

@@ -106,6 +106,42 @@ fn final_timestamp(vcd: &str) -> Option<u64> {
         .last()
 }
 
+fn expand_cross_logic_blocks(blocks: &[&[u64]]) -> Vec<u8> {
+    let channel_count = blocks.len();
+    assert!(channel_count > 0);
+    let block_count = blocks[0].len();
+    assert!(blocks.iter().all(|channel| channel.len() == block_count));
+
+    let mut expanded = vec![0_u8; block_count * 64];
+    for (channel_index, channel_blocks) in blocks.iter().enumerate() {
+        for (block_index, block) in channel_blocks.iter().enumerate() {
+            for bit_index in 0..64 {
+                if ((block >> bit_index) & 1) != 0 {
+                    expanded[block_index * 64 + bit_index] |= 1 << channel_index;
+                }
+            }
+        }
+    }
+
+    expanded
+}
+
+fn pack_cross_logic_blocks(blocks: &[&[u64]]) -> Vec<u8> {
+    let channel_count = blocks.len();
+    assert!(channel_count > 0);
+    let block_count = blocks[0].len();
+    assert!(blocks.iter().all(|channel| channel.len() == block_count));
+
+    let mut packed = Vec::with_capacity(block_count * channel_count * std::mem::size_of::<u64>());
+    for block_index in 0..block_count {
+        for channel_blocks in blocks {
+            packed.extend_from_slice(&channel_blocks[block_index].to_le_bytes());
+        }
+    }
+
+    packed
+}
+
 #[test]
 fn upstream_header_exists_for_boundary_tests() {
     let header = upstream_header_path();
@@ -210,6 +246,42 @@ fn synthetic_vcd_goldens_verify_transition_times_and_sample_count_semantics() {
         ]
     );
     assert_eq!(final_timestamp(&vcd_string(&export.bytes)), Some(40));
+}
+
+#[test]
+fn cross_logic_packet_replay_matches_expanded_sample_export() {
+    if skip_windows_vcd_goldens() {
+        return;
+    }
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_runtime() else {
+        return;
+    };
+
+    let request = VcdExportRequest {
+        samplerate_hz: 8_000_000,
+        enabled_channels: vec![0, 1],
+    };
+    let ch0 = [0x0000_FFFF_0000_FFFF_u64, 0xF0F0_F0F0_0F0F_0F0F_u64];
+    let ch1 = [0xAAAA_AAAA_5555_5555_u64, 0xCCCC_3333_CCCC_3333_u64];
+    let cross_bytes = pack_cross_logic_blocks(&[&ch0, &ch1]);
+    let expanded_samples = expand_cross_logic_blocks(&[&ch0, &ch1]);
+    let packet_lengths = [16_usize, 16_usize];
+
+    let cross_export = runtime
+        .render_vcd_from_cross_logic_packets(&request, &cross_bytes, &packet_lengths)
+        .expect("cross-logic replay should export VCD");
+    let expanded_export = runtime
+        .render_vcd_from_samples(&request, &expanded_samples, 1)
+        .expect("expanded sample replay should export VCD");
+
+    assert_eq!(cross_export.sample_count, 128);
+    assert_eq!(expanded_export.sample_count, 128);
+    assert_eq!(cross_export.packet_count, 4);
+    assert_eq!(
+        normalize_vcd(&vcd_string(&cross_export.bytes)),
+        normalize_vcd(&vcd_string(&expanded_export.bytes))
+    );
 }
 
 #[test]
