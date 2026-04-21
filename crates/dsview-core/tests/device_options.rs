@@ -1,9 +1,10 @@
 use dsview_core::{
-    normalize_device_options_snapshot, DeviceHandle, SelectionHandle, SupportedDevice,
-    SupportedDeviceKind,
+    normalize_decoder_descriptor, normalize_device_options_snapshot, DecoderDescriptor,
+    DeviceHandle, SelectionHandle, SupportedDevice, SupportedDeviceKind,
 };
 use dsview_sys::{
-    DeviceOptionChannelMode, DeviceOptionChannelModeGroup, DeviceOptionValue,
+    DecodeAnnotation, DecodeAnnotationRow, DecodeChannel, DecodeDecoder, DecodeInput, DecodeOption,
+    DecodeOutput, DeviceOptionChannelMode, DeviceOptionChannelModeGroup, DeviceOptionValue,
     DeviceOptionsSnapshot as NativeDeviceOptionsSnapshot,
     LegacyThresholdMetadata as NativeLegacyThresholdMetadata, ThresholdVoltageRange,
 };
@@ -114,6 +115,62 @@ fn native_snapshot_with_legacy_threshold() -> NativeDeviceOptionsSnapshot {
         ],
     });
     snapshot
+}
+
+fn native_decoder() -> DecodeDecoder {
+    DecodeDecoder {
+        id: "0:i2c".to_string(),
+        name: "i2c".to_string(),
+        longname: "Inter-Integrated Circuit".to_string(),
+        description: "serial bus decoder".to_string(),
+        license: "gplv2+".to_string(),
+        inputs: vec![DecodeInput {
+            id: "logic".to_string(),
+        }],
+        outputs: vec![
+            DecodeOutput {
+                id: "i2c".to_string(),
+            },
+            DecodeOutput {
+                id: "i2c-messages".to_string(),
+            },
+        ],
+        tags: vec!["serial".to_string(), "embedded".to_string()],
+        required_channels: vec![DecodeChannel {
+            id: "scl".to_string(),
+            name: "SCL".to_string(),
+            description: "clock".to_string(),
+            order: 0,
+            channel_type: 0,
+            idn: Some("clk".to_string()),
+        }],
+        optional_channels: vec![DecodeChannel {
+            id: "sda".to_string(),
+            name: "SDA".to_string(),
+            description: "data".to_string(),
+            order: 1,
+            channel_type: 0,
+            idn: Some("data".to_string()),
+        }],
+        options: vec![DecodeOption {
+            id: "address_format".to_string(),
+            idn: Some("address_format".to_string()),
+            description: Some("show 7-bit or 8-bit addresses".to_string()),
+            default_value: Some("7-bit".to_string()),
+            values: vec!["7-bit".to_string(), "8-bit".to_string()],
+        }],
+        annotations: vec![DecodeAnnotation {
+            id: "start".to_string(),
+            label: Some("START".to_string()),
+            description: Some("start condition".to_string()),
+            annotation_type: 0,
+        }],
+        annotation_rows: vec![DecodeAnnotationRow {
+            id: "frames".to_string(),
+            description: Some("frame events".to_string()),
+            annotation_classes: vec![0],
+        }],
+    }
 }
 
 #[test]
@@ -239,4 +296,60 @@ fn threshold_snapshot_uses_voltage_range_contract_and_keeps_legacy_metadata_raw(
             .collect::<Vec<_>>(),
         vec![3, 7]
     );
+}
+
+#[test]
+fn preserves_upstream_decoder_ids() {
+    let descriptor: DecoderDescriptor = normalize_decoder_descriptor(native_decoder());
+
+    assert_eq!(descriptor.id, "0:i2c");
+    assert_eq!(descriptor.required_channels[0].id, "scl");
+    assert_eq!(descriptor.optional_channels[0].id, "sda");
+    assert_eq!(descriptor.options[0].id, "address_format");
+    assert_eq!(descriptor.annotation_rows[0].id, "frames");
+}
+
+#[test]
+fn keeps_required_and_optional_channels_distinct() {
+    let descriptor = normalize_decoder_descriptor(native_decoder());
+
+    assert_eq!(
+        descriptor
+            .required_channels
+            .iter()
+            .map(|channel| channel.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["scl"]
+    );
+    assert_eq!(
+        descriptor
+            .optional_channels
+            .iter()
+            .map(|channel| channel.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sda"]
+    );
+}
+
+#[test]
+fn exposes_stack_relevant_inputs_and_outputs() {
+    let descriptor = normalize_decoder_descriptor(native_decoder());
+
+    assert_eq!(
+        descriptor
+            .inputs
+            .iter()
+            .map(|input| input.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["logic"]
+    );
+    assert_eq!(
+        descriptor
+            .outputs
+            .iter()
+            .map(|output| output.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["i2c", "i2c-messages"]
+    );
+    assert_eq!(descriptor.annotation_rows[0].annotation_classes, vec![0]);
 }
