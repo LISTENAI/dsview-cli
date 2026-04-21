@@ -5,8 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use dsview_sys::{
     decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
-    source_runtime_library_path, upstream_header_path, DecodeRuntimeBridge, DecodeRuntimeError,
-    DecodeRuntimeErrorCode, ExportErrorCode, RuntimeBridge, RuntimeError, VcdExportRequest,
+    source_runtime_library_path, upstream_header_path, DecodeDecoder, DecodeRuntimeBridge,
+    DecodeRuntimeError, DecodeRuntimeErrorCode, ExportErrorCode, RuntimeBridge, RuntimeError,
+    VcdExportRequest,
 };
 
 fn runtime_test_guard() -> &'static Mutex<()> {
@@ -238,22 +239,27 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
     runtime
         .init(&decoder_dir)
         .expect("decode runtime should initialize with source decoder dir");
-    let list = runtime.list_decoders().expect("decode_list should succeed");
-    assert!(
-        list.iter().any(|decoder| decoder.id == "0:i2c"),
-        "expected canonical upstream decoder ids in decode runtime list"
-    );
+    let list = runtime.decode_list().expect("decode_list should succeed");
+    let list_entry = list
+        .iter()
+        .find(|decoder| decoder.id == "0:i2c")
+        .expect("expected canonical upstream decoder ids in decode runtime list");
 
     let decoder = runtime
-        .inspect_decoder("0:i2c")
+        .decode_inspect("0:i2c")
         .expect("decode_inspect should return decoder metadata");
     assert_eq!(decoder.id, "0:i2c");
+    assert_eq!(decoder.id, list_entry.id, "preserve upstream id across list/inspect");
+    assert_eq!(
+        decoder.longname, list_entry.longname,
+        "decode_inspect should preserve upstream labels from decode_list"
+    );
     assert!(!decoder.required_channels.is_empty());
     assert!(!decoder.annotation_rows.is_empty());
     assert!(!decoder.inputs.is_empty());
     assert!(!decoder.outputs.is_empty());
 
-    let unknown = runtime.inspect_decoder("missing-decoder").unwrap_err();
+    let unknown = runtime.decode_inspect("missing-decoder").unwrap_err();
     assert!(matches!(
         unknown,
         DecodeRuntimeError::NativeCall {
@@ -264,6 +270,31 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
     ));
 
     runtime.exit().expect("decode runtime exit should succeed");
+}
+
+#[test]
+fn safe_decode_decoder_wrapper_preserves_fixture_ids_and_labels() {
+    let decoder = DecodeDecoder {
+        id: "0:i2c".to_string(),
+        name: "i2c".to_string(),
+        longname: "Inter-Integrated Circuit".to_string(),
+        description: "fixture decoder".to_string(),
+        license: "gplv2+".to_string(),
+        inputs: vec![],
+        outputs: vec![],
+        tags: vec!["serial".to_string()],
+        required_channels: vec![],
+        optional_channels: vec![],
+        options: vec![],
+        annotations: vec![],
+        annotation_rows: vec![],
+    };
+
+    assert_eq!(decoder.id, "0:i2c", "preserve upstream id in safe wrapper");
+    assert_eq!(
+        decoder.longname, "Inter-Integrated Circuit",
+        "preserve upstream label in safe wrapper"
+    );
 }
 
 #[test]
