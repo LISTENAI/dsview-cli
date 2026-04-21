@@ -509,15 +509,6 @@ pub enum DecodeRuntimeError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodeListEntry {
-    pub id: String,
-    pub name: String,
-    pub longname: String,
-    pub description: String,
-    pub license: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodeChannel {
     pub id: String,
     pub name: String,
@@ -552,14 +543,24 @@ pub struct DecodeAnnotationRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodeMetadata {
+pub struct DecodeInput {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeOutput {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeDecoder {
     pub id: String,
     pub name: String,
     pub longname: String,
     pub description: String,
     pub license: String,
-    pub inputs: Vec<String>,
-    pub outputs: Vec<String>,
+    pub inputs: Vec<DecodeInput>,
+    pub outputs: Vec<DecodeOutput>,
     pub tags: Vec<String>,
     pub required_channels: Vec<DecodeChannel>,
     pub optional_channels: Vec<DecodeChannel>,
@@ -567,6 +568,9 @@ pub struct DecodeMetadata {
     pub annotations: Vec<DecodeAnnotation>,
     pub annotation_rows: Vec<DecodeAnnotationRow>,
 }
+
+pub type DecodeListEntry = DecodeDecoder;
+pub type DecodeMetadata = DecodeDecoder;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1762,7 +1766,7 @@ impl DecodeRuntimeBridge {
         })
     }
 
-    pub fn list_decoders(&self) -> Result<Vec<DecodeListEntry>, DecodeRuntimeError> {
+    pub fn decode_list(&self) -> Result<Vec<DecodeDecoder>, DecodeRuntimeError> {
         let mut raw_list: *mut RawDecodeListEntry = std::ptr::null_mut();
         let mut count = 0_usize;
         decode_native_call_status("decode_list", unsafe {
@@ -1785,10 +1789,11 @@ impl DecodeRuntimeBridge {
         result
     }
 
-    pub fn inspect_decoder(
-        &self,
-        decoder_id: &str,
-    ) -> Result<DecodeMetadata, DecodeRuntimeError> {
+    pub fn list_decoders(&self) -> Result<Vec<DecodeDecoder>, DecodeRuntimeError> {
+        self.decode_list()
+    }
+
+    pub fn decode_inspect(&self, decoder_id: &str) -> Result<DecodeDecoder, DecodeRuntimeError> {
         let decoder_id = CString::new(decoder_id).map_err(|_| DecodeRuntimeError::InvalidArgument(
             "decoder id must not contain interior NUL bytes".to_string(),
         ))?;
@@ -1822,6 +1827,10 @@ impl DecodeRuntimeBridge {
         let metadata = decode_metadata_from_raw(&raw);
         unsafe { dsview_decode_free_metadata(&mut raw) };
         metadata
+    }
+
+    pub fn inspect_decoder(&self, decoder_id: &str) -> Result<DecodeDecoder, DecodeRuntimeError> {
+        self.decode_inspect(decoder_id)
     }
 }
 
@@ -2034,6 +2043,30 @@ fn decode_string_array(
         .collect()
 }
 
+fn decode_inputs(
+    raw: *const *mut c_char,
+    count: usize,
+) -> Result<Vec<DecodeInput>, DecodeRuntimeError> {
+    decode_string_array(raw, count).map(|values| {
+        values
+            .into_iter()
+            .map(|id| DecodeInput { id })
+            .collect()
+    })
+}
+
+fn decode_outputs(
+    raw: *const *mut c_char,
+    count: usize,
+) -> Result<Vec<DecodeOutput>, DecodeRuntimeError> {
+    decode_string_array(raw, count).map(|values| {
+        values
+            .into_iter()
+            .map(|id| DecodeOutput { id })
+            .collect()
+    })
+}
+
 fn decode_channel_from_raw(raw: &RawDecodeChannel) -> Result<DecodeChannel, DecodeRuntimeError> {
     Ok(DecodeChannel {
         id: decode_required_c_string(raw.id.cast_const())?,
@@ -2083,17 +2116,25 @@ fn decode_annotation_row_from_raw(
     })
 }
 
-fn decode_list_entry_from_raw(raw: &RawDecodeListEntry) -> Result<DecodeListEntry, DecodeRuntimeError> {
-    Ok(DecodeListEntry {
+fn decode_list_entry_from_raw(raw: &RawDecodeListEntry) -> Result<DecodeDecoder, DecodeRuntimeError> {
+    Ok(DecodeDecoder {
         id: decode_required_c_string(raw.id.cast_const())?,
         name: decode_required_c_string(raw.name.cast_const())?,
         longname: decode_required_c_string(raw.longname.cast_const())?,
         description: decode_required_c_string(raw.desc.cast_const())?,
         license: decode_required_c_string(raw.license.cast_const())?,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        tags: Vec::new(),
+        required_channels: Vec::new(),
+        optional_channels: Vec::new(),
+        options: Vec::new(),
+        annotations: Vec::new(),
+        annotation_rows: Vec::new(),
     })
 }
 
-fn decode_metadata_from_raw(raw: &RawDecodeMetadata) -> Result<DecodeMetadata, DecodeRuntimeError> {
+fn decode_metadata_from_raw(raw: &RawDecodeMetadata) -> Result<DecodeDecoder, DecodeRuntimeError> {
     let required_channels = if raw.required_channels.is_null() || raw.required_channel_count == 0 {
         Vec::new()
     } else {
@@ -2145,14 +2186,14 @@ fn decode_metadata_from_raw(raw: &RawDecodeMetadata) -> Result<DecodeMetadata, D
         }
     };
 
-    Ok(DecodeMetadata {
+    Ok(DecodeDecoder {
         id: decode_required_c_string(raw.id.cast_const())?,
         name: decode_required_c_string(raw.name.cast_const())?,
         longname: decode_required_c_string(raw.longname.cast_const())?,
         description: decode_required_c_string(raw.desc.cast_const())?,
         license: decode_required_c_string(raw.license.cast_const())?,
-        inputs: decode_string_array(raw.inputs.cast_const(), raw.input_count)?,
-        outputs: decode_string_array(raw.outputs.cast_const(), raw.output_count)?,
+        inputs: decode_inputs(raw.inputs.cast_const(), raw.input_count)?,
+        outputs: decode_outputs(raw.outputs.cast_const(), raw.output_count)?,
         tags: decode_string_array(raw.tags.cast_const(), raw.tag_count)?,
         required_channels,
         optional_channels,
