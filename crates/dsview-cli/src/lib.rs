@@ -1,9 +1,8 @@
-use std::collections::BTreeSet;
-
 pub mod capture_device_options;
 pub mod device_options;
 
 use dsview_core::{
+    DecodeFailureReport, DecodeReport, OfflineDecodeResult, OfflineDecodeRunError,
     DecoderAnnotationDescriptor, DecoderAnnotationRowDescriptor, DecoderChannelDescriptor,
     DecoderDescriptor, DecoderInputDescriptor, DecoderOptionDescriptor,
     DecoderOutputDescriptor,
@@ -52,17 +51,6 @@ pub struct DecodeValidateResponse {
     pub root_decoder_id: String,
     pub stack_depth: usize,
     pub bound_channel_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DecodeRunResponse {
-    pub ok: bool,
-    pub config_version: u32,
-    pub root_decoder_id: String,
-    pub stack_depth: usize,
-    pub sample_count: u64,
-    pub annotation_count: usize,
-    pub annotation_decoder_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -227,28 +215,22 @@ pub fn build_decode_validate_response(
     }
 }
 
-pub fn build_decode_run_response(
-    config_version: u32,
+pub fn build_decode_report_response(
     root_decoder_id: impl Into<String>,
     stack_depth: usize,
     sample_count: u64,
-    annotation_count: usize,
-    annotation_decoder_ids: &[String],
-) -> DecodeRunResponse {
-    DecodeRunResponse {
-        ok: true,
-        config_version,
-        root_decoder_id: root_decoder_id.into(),
-        stack_depth,
-        sample_count,
-        annotation_count,
-        annotation_decoder_ids: annotation_decoder_ids
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect(),
-    }
+    result: &OfflineDecodeResult,
+) -> DecodeReport {
+    result.to_report(root_decoder_id, stack_depth, sample_count)
+}
+
+pub fn build_decode_failure_report_response(
+    root_decoder_id: impl Into<String>,
+    stack_depth: usize,
+    sample_count: Option<u64>,
+    error: &OfflineDecodeRunError,
+) -> DecodeFailureReport {
+    error.to_failure_report(root_decoder_id, stack_depth, sample_count)
 }
 
 pub fn render_decode_list_text(response: &DecodeListResponse) -> String {
@@ -381,20 +363,35 @@ pub fn render_decode_validate_text(response: &DecodeValidateResponse) -> String 
     .join("\n")
 }
 
-pub fn render_decode_run_text(response: &DecodeRunResponse) -> String {
+pub fn render_decode_report_text(response: &DecodeReport) -> String {
     [
         "decode run succeeded".to_string(),
-        format!("root decoder: {}", response.root_decoder_id),
-        format!("config version: {}", response.config_version),
-        format!("stack depth: {}", response.stack_depth),
-        format!("sample count: {}", response.sample_count),
-        format!("annotation count: {}", response.annotation_count),
-        format!(
-            "annotation decoders: {}",
-            join_ids(&response.annotation_decoder_ids)
-        ),
+        format!("root decoder: {}", response.run.root_decoder_id),
+        format!("stack depth: {}", response.run.stack_depth),
+        format!("sample count: {}", response.run.sample_count.unwrap_or(0)),
+        format!("event count: {}", response.run.event_count.unwrap_or(0)),
     ]
     .join("\n")
+}
+
+pub fn render_decode_failure_report_text(response: &DecodeFailureReport) -> String {
+    let mut lines = vec![
+        "decode run failed".to_string(),
+        format!("root decoder: {}", response.run.root_decoder_id),
+        format!("stack depth: {}", response.run.stack_depth),
+        format!(
+            "partial event count: {}",
+            response
+                .diagnostics
+                .as_ref()
+                .map(|diagnostics| diagnostics.partial_event_count)
+                .unwrap_or(response.partial_events.len())
+        ),
+    ];
+    if let Some(sample_count) = response.run.sample_count {
+        lines.push(format!("sample count: {sample_count}"));
+    }
+    lines.join("\n")
 }
 
 fn decode_input_response(input: &DecoderInputDescriptor) -> DecodeIoResponse {
@@ -481,15 +478,120 @@ fn join_ids(values: &[String]) -> String {
 mod tests {
     use super::{
         build_decode_inspect_response, build_decode_list_response,
-        build_decode_run_response, build_decode_validate_response, render_decode_inspect_text,
-        render_decode_list_text, render_decode_run_text, render_decode_validate_text,
+        build_decode_failure_report_response, build_decode_report_response,
+        build_decode_validate_response, render_decode_failure_report_text,
+        render_decode_inspect_text, render_decode_list_text, render_decode_report_text,
+        render_decode_validate_text,
     };
     use dsview_core::{
+        run_offline_decode, DecodeCapturedAnnotation, DecodeRunStatus, DecodeRuntimeError,
         DecoderAnnotationDescriptor, DecoderAnnotationRowDescriptor, DecoderChannelDescriptor,
         DecoderDescriptor, DecoderInputDescriptor, DecoderOptionDescriptor,
-        DecoderOutputDescriptor,
+        DecoderOutputDescriptor, OfflineDecodeDataFormat, OfflineDecodeInput,
+        OfflineDecodeRuntime, OfflineDecodeRuntimeSession, ValidatedDecodeConfig,
+        ValidatedDecodeDecoderConfig, ValidatedDecodeStackEntryConfig,
     };
     use serde_json::json;
+    use std::cell::RefCell;
+    use std::collections::{BTreeMap, VecDeque};
+    use std::rc::Rc;
+
+    #[derive(Debug, Default)]
+    struct RecordingState {
+        send_responses: VecDeque<SessionResponse>,
+        end_response: Option<SessionResponse>,
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingRuntime {
+        state: Rc<RefCell<RecordingState>>,
+    }
+
+    struct RecordingSession {
+        state: Rc<RefCell<RecordingState>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum SessionResponse {
+        Ok(Vec<DecodeCapturedAnnotation>),
+        Err(&'static str),
+    }
+
+    impl RecordingRuntime {
+        fn with_send_and_end(
+            send_responses: Vec<SessionResponse>,
+            end_response: SessionResponse,
+        ) -> Self {
+            Self {
+                state: Rc::new(RefCell::new(RecordingState {
+                    send_responses: send_responses.into(),
+                    end_response: Some(end_response),
+                })),
+            }
+        }
+
+        fn with_send_responses(send_responses: Vec<SessionResponse>) -> Self {
+            Self {
+                state: Rc::new(RefCell::new(RecordingState {
+                    send_responses: send_responses.into(),
+                    end_response: None,
+                })),
+            }
+        }
+    }
+
+    impl OfflineDecodeRuntime for RecordingRuntime {
+        type Session = RecordingSession;
+
+        fn create_session(&self) -> Result<Self::Session, DecodeRuntimeError> {
+            Ok(RecordingSession {
+                state: Rc::clone(&self.state),
+            })
+        }
+    }
+
+    impl OfflineDecodeRuntimeSession for RecordingSession {
+        fn set_samplerate_hz(&mut self, _samplerate_hz: u64) -> Result<(), DecodeRuntimeError> {
+            Ok(())
+        }
+
+        fn build_linear_stack(
+            &mut self,
+            _root: &dsview_core::DecodeSessionInstance,
+            _stack: &[dsview_core::DecodeSessionInstance],
+        ) -> Result<(), DecodeRuntimeError> {
+            Ok(())
+        }
+
+        fn start(&mut self) -> Result<(), DecodeRuntimeError> {
+            Ok(())
+        }
+
+        fn send_logic_chunk(
+            &mut self,
+            _abs_start_sample: u64,
+            _sample_bytes: &[u8],
+            _format: dsview_core::DecodeExecutionLogicFormat,
+        ) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
+            match self.state.borrow_mut().send_responses.pop_front() {
+                Some(SessionResponse::Ok(annotations)) => Ok(annotations),
+                Some(SessionResponse::Err(detail)) => {
+                    Err(DecodeRuntimeError::InvalidArgument(detail.to_string()))
+                }
+                None => Ok(Vec::new()),
+            }
+        }
+
+        fn end(&mut self) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
+            match self.state.borrow_mut().end_response.take() {
+                Some(SessionResponse::Ok(annotations)) => Ok(annotations),
+                Some(SessionResponse::Err(detail)) => {
+                    Err(DecodeRuntimeError::InvalidArgument(detail.to_string()))
+                }
+                None => Ok(Vec::new()),
+            }
+        }
+    }
 
     fn sample_decoder() -> DecoderDescriptor {
         DecoderDescriptor {
@@ -634,36 +736,173 @@ mod tests {
     }
 
     #[test]
-    fn decode_run_response_and_text_summarize_execution() {
-        let response = build_decode_run_response(
-            1,
-            "0:i2c",
-            1,
-            128,
-            3,
-            &["0:i2c".to_string(), "1:eeprom24xx".to_string()],
+    fn decode_report_response_and_text_summarize_execution() {
+        let runtime = RecordingRuntime::with_send_and_end(
+            vec![SessionResponse::Ok(vec![DecodeCapturedAnnotation {
+                decoder_id: "0:i2c".to_string(),
+                start_sample: 0,
+                end_sample: 2,
+                annotation_class: 0,
+                annotation_type: 10,
+                texts: vec!["start".to_string()],
+            }])],
+            SessionResponse::Ok(vec![DecodeCapturedAnnotation {
+                decoder_id: "eeprom24xx".to_string(),
+                start_sample: 2,
+                end_sample: 4,
+                annotation_class: 1,
+                annotation_type: 20,
+                texts: vec!["write".to_string()],
+            }]),
         );
+        let input = fixture_input();
+        let result = run_offline_decode(&fixture_config(), &input, &runtime)
+            .expect("run response should build from successful execution");
+        let response = build_decode_report_response("0:i2c", 1, input.sample_count().unwrap(), &result);
         let value = serde_json::to_value(&response).expect("run response should serialize");
 
         assert_eq!(
             value,
             json!({
-                "ok": true,
-                "config_version": 1,
-                "root_decoder_id": "0:i2c",
-                "stack_depth": 1,
-                "sample_count": 128,
-                "annotation_count": 3,
-                "annotation_decoder_ids": ["0:i2c", "1:eeprom24xx"]
+                "run": {
+                    "status": "success",
+                    "root_decoder_id": "0:i2c",
+                    "stack_depth": 1,
+                    "sample_count": 4,
+                    "event_count": 2
+                },
+                "events": [
+                    {
+                        "decoder_id": "0:i2c",
+                        "start_sample": 0,
+                        "end_sample": 2,
+                        "annotation_class": 0,
+                        "annotation_type": 10,
+                        "texts": ["start"]
+                    },
+                    {
+                        "decoder_id": "eeprom24xx",
+                        "start_sample": 2,
+                        "end_sample": 4,
+                        "annotation_class": 1,
+                        "annotation_type": 20,
+                        "texts": ["write"]
+                    }
+                ]
             })
         );
 
-        let text = render_decode_run_text(&response);
+        let text = render_decode_report_text(&response);
         assert!(text.contains("decode run succeeded"));
         assert!(text.contains("root decoder: 0:i2c"));
         assert!(text.contains("stack depth: 1"));
-        assert!(text.contains("sample count: 128"));
-        assert!(text.contains("annotation count: 3"));
-        assert!(text.contains("annotation decoders: 0:i2c, 1:eeprom24xx"));
+        assert!(text.contains("sample count: 4"));
+        assert!(text.contains("event count: 2"));
+    }
+
+    #[test]
+    fn decode_failure_report_response_and_text_preserve_partial_events() {
+        let retained = DecodeCapturedAnnotation {
+            decoder_id: "eeprom24xx".to_string(),
+            start_sample: 0,
+            end_sample: 2,
+            annotation_class: 1,
+            annotation_type: 20,
+            texts: vec!["write".to_string()],
+        };
+        let runtime = RecordingRuntime::with_send_responses(vec![
+            SessionResponse::Ok(vec![retained.clone()]),
+            SessionResponse::Err("second chunk failed"),
+        ]);
+        let input = fixture_input();
+        let error = run_offline_decode(&fixture_config(), &input, &runtime)
+            .expect_err("fixture should fail after partial output");
+        let response = build_decode_failure_report_response(
+            "0:i2c",
+            1,
+            Some(input.sample_count().unwrap()),
+            &error,
+        );
+        let value = serde_json::to_value(&response).expect("failure response should serialize");
+
+        assert_eq!(response.run.status, DecodeRunStatus::Failure);
+        assert_eq!(
+            value,
+            json!({
+                "run": {
+                    "status": "failure",
+                    "root_decoder_id": "0:i2c",
+                    "stack_depth": 1,
+                    "sample_count": 4
+                },
+                "partial_events": [
+                    {
+                        "decoder_id": "eeprom24xx",
+                        "start_sample": 0,
+                        "end_sample": 2,
+                        "annotation_class": 1,
+                        "annotation_type": 20,
+                        "texts": ["write"]
+                    }
+                ],
+                "diagnostics": {
+                    "completed_chunks": 1,
+                    "consumed_samples": 2,
+                    "partial_event_count": 1,
+                    "partial_events_available": true
+                }
+            })
+        );
+
+        let text = render_decode_failure_report_text(&response);
+        assert!(text.contains("decode run failed"));
+        assert!(text.contains("root decoder: 0:i2c"));
+        assert!(text.contains("partial event count: 1"));
+        assert!(text.contains("sample count: 4"));
+    }
+
+    fn fixture_input() -> OfflineDecodeInput {
+        OfflineDecodeInput {
+            samplerate_hz: 1_000_000,
+            format: OfflineDecodeDataFormat::SplitLogic,
+            sample_bytes: vec![0x10, 0x11, 0x12, 0x13],
+            unitsize: 1,
+            channel_count: None,
+            logic_packet_lengths: Some(vec![2, 2]),
+        }
+    }
+
+    fn fixture_config() -> ValidatedDecodeConfig {
+        ValidatedDecodeConfig {
+            version: 1,
+            decoder: ValidatedDecodeDecoderConfig {
+                descriptor: sample_decoder(),
+                channels: BTreeMap::from([
+                    ("scl".to_string(), 0_u32),
+                    ("sda".to_string(), 1_u32),
+                ]),
+                options: BTreeMap::new(),
+            },
+            stack: vec![ValidatedDecodeStackEntryConfig {
+                descriptor: DecoderDescriptor {
+                    id: "eeprom24xx".to_string(),
+                    name: "24xx EEPROM".to_string(),
+                    longname: "24xx I2C EEPROM".to_string(),
+                    description: "fixture stack decoder".to_string(),
+                    license: "gplv2+".to_string(),
+                    inputs: vec![DecoderInputDescriptor {
+                        id: "i2c".to_string(),
+                    }],
+                    outputs: Vec::new(),
+                    tags: vec!["memory".to_string()],
+                    required_channels: Vec::new(),
+                    optional_channels: Vec::new(),
+                    options: Vec::new(),
+                    annotations: Vec::new(),
+                    annotation_rows: Vec::new(),
+                },
+                options: BTreeMap::new(),
+            }],
+        }
     }
 }

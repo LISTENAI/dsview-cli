@@ -6,18 +6,19 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
-    DecodeInspectResponse, DecodeListResponse, DecodeRunResponse, DecodeValidateResponse,
-    build_decode_inspect_response, build_decode_list_response, build_decode_run_response,
-    build_decode_validate_response, build_device_options_response,
+    DecodeInspectResponse, DecodeListResponse, DecodeValidateResponse,
+    build_decode_failure_report_response, build_decode_inspect_response,
+    build_decode_list_response, build_decode_report_response, build_decode_validate_response,
+    build_device_options_response,
     capture_device_options::{
         resolve_capture_device_option_request, CaptureDeviceOptionParseError,
     },
-    render_decode_inspect_text, render_decode_list_text, render_decode_run_text,
+    render_decode_inspect_text, render_decode_list_text, render_decode_report_text,
     render_decode_validate_text, render_device_options_text, DeviceOptionsResponse,
 };
 use dsview_core::{
     DecodeBringUpError, DecodeConfigLoadError, DecodeConfigParseError,
-    DecodeConfigValidationError, DecodeDiscovery,
+    DecodeConfigValidationError, DecodeDiscovery, DecodeFailureReport, DecodeReport,
     DecoderRuntimeError, DecoderRuntimeErrorCode,
     describe_native_error, resolve_capture_artifact_paths,
     decode_inspect as core_decode_inspect, decode_list as core_decode_list,
@@ -524,23 +525,29 @@ fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
         .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
     let validated = load_decode_run_config(&args.config, &registry, args.decode.format)?;
     let input = load_offline_decode_input(&args.input, args.decode.format)?;
-    let result = core_run_offline_decode(&validated, &input, discovery.runtime())
-        .map_err(|error| command_error(args.decode.format, classify_decode_run_error(&error)))?;
     let sample_count = input
         .sample_count()
         .map_err(|error| command_error(args.decode.format, classify_decode_input_error(&error)))?;
-    let annotation_decoder_ids = result
-        .annotations()
-        .iter()
-        .map(|annotation| annotation.decoder_id.clone())
-        .collect::<Vec<_>>();
-    let response = build_decode_run_response(
-        validated.version,
+    let result = match core_run_offline_decode(&validated, &input, discovery.runtime()) {
+        Ok(result) => result,
+        Err(error) => {
+            let _failure_report: DecodeFailureReport = build_decode_failure_report_response(
+                validated.decoder.descriptor.id.clone(),
+                validated.stack.len(),
+                Some(sample_count),
+                &error,
+            );
+            return Err(command_error(
+                args.decode.format,
+                classify_decode_run_error(&error),
+            ));
+        }
+    };
+    let response: DecodeReport = build_decode_report_response(
         validated.decoder.descriptor.id.clone(),
         validated.stack.len(),
         sample_count,
-        result.annotations().len(),
-        &annotation_decoder_ids,
+        &result,
     );
     render_decode_run_success(args.decode.format, &response);
     Ok(())
@@ -559,25 +566,31 @@ fn run_decode_run_from_fixture(
                 args.decode.format,
             )?;
             let input = load_offline_decode_input(&args.input, args.decode.format)?;
-            let runtime = DecodeRunFixtureRuntime::new(mode);
-            let result = core_run_offline_decode(&validated, &input, &runtime).map_err(|error| {
-                command_error(args.decode.format, classify_decode_run_error(&error))
-            })?;
             let sample_count = input.sample_count().map_err(|error| {
                 command_error(args.decode.format, classify_decode_input_error(&error))
             })?;
-            let annotation_decoder_ids = result
-                .annotations()
-                .iter()
-                .map(|annotation| annotation.decoder_id.clone())
-                .collect::<Vec<_>>();
-            let response = build_decode_run_response(
-                validated.version,
+            let runtime = DecodeRunFixtureRuntime::new(mode);
+            let result = match core_run_offline_decode(&validated, &input, &runtime) {
+                Ok(result) => result,
+                Err(error) => {
+                    let _failure_report: DecodeFailureReport =
+                        build_decode_failure_report_response(
+                            validated.decoder.descriptor.id.clone(),
+                            validated.stack.len(),
+                            Some(sample_count),
+                            &error,
+                        );
+                    return Err(command_error(
+                        args.decode.format,
+                        classify_decode_run_error(&error),
+                    ));
+                }
+            };
+            let response: DecodeReport = build_decode_report_response(
                 validated.decoder.descriptor.id.clone(),
                 validated.stack.len(),
                 sample_count,
-                result.annotations().len(),
-                &annotation_decoder_ids,
+                &result,
             );
             render_decode_run_success(args.decode.format, &response);
             Ok(Some(()))
@@ -2705,13 +2718,13 @@ fn render_decode_validate_success(format: OutputFormat, response: &DecodeValidat
     }
 }
 
-fn render_decode_run_success(format: OutputFormat, response: &DecodeRunResponse) {
+fn render_decode_run_success(format: OutputFormat, response: &DecodeReport) {
     match format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(response).unwrap());
         }
         OutputFormat::Text => {
-            println!("{}", render_decode_run_text(response));
+            println!("{}", render_decode_report_text(response));
         }
     }
 }
