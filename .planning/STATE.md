@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: DSView protocol decode CLI foundation
 current_phase: 14
-current_phase_name: `Decode Runtime Boundary and Decoder Registry`
-current_plan: -
-status: ready
+current_phase_name: Decode Runtime Boundary and Decoder Registry
+current_plan: 1
+status: executing
 stopped_at: Milestone initialized; Phase 14 ready for discuss/plan
-last_updated: "2026-04-14T08:59:31.246Z"
-last_activity: 2026-04-14 -- Phase 14 planning complete
+last_updated: "2026-04-21T04:04:58.471Z"
+last_activity: 2026-04-21 -- Phase 14 execution started
 progress:
   total_phases: 4
   completed_phases: 0
@@ -24,17 +24,19 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Define and execute `v1.2 DSView protocol decode CLI foundation`
+**Current focus:** Phase 14 — Decode Runtime Boundary and Decoder Registry
 
 ## Current Position
 
+Phase: 14 (Decode Runtime Boundary and Decoder Registry) — EXECUTING
+Plan: 1 of 3
 Current Phase: 14
-Current Phase Name: `Decode Runtime Boundary and Decoder Registry`
-Current Plan: -
+Current Phase Name: Decode Runtime Boundary and Decoder Registry
+Current Plan: 1
 Total Plans in Milestone: 3
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Ready to execute
-Last activity: 2026-04-14 -- Phase 14 planning complete
+Status: Executing Phase 14
+Last activity: 2026-04-21 -- Phase 14 execution started
 
 ## Accumulated Context
 
