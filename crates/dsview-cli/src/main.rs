@@ -22,6 +22,7 @@ use dsview_core::{
     DecoderRuntimeError, DecoderRuntimeErrorCode,
     describe_native_error, resolve_capture_artifact_paths,
     decode_inspect as core_decode_inspect, decode_list as core_decode_list,
+    parse_decode_config_slice, validate_decode_config,
     validate_decode_config_file as core_validate_decode_config_file,
     validated_capture_config_from_device_options, AcquisitionSummary, AcquisitionTerminalEvent,
     BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion, CaptureConfigError,
@@ -448,6 +449,19 @@ fn run_decode_inspect(args: DecodeInspectArgs) -> Result<(), FailedCommand> {
 }
 
 fn run_decode_validate(args: DecodeValidateArgs) -> Result<(), FailedCommand> {
+    #[cfg(debug_assertions)]
+    let validated = if let Some(mode) = decode_test_fixture_mode() {
+        validate_decode_config_from_fixture(mode, &args.config)
+    } else {
+        core_validate_decode_config_file(
+            args.decode.decode_runtime.as_deref(),
+            args.decode.decoder_dir.as_deref(),
+            &args.config,
+        )
+    }
+    .map_err(|error| command_error(args.decode.format, classify_decode_validate_error(&error)))?;
+
+    #[cfg(not(debug_assertions))]
     let validated = core_validate_decode_config_file(
         args.decode.decode_runtime.as_deref(),
         args.decode.decoder_dir.as_deref(),
@@ -469,6 +483,7 @@ fn run_decode_validate(args: DecodeValidateArgs) -> Result<(), FailedCommand> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DecodeTestFixtureMode {
     Registry,
+    ValidationRegistry,
     MissingRuntime,
     MissingMetadata,
 }
@@ -477,6 +492,7 @@ enum DecodeTestFixtureMode {
 fn decode_test_fixture_mode() -> Option<DecodeTestFixtureMode> {
     match std::env::var(TEST_DECODE_FIXTURE_ENV).ok().as_deref() {
         Some("registry") => Some(DecodeTestFixtureMode::Registry),
+        Some("validation-registry") => Some(DecodeTestFixtureMode::ValidationRegistry),
         Some("missing-runtime") => Some(DecodeTestFixtureMode::MissingRuntime),
         Some("missing-metadata") => Some(DecodeTestFixtureMode::MissingMetadata),
         _ => None,
@@ -489,13 +505,9 @@ fn decode_list_from_fixture(
 ) -> Result<Vec<dsview_core::DecoderDescriptor>, DecodeBringUpError> {
     match mode {
         DecodeTestFixtureMode::Registry => Ok(vec![decode_fixture_descriptor()]),
-        DecodeTestFixtureMode::MissingRuntime => Err(DecodeBringUpError::BundledRuntimeMissing {
-            path: PathBuf::from("bundle/decode-runtime/libdsview_decode_runtime.so"),
-            executable_dir: PathBuf::from("bundle"),
-        }),
-        DecodeTestFixtureMode::MissingMetadata => Err(DecodeBringUpError::DecoderScriptsMissing {
-            path: PathBuf::from("bundle/decoders"),
-        }),
+        DecodeTestFixtureMode::ValidationRegistry => Ok(validation_decode_fixture_registry()),
+        DecodeTestFixtureMode::MissingRuntime => Err(decode_fixture_missing_runtime_error()),
+        DecodeTestFixtureMode::MissingMetadata => Err(decode_fixture_missing_metadata_error()),
     }
 }
 
@@ -505,22 +517,66 @@ fn decode_inspect_from_fixture(
     decoder_id: &str,
 ) -> Result<dsview_core::DecoderDescriptor, DecodeBringUpError> {
     match mode {
-        DecodeTestFixtureMode::Registry => {
-            if decoder_id == "0:i2c" {
-                Ok(decode_fixture_descriptor())
-            } else {
-                Err(DecodeBringUpError::UnknownDecoder {
-                    decoder_id: decoder_id.to_string(),
-                })
+        DecodeTestFixtureMode::Registry | DecodeTestFixtureMode::ValidationRegistry => decode_list_from_fixture(mode)?
+            .into_iter()
+            .find(|decoder| decoder.id == decoder_id)
+            .ok_or_else(|| DecodeBringUpError::UnknownDecoder {
+                decoder_id: decoder_id.to_string(),
+            }),
+        DecodeTestFixtureMode::MissingRuntime => Err(decode_fixture_missing_runtime_error()),
+        DecodeTestFixtureMode::MissingMetadata => Err(decode_fixture_missing_metadata_error()),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn validate_decode_config_from_fixture(
+    mode: DecodeTestFixtureMode,
+    config_path: &PathBuf,
+) -> Result<dsview_core::ValidatedDecodeConfig, DecodeConfigLoadError> {
+    let config_bytes = fs::read(config_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            DecodeConfigLoadError::MissingFile {
+                path: config_path.clone(),
+            }
+        } else {
+            DecodeConfigLoadError::UnreadableFile {
+                path: config_path.clone(),
+                detail: error.to_string(),
             }
         }
-        DecodeTestFixtureMode::MissingRuntime => Err(DecodeBringUpError::BundledRuntimeMissing {
-            path: PathBuf::from("bundle/decode-runtime/libdsview_decode_runtime.so"),
-            executable_dir: PathBuf::from("bundle"),
-        }),
-        DecodeTestFixtureMode::MissingMetadata => Err(DecodeBringUpError::DecoderScriptsMissing {
-            path: PathBuf::from("bundle/decoders"),
-        }),
+    })?;
+    let config = parse_decode_config_slice(&config_bytes)?;
+
+    let registry = match mode {
+        DecodeTestFixtureMode::Registry => vec![decode_fixture_descriptor()],
+        DecodeTestFixtureMode::ValidationRegistry => validation_decode_fixture_registry(),
+        DecodeTestFixtureMode::MissingRuntime => {
+            return Err(DecodeConfigLoadError::Discovery(
+                decode_fixture_missing_runtime_error(),
+            ));
+        }
+        DecodeTestFixtureMode::MissingMetadata => {
+            return Err(DecodeConfigLoadError::Discovery(
+                decode_fixture_missing_metadata_error(),
+            ));
+        }
+    };
+
+    validate_decode_config(&config, &registry).map_err(DecodeConfigLoadError::from)
+}
+
+#[cfg(debug_assertions)]
+fn decode_fixture_missing_runtime_error() -> DecodeBringUpError {
+    DecodeBringUpError::BundledRuntimeMissing {
+        path: PathBuf::from("bundle/decode-runtime/libdsview_decode_runtime.so"),
+        executable_dir: PathBuf::from("bundle"),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn decode_fixture_missing_metadata_error() -> DecodeBringUpError {
+    DecodeBringUpError::DecoderScriptsMissing {
+        path: PathBuf::from("bundle/decoders"),
     }
 }
 
@@ -580,6 +636,105 @@ fn decode_fixture_descriptor() -> dsview_core::DecoderDescriptor {
             annotation_classes: vec![0],
         }],
     }
+}
+
+#[cfg(debug_assertions)]
+fn validation_decode_fixture_registry() -> Vec<dsview_core::DecoderDescriptor> {
+    vec![
+        dsview_core::DecoderDescriptor {
+            id: "fixture:i2c".to_string(),
+            name: "fixture:i2c".to_string(),
+            longname: "Fixture I2C".to_string(),
+            description: "Fixture root decoder for decode validation CLI tests".to_string(),
+            license: "gplv2+".to_string(),
+            inputs: vec![dsview_core::DecoderInputDescriptor {
+                id: "logic".to_string(),
+            }],
+            outputs: vec![
+                dsview_core::DecoderOutputDescriptor {
+                    id: "i2c".to_string(),
+                },
+                dsview_core::DecoderOutputDescriptor {
+                    id: "i2c-messages".to_string(),
+                },
+            ],
+            tags: vec!["serial".to_string()],
+            required_channels: vec![
+                dsview_core::DecoderChannelDescriptor {
+                    id: "scl".to_string(),
+                    name: "SCL".to_string(),
+                    description: "Clock".to_string(),
+                    order: 0,
+                    channel_type: 0,
+                    idn: Some("clk".to_string()),
+                },
+                dsview_core::DecoderChannelDescriptor {
+                    id: "sda".to_string(),
+                    name: "SDA".to_string(),
+                    description: "Data".to_string(),
+                    order: 1,
+                    channel_type: 0,
+                    idn: Some("data".to_string()),
+                },
+            ],
+            optional_channels: vec![],
+            options: vec![dsview_core::DecoderOptionDescriptor {
+                id: "address_format".to_string(),
+                idn: Some("address_format".to_string()),
+                description: Some("Address display format".to_string()),
+                value_kind: dsview_core::DecodeOptionValueKind::String,
+                default_value: Some("shifted".to_string()),
+                values: vec!["shifted".to_string(), "unshifted".to_string()],
+            }],
+            annotations: vec![],
+            annotation_rows: vec![],
+        },
+        dsview_core::DecoderDescriptor {
+            id: "fixture:eeprom24xx".to_string(),
+            name: "fixture:eeprom24xx".to_string(),
+            longname: "Fixture EEPROM 24xx".to_string(),
+            description: "Compatible downstream decoder fixture".to_string(),
+            license: "gplv2+".to_string(),
+            inputs: vec![dsview_core::DecoderInputDescriptor {
+                id: "i2c".to_string(),
+            }],
+            outputs: vec![dsview_core::DecoderOutputDescriptor {
+                id: "fixture:eeprom24xx".to_string(),
+            }],
+            tags: vec!["memory".to_string()],
+            required_channels: vec![],
+            optional_channels: vec![],
+            options: vec![dsview_core::DecoderOptionDescriptor {
+                id: "addr_counter".to_string(),
+                idn: Some("addr_counter".to_string()),
+                description: Some("Address counter".to_string()),
+                value_kind: dsview_core::DecodeOptionValueKind::Integer,
+                default_value: Some("0".to_string()),
+                values: vec![],
+            }],
+            annotations: vec![],
+            annotation_rows: vec![],
+        },
+        dsview_core::DecoderDescriptor {
+            id: "fixture:spi-frames".to_string(),
+            name: "fixture:spi-frames".to_string(),
+            longname: "Fixture SPI Frames".to_string(),
+            description: "Incompatible downstream decoder fixture".to_string(),
+            license: "gplv2+".to_string(),
+            inputs: vec![dsview_core::DecoderInputDescriptor {
+                id: "spi".to_string(),
+            }],
+            outputs: vec![dsview_core::DecoderOutputDescriptor {
+                id: "fixture:spi-frames".to_string(),
+            }],
+            tags: vec!["serial".to_string()],
+            required_channels: vec![],
+            optional_channels: vec![],
+            options: vec![],
+            annotations: vec![],
+            annotation_rows: vec![],
+        },
+    ]
 }
 
 struct FailedCommand {

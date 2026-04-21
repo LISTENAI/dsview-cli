@@ -1,7 +1,12 @@
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use dsview_core::{
-    parse_decode_config, validate_decode_config, DecodeConfigValidationError, DecodeOptionValue,
-    DecodeOptionValueKind, DecoderChannelDescriptor, DecoderDescriptor, DecoderInputDescriptor,
-    DecoderOptionDescriptor, DecoderOutputDescriptor, ValidatedDecodeConfig,
+    parse_decode_config, validate_decode_config, validate_decode_config_file,
+    DecodeConfigLoadError, DecodeConfigValidationError, DecodeOptionValue, DecodeOptionValueKind,
+    DecoderChannelDescriptor, DecoderDescriptor, DecoderInputDescriptor, DecoderOptionDescriptor,
+    DecoderOutputDescriptor, ValidatedDecodeConfig,
 };
 
 #[test]
@@ -268,6 +273,49 @@ fn accepts_valid_linear_stack_against_decoder_metadata() {
     assert_validated_linear_stack(&validated);
 }
 
+#[test]
+fn validate_decode_config_file_reports_missing_file_before_runtime_discovery() {
+    let missing = temp_dir("decode-config-file-missing").join("missing.json");
+
+    let error =
+        validate_decode_config_file(None::<&str>, None::<&str>, &missing).expect_err("file should be missing");
+
+    assert_eq!(
+        error.to_string(),
+        DecodeConfigLoadError::MissingFile {
+            path: missing.clone(),
+        }
+        .to_string()
+    );
+}
+
+#[test]
+fn validate_decode_config_file_reports_schema_errors_before_runtime_discovery() {
+    let path = write_config(
+        "decode-config-schema-invalid",
+        r#"{
+            "version": 1,
+            "decoder": {
+                "id": 7,
+                "channels": {
+                    "scl": 0
+                },
+                "options": {}
+            }
+        }"#,
+    );
+
+    let error = validate_decode_config_file(None::<&str>, None::<&str>, &path)
+        .expect_err("schema-invalid config should fail before runtime discovery");
+
+    match error {
+        DecodeConfigLoadError::Parse(parse_error) => {
+            assert!(parse_error.to_string().contains("expected a string"));
+        }
+        other => panic!("expected schema parse error, got {other:?}"),
+    }
+}
+
 fn assert_validated_linear_stack(validated: &ValidatedDecodeConfig) {
     assert_eq!(validated.decoder.descriptor.id, "0:i2c");
     assert_eq!(validated.decoder.channels["scl"], 0);
@@ -363,6 +411,23 @@ fn decoder_registry() -> Vec<DecoderDescriptor> {
             annotation_rows: vec![],
         },
     ]
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after the unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("dsview-core-{name}-{unique}"));
+    fs::create_dir_all(&path).expect("temp dir should be created");
+    path
+}
+
+fn write_config(name: &str, contents: &str) -> PathBuf {
+    let dir = temp_dir(name);
+    let path = dir.join("decode.json");
+    fs::write(&path, contents).expect("config fixture should be written");
+    path
 }
 
 fn decoder_channel(id: &str, order: i32) -> DecoderChannelDescriptor {
