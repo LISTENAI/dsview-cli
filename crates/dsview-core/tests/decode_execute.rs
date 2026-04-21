@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use dsview_core::{
@@ -22,6 +23,8 @@ struct RecordingState {
     root: Option<dsview_core::DecodeSessionInstance>,
     stack: Vec<dsview_core::DecodeSessionInstance>,
     chunks: Vec<RecordedChunk>,
+    send_responses: VecDeque<SessionResponse>,
+    end_response: Option<SessionResponse>,
 }
 
 #[derive(Clone, Default)]
@@ -31,6 +34,32 @@ struct RecordingRuntime {
 
 struct RecordingSession {
     state: Rc<RefCell<RecordingState>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SessionResponse {
+    Ok(Vec<DecodeCapturedAnnotation>),
+    Err(&'static str),
+}
+
+impl RecordingRuntime {
+    fn with_send_responses(send_responses: Vec<SessionResponse>) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(RecordingState {
+                send_responses: send_responses.into(),
+                ..RecordingState::default()
+            })),
+        }
+    }
+
+    fn with_end_response(end_response: SessionResponse) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(RecordingState {
+                end_response: Some(end_response),
+                ..RecordingState::default()
+            })),
+        }
+    }
 }
 
 impl OfflineDecodeRuntime for RecordingRuntime {
@@ -69,16 +98,29 @@ impl OfflineDecodeRuntimeSession for RecordingSession {
         sample_bytes: &[u8],
         format: DecodeExecutionLogicFormat,
     ) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
-        self.state.borrow_mut().chunks.push(RecordedChunk {
+        let mut state = self.state.borrow_mut();
+        state.chunks.push(RecordedChunk {
             abs_start_sample,
             sample_len: sample_bytes.len(),
             format,
         });
-        Ok(Vec::new())
+        match state.send_responses.pop_front() {
+            Some(SessionResponse::Ok(annotations)) => Ok(annotations),
+            Some(SessionResponse::Err(detail)) => {
+                Err(DecodeRuntimeError::InvalidArgument(detail.to_string()))
+            }
+            None => Ok(Vec::new()),
+        }
     }
 
     fn end(&mut self) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
-        Ok(Vec::new())
+        match self.state.borrow_mut().end_response.take() {
+            Some(SessionResponse::Ok(annotations)) => Ok(annotations),
+            Some(SessionResponse::Err(detail)) => {
+                Err(DecodeRuntimeError::InvalidArgument(detail.to_string()))
+            }
+            None => Ok(Vec::new()),
+        }
     }
 }
 
@@ -160,6 +202,75 @@ fn offline_decode_root_only_binds_logic_channels() {
     assert_eq!(root.channel_bindings.len(), 2);
     assert_eq!(state.stack.len(), 1);
     assert!(state.stack[0].channel_bindings.is_empty());
+}
+
+#[test]
+fn offline_decode_fails_when_session_send_fails() {
+    let runtime = RecordingRuntime::with_send_responses(vec![SessionResponse::Err("send exploded")]);
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0xAA, 0xBB],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: None,
+    };
+
+    let error = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect_err("send failures should fail the decode run");
+
+    assert_eq!(error.operation(), "send logic chunk");
+    assert_eq!(error.completed_chunks(), 0);
+}
+
+#[test]
+fn offline_decode_fails_when_session_end_fails() {
+    let runtime = RecordingRuntime::with_end_response(SessionResponse::Err("end exploded"));
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0xAA, 0xBB],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: None,
+    };
+
+    let error = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect_err("end failures should fail the decode run");
+
+    assert_eq!(error.operation(), "end session");
+    assert_eq!(error.completed_chunks(), 1);
+}
+
+#[test]
+fn offline_decode_retains_partial_annotations_for_diagnostics_only() {
+    let retained = DecodeCapturedAnnotation {
+        decoder_id: "eeprom24xx".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 9,
+        annotation_type: 9,
+        texts: vec!["Byte write".to_string()],
+    };
+    let runtime = RecordingRuntime::with_send_responses(vec![
+        SessionResponse::Ok(vec![retained.clone()]),
+        SessionResponse::Err("second chunk failed"),
+    ]);
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x01, 0x02, 0x03, 0x04],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![2, 2]),
+    };
+
+    let error = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect_err("send failures should keep the run in a binary failure state");
+
+    assert_eq!(error.operation(), "send logic chunk");
+    assert_eq!(error.completed_chunks(), 1);
+    assert_eq!(error.retained_annotations(), &[retained]);
 }
 
 fn validated_decode_config() -> ValidatedDecodeConfig {

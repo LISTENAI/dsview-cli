@@ -8,7 +8,8 @@ use dsview_sys::{
     source_decode_runtime_library_path, source_runtime_library_path, upstream_header_path,
     DecodeDecoder, DecodeExecutionLogicFormat, DecodeExecutionSession, DecodeRuntimeBridge,
     DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode, DecodeSessionChannelBinding,
-    DecodeSessionInstance, ExportErrorCode, RuntimeBridge, RuntimeError, VcdExportRequest,
+    DecodeSessionInstance, DecodeSessionOption, DecodeSessionOptionValue, ExportErrorCode,
+    RuntimeBridge, RuntimeError, VcdExportRequest,
 };
 
 fn runtime_test_guard() -> &'static Mutex<()> {
@@ -45,6 +46,68 @@ fn i2c_root_instance() -> DecodeSessionInstance {
         ],
         options: vec![],
     }
+}
+
+fn eeprom_stack_instance() -> DecodeSessionInstance {
+    DecodeSessionInstance {
+        decoder_id: "eeprom24xx".to_string(),
+        channel_bindings: vec![],
+        options: vec![DecodeSessionOption {
+            option_id: "addr_counter".to_string(),
+            value: DecodeSessionOptionValue::Integer(0),
+        }],
+    }
+}
+
+fn i2c_logic_sample(scl: bool, sda: bool) -> u8 {
+    (u8::from(scl)) | (u8::from(sda) << 1)
+}
+
+fn push_i2c_state(samples: &mut Vec<u8>, scl: bool, sda: bool) {
+    samples.push(i2c_logic_sample(scl, sda));
+}
+
+fn append_i2c_start(samples: &mut Vec<u8>) {
+    push_i2c_state(samples, true, true);
+    push_i2c_state(samples, true, false);
+    push_i2c_state(samples, false, false);
+}
+
+fn append_i2c_bit(samples: &mut Vec<u8>, bit: bool) {
+    push_i2c_state(samples, false, bit);
+    push_i2c_state(samples, true, bit);
+    push_i2c_state(samples, true, bit);
+    push_i2c_state(samples, false, bit);
+}
+
+fn append_i2c_ack(samples: &mut Vec<u8>, ack: bool) {
+    append_i2c_bit(samples, !ack);
+}
+
+fn append_i2c_byte(samples: &mut Vec<u8>, byte: u8) {
+    for bit_index in (0..8).rev() {
+        append_i2c_bit(samples, ((byte >> bit_index) & 1) != 0);
+    }
+}
+
+fn append_i2c_stop(samples: &mut Vec<u8>) {
+    push_i2c_state(samples, false, false);
+    push_i2c_state(samples, true, false);
+    push_i2c_state(samples, true, true);
+    push_i2c_state(samples, true, true);
+}
+
+fn eeprom_byte_write_trace() -> Vec<u8> {
+    let mut samples = Vec::new();
+    append_i2c_start(&mut samples);
+    append_i2c_byte(&mut samples, 0xA0);
+    append_i2c_ack(&mut samples, true);
+    append_i2c_byte(&mut samples, 0x00);
+    append_i2c_ack(&mut samples, true);
+    append_i2c_byte(&mut samples, 0xAB);
+    append_i2c_ack(&mut samples, true);
+    append_i2c_stop(&mut samples);
+    samples
 }
 
 fn source_decoder_dir() -> PathBuf {
@@ -495,6 +558,64 @@ fn offline_decode_session_wrappers_require_absolute_sample_progression() {
                 if detail.contains("absolute sample progression")
         ));
     });
+}
+
+#[test]
+fn stacked_decoder_python_output_flows_linearly() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_decode_runtime() else {
+        return;
+    };
+    let decoder_dir = source_decoder_dir();
+    if !decoder_dir.exists() {
+        return;
+    }
+
+    runtime
+        .init(&decoder_dir)
+        .expect("decode runtime should initialize with source decoder dir");
+
+    let mut session =
+        DecodeExecutionSession::new().expect("decode execution session should construct");
+    session
+        .set_samplerate_hz(1_000_000)
+        .expect("decode execution session should accept samplerate");
+    session
+        .build_linear_stack(&i2c_root_instance(), &[eeprom_stack_instance()])
+        .expect("decode execution session should build a stacked EEPROM chain");
+    session
+        .start()
+        .expect("decode execution session should start");
+
+    let samples = eeprom_byte_write_trace();
+    session_send_logic_chunk(
+        &mut session,
+        0,
+        &samples,
+        DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
+        None,
+    )
+    .expect("stacked session should accept an EEPROM write trace");
+    session
+        .end()
+        .expect("decode execution session should end cleanly");
+
+    let annotations = session
+        .take_captured_annotations()
+        .expect("decode execution session should drain captured annotations");
+    assert!(
+        annotations.iter().any(|annotation| {
+            annotation.decoder_id == "eeprom24xx"
+                && annotation
+                    .texts
+                    .iter()
+                    .any(|text| text.contains("Byte write"))
+        }),
+        "expected stacked decoder annotations after forwarding upstream OUTPUT_PYTHON data"
+    );
+
+    drop(session);
+    runtime.exit().expect("decode runtime exit should succeed");
 }
 
 #[test]
