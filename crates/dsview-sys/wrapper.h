@@ -250,6 +250,16 @@ struct dsview_decode_annotation_row {
     size_t annotation_class_count;
 };
 
+struct dsview_decode_captured_annotation {
+    char *decoder_id;
+    uint64_t start_sample;
+    uint64_t end_sample;
+    int ann_class;
+    int ann_type;
+    char **texts;
+    size_t text_count;
+};
+
 struct dsview_decode_list_entry {
     char *id;
     char *name;
@@ -368,6 +378,13 @@ int dsview_decode_session_send_logic_chunk(
     struct dsview_decode_execution_session *session,
     const struct dsview_decode_logic_chunk *chunk);
 int dsview_decode_session_end(struct dsview_decode_execution_session *session);
+int dsview_decode_session_take_captured_annotations(
+    struct dsview_decode_execution_session *session,
+    struct dsview_decode_captured_annotation **out_annotations,
+    size_t *out_count);
+void dsview_decode_free_captured_annotations(
+    struct dsview_decode_captured_annotation *annotations,
+    size_t count);
 void dsview_decode_session_destroy(struct dsview_decode_execution_session *session);
 
 #ifdef __cplusplus

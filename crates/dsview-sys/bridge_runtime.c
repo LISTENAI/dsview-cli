@@ -57,6 +57,11 @@ typedef int (*srd_session_send_fn)(
     char **error);
 typedef int (*srd_session_end_fn)(struct srd_session *sess, char **error);
 typedef int (*srd_session_destroy_fn)(struct srd_session *sess);
+typedef int (*srd_pd_output_callback_add_fn)(
+    struct srd_session *sess,
+    int output_type,
+    srd_pd_output_callback cb,
+    void *cb_data);
 typedef struct srd_decoder_inst *(*srd_inst_new_fn)(
     struct srd_session *sess,
     const char *decoder_id,
@@ -130,6 +135,7 @@ struct dsview_decode_runtime_api {
     srd_session_send_fn srd_session_send;
     srd_session_end_fn srd_session_end;
     srd_session_destroy_fn srd_session_destroy;
+    srd_pd_output_callback_add_fn srd_pd_output_callback_add;
     srd_inst_new_fn srd_inst_new;
     srd_inst_channel_set_all_fn srd_inst_channel_set_all;
     srd_inst_stack_fn srd_inst_stack;
@@ -146,6 +152,10 @@ struct dsview_decode_execution_session {
     unsigned int input_channel_count;
     int started;
     int ended;
+    GMutex annotation_lock;
+    struct dsview_decode_captured_annotation *captured_annotations;
+    size_t captured_annotation_count;
+    size_t captured_annotation_capacity;
 };
 
 struct dsview_retained_packet {
@@ -240,6 +250,15 @@ static void dsview_decode_free_chunk_buffers(
     const uint8_t **inbuf,
     uint8_t *inbuf_const,
     uint8_t **owned_buffers);
+static void dsview_decode_free_captured_annotations_internal(
+    struct dsview_decode_captured_annotation *annotations,
+    size_t count);
+static int dsview_decode_reserve_captured_annotations(
+    struct dsview_decode_execution_session *session,
+    size_t target_count);
+static void dsview_decode_annotation_callback(
+    struct srd_proto_data *pdata,
+    void *cb_data);
 
 static void dsview_bridge_set_error_from_text(const char *message)
 {
@@ -914,6 +933,152 @@ static int dsview_decode_copy_annotation_rows(
     return DSVIEW_DECODE_OK;
 }
 
+static void dsview_decode_free_captured_annotations_internal(
+    struct dsview_decode_captured_annotation *annotations,
+    size_t count)
+{
+    size_t index;
+
+    if (annotations == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        size_t text_index;
+
+        free(annotations[index].decoder_id);
+        if (annotations[index].texts != NULL) {
+            for (text_index = 0; text_index < annotations[index].text_count; text_index++) {
+                free(annotations[index].texts[text_index]);
+            }
+        }
+        free(annotations[index].texts);
+    }
+    free(annotations);
+}
+
+static int dsview_decode_reserve_captured_annotations(
+    struct dsview_decode_execution_session *session,
+    size_t target_count)
+{
+    struct dsview_decode_captured_annotation *resized = NULL;
+    size_t capacity = 0;
+
+    if (session == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+    if (target_count <= session->captured_annotation_capacity) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    capacity = session->captured_annotation_capacity == 0
+        ? 8
+        : session->captured_annotation_capacity * 2;
+    while (capacity < target_count) {
+        capacity *= 2;
+    }
+
+    resized = (struct dsview_decode_captured_annotation *)realloc(
+        session->captured_annotations,
+        capacity * sizeof(*resized));
+    if (resized == NULL) {
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    memset(
+        resized + session->captured_annotation_capacity,
+        0,
+        (capacity - session->captured_annotation_capacity) * sizeof(*resized));
+    session->captured_annotations = resized;
+    session->captured_annotation_capacity = capacity;
+    return DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_annotation_callback(
+    struct srd_proto_data *pdata,
+    void *cb_data)
+{
+    struct dsview_decode_execution_session *session =
+        (struct dsview_decode_execution_session *)cb_data;
+    struct dsview_decode_captured_annotation *captured = NULL;
+    struct srd_proto_data_annotation *annotation = NULL;
+    size_t text_count = 0;
+    size_t text_index = 0;
+    int status;
+
+    if (session == NULL || pdata == NULL || pdata->pdo == NULL) {
+        return;
+    }
+
+    g_mutex_lock(&session->annotation_lock);
+    status = dsview_decode_reserve_captured_annotations(
+        session,
+        session->captured_annotation_count + 1);
+    if (status != DSVIEW_DECODE_OK) {
+        g_mutex_unlock(&session->annotation_lock);
+        return;
+    }
+
+    captured = &session->captured_annotations[session->captured_annotation_count];
+    memset(captured, 0, sizeof(*captured));
+    captured->decoder_id = dsview_decode_strdup(
+        pdata->pdo->di != NULL && pdata->pdo->di->decoder != NULL
+            ? pdata->pdo->di->decoder->id
+            : pdata->pdo->proto_id);
+    if ((pdata->pdo->di != NULL && pdata->pdo->di->decoder != NULL &&
+            pdata->pdo->di->decoder->id != NULL &&
+            captured->decoder_id == NULL) ||
+        (pdata->pdo->di == NULL && pdata->pdo->proto_id != NULL &&
+            captured->decoder_id == NULL)) {
+        g_mutex_unlock(&session->annotation_lock);
+        return;
+    }
+
+    captured->start_sample = pdata->start_sample;
+    captured->end_sample = pdata->end_sample;
+    captured->ann_class = -1;
+    captured->ann_type = -1;
+
+    if (pdata->pdo->output_type == SRD_OUTPUT_ANN && pdata->data != NULL) {
+        annotation = (struct srd_proto_data_annotation *)pdata->data;
+        captured->ann_class = annotation->ann_class;
+        captured->ann_type = annotation->ann_type;
+
+        if (annotation->ann_text != NULL) {
+            while (annotation->ann_text[text_count] != NULL) {
+                text_count++;
+            }
+        }
+        captured->text_count = text_count;
+        if (text_count > 0) {
+            captured->texts = (char **)calloc(text_count, sizeof(*captured->texts));
+            if (captured->texts == NULL) {
+                free(captured->decoder_id);
+                memset(captured, 0, sizeof(*captured));
+                g_mutex_unlock(&session->annotation_lock);
+                return;
+            }
+            for (text_index = 0; text_index < text_count; text_index++) {
+                captured->texts[text_index] = dsview_decode_strdup(annotation->ann_text[text_index]);
+                if (annotation->ann_text[text_index] != NULL && captured->texts[text_index] == NULL) {
+                    size_t cleanup_index;
+                    for (cleanup_index = 0; cleanup_index < text_index; cleanup_index++) {
+                        free(captured->texts[cleanup_index]);
+                    }
+                    free(captured->texts);
+                    free(captured->decoder_id);
+                    memset(captured, 0, sizeof(*captured));
+                    g_mutex_unlock(&session->annotation_lock);
+                    return;
+                }
+            }
+        }
+    }
+
+    session->captured_annotation_count++;
+    g_mutex_unlock(&session->annotation_lock);
+}
+
 static void dsview_decode_free_list_entries(struct dsview_decode_list_entry *list, size_t count)
 {
     size_t index;
@@ -1061,6 +1226,12 @@ int dsview_decode_runtime_load(const char *path)
     g_decode_runtime_api.srd_session_destroy =
         (srd_session_destroy_fn)dsview_decode_load_symbol("srd_session_destroy", &status);
     if (g_decode_runtime_api.srd_session_destroy == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_pd_output_callback_add =
+        (srd_pd_output_callback_add_fn)dsview_decode_load_symbol("srd_pd_output_callback_add", &status);
+    if (g_decode_runtime_api.srd_pd_output_callback_add == NULL) {
         dsview_decode_runtime_unload();
         return status;
     }
@@ -1655,6 +1826,32 @@ int dsview_decode_session_new(struct dsview_decode_execution_session **out_sessi
         return dsview_decode_map_upstream_status(status, 0);
     }
 
+    g_mutex_init(&session->annotation_lock);
+    status = g_decode_runtime_api.srd_pd_output_callback_add(
+        session->session,
+        SRD_OUTPUT_ANN,
+        dsview_decode_annotation_callback,
+        session);
+    if (status != SRD_OK) {
+        g_mutex_clear(&session->annotation_lock);
+        g_decode_runtime_api.srd_session_destroy(session->session);
+        free(session);
+        dsview_decode_capture_upstream_error(status, 0);
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+    status = g_decode_runtime_api.srd_pd_output_callback_add(
+        session->session,
+        SRD_OUTPUT_PYTHON,
+        dsview_decode_annotation_callback,
+        session);
+    if (status != SRD_OK) {
+        g_mutex_clear(&session->annotation_lock);
+        g_decode_runtime_api.srd_session_destroy(session->session);
+        free(session);
+        dsview_decode_capture_upstream_error(status, 0);
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+
     dsview_decode_clear_error_state();
     *out_session = session;
     return DSVIEW_DECODE_OK;
@@ -1872,11 +2069,43 @@ int dsview_decode_session_end(struct dsview_decode_execution_session *session)
     return DSVIEW_DECODE_OK;
 }
 
+int dsview_decode_session_take_captured_annotations(
+    struct dsview_decode_execution_session *session,
+    struct dsview_decode_captured_annotation **out_annotations,
+    size_t *out_count)
+{
+    if (session == NULL || out_annotations == NULL || out_count == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    g_mutex_lock(&session->annotation_lock);
+    *out_annotations = session->captured_annotations;
+    *out_count = session->captured_annotation_count;
+    session->captured_annotations = NULL;
+    session->captured_annotation_count = 0;
+    session->captured_annotation_capacity = 0;
+    g_mutex_unlock(&session->annotation_lock);
+
+    return DSVIEW_DECODE_OK;
+}
+
+void dsview_decode_free_captured_annotations(
+    struct dsview_decode_captured_annotation *annotations,
+    size_t count)
+{
+    dsview_decode_free_captured_annotations_internal(annotations, count);
+}
+
 void dsview_decode_session_destroy(struct dsview_decode_execution_session *session)
 {
     if (session == NULL) {
         return;
     }
+
+    dsview_decode_free_captured_annotations_internal(
+        session->captured_annotations,
+        session->captured_annotation_count);
+    g_mutex_clear(&session->annotation_lock);
 
     if (session->session != NULL && g_decode_runtime_api.srd_session_destroy != NULL) {
         g_decode_runtime_api.srd_session_destroy(session->session);

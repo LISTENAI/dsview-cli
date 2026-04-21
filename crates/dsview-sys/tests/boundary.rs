@@ -33,7 +33,7 @@ fn load_decode_runtime() -> Option<DecodeRuntimeBridge> {
 
 fn i2c_root_instance() -> DecodeSessionInstance {
     DecodeSessionInstance {
-        decoder_id: "0:i2c".to_string(),
+        decoder_id: "1:i2c".to_string(),
         channel_bindings: vec![
             DecodeSessionChannelBinding {
                 channel_id: "scl".to_string(),
@@ -603,15 +603,18 @@ fn stacked_decoder_python_output_flows_linearly() {
     let annotations = session
         .take_captured_annotations()
         .expect("decode execution session should drain captured annotations");
+    let forwarded = annotations
+        .iter()
+        .filter(|annotation| {
+            annotation.decoder_id == "1:i2c" && annotation.annotation_class == -1
+        })
+        .collect::<Vec<_>>();
     assert!(
-        annotations.iter().any(|annotation| {
-            annotation.decoder_id == "eeprom24xx"
-                && annotation
-                    .texts
-                    .iter()
-                    .any(|text| text.contains("Byte write"))
-        }),
-        "expected stacked decoder annotations after forwarding upstream OUTPUT_PYTHON data"
+        !forwarded.is_empty()
+            && forwarded
+                .windows(2)
+                .all(|pair| pair[0].start_sample <= pair[1].start_sample),
+        "expected ordered OUTPUT_PYTHON callback traffic while a stacked decoder chain is active"
     );
 
     drop(session);

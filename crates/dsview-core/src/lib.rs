@@ -622,12 +622,36 @@ impl OfflineDecodeRuntimeSession for dsview_sys::DecodeExecutionSession {
         format: DecodeExecutionLogicFormat,
     ) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
         dsview_sys::session_send_logic_chunk(self, abs_start_sample, sample_bytes, format, None)?;
-        Ok(Vec::new())
+        Ok(self
+            .take_captured_annotations()?
+            .into_iter()
+            .filter(|annotation| annotation.annotation_class >= 0)
+            .map(|annotation| DecodeCapturedAnnotation {
+                decoder_id: annotation.decoder_id,
+                start_sample: annotation.start_sample,
+                end_sample: annotation.end_sample,
+                annotation_class: annotation.annotation_class,
+                annotation_type: annotation.annotation_type,
+                texts: annotation.texts,
+            })
+            .collect())
     }
 
     fn end(&mut self) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
         dsview_sys::DecodeExecutionSession::end(self)?;
-        Ok(Vec::new())
+        Ok(self
+            .take_captured_annotations()?
+            .into_iter()
+            .filter(|annotation| annotation.annotation_class >= 0)
+            .map(|annotation| DecodeCapturedAnnotation {
+                decoder_id: annotation.decoder_id,
+                start_sample: annotation.start_sample,
+                end_sample: annotation.end_sample,
+                annotation_class: annotation.annotation_class,
+                annotation_type: annotation.annotation_type,
+                texts: annotation.texts,
+            })
+            .collect())
     }
 }
 

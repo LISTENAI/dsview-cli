@@ -160,6 +160,15 @@ unsafe extern "C" {
         chunk: *const RawDecodeLogicChunk,
     ) -> c_int;
     fn dsview_decode_session_end(session: *mut RawDecodeExecutionSession) -> c_int;
+    fn dsview_decode_session_take_captured_annotations(
+        session: *mut RawDecodeExecutionSession,
+        out_annotations: *mut *mut RawDecodeCapturedAnnotation,
+        out_count: *mut usize,
+    ) -> c_int;
+    fn dsview_decode_free_captured_annotations(
+        annotations: *mut RawDecodeCapturedAnnotation,
+        count: usize,
+    );
     fn dsview_decode_session_destroy(session: *mut RawDecodeExecutionSession);
 }
 
@@ -382,6 +391,18 @@ struct RawDecodeAnnotationRow {
     desc: *mut c_char,
     annotation_classes: *mut usize,
     annotation_class_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeCapturedAnnotation {
+    decoder_id: *mut c_char,
+    start_sample: u64,
+    end_sample: u64,
+    ann_class: c_int,
+    ann_type: c_int,
+    texts: *mut *mut c_char,
+    text_count: usize,
 }
 
 #[repr(C)]
@@ -657,6 +678,16 @@ pub struct DecodeAnnotationRow {
     pub id: String,
     pub description: Option<String>,
     pub annotation_classes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeCapturedAnnotation {
+    pub decoder_id: String,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub annotation_class: i32,
+    pub annotation_type: i32,
+    pub texts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2041,6 +2072,34 @@ impl DecodeExecutionSession {
             dsview_decode_session_end(self.raw.as_ptr())
         })
     }
+
+    pub fn take_captured_annotations(
+        &mut self,
+    ) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
+        let mut raw_annotations: *mut RawDecodeCapturedAnnotation = std::ptr::null_mut();
+        let mut count = 0_usize;
+        decode_native_call_status("decode session take captured annotations", unsafe {
+            dsview_decode_session_take_captured_annotations(
+                self.raw.as_ptr(),
+                &mut raw_annotations,
+                &mut count,
+            )
+        })?;
+
+        if raw_annotations.is_null() || count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let result = unsafe {
+            let slice = std::slice::from_raw_parts(raw_annotations, count);
+            slice
+                .iter()
+                .map(decode_captured_annotation_from_raw)
+                .collect::<Result<Vec<_>, DecodeRuntimeError>>()
+        };
+        unsafe { dsview_decode_free_captured_annotations(raw_annotations, count) };
+        result
+    }
 }
 
 impl Drop for DecodeExecutionSession {
@@ -2645,6 +2704,28 @@ fn decode_annotation_row_from_raw(
         id: decode_required_c_string(raw.id.cast_const())?,
         description: decode_optional_c_string(raw.desc.cast_const())?,
         annotation_classes,
+    })
+}
+
+fn decode_captured_annotation_from_raw(
+    raw: &RawDecodeCapturedAnnotation,
+) -> Result<DecodeCapturedAnnotation, DecodeRuntimeError> {
+    let texts = if raw.texts.is_null() || raw.text_count == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(raw.texts, raw.text_count) }
+            .iter()
+            .map(|text| decode_optional_c_string((*text).cast_const()).map(|value| value.unwrap_or_default()))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    Ok(DecodeCapturedAnnotation {
+        decoder_id: decode_required_c_string(raw.decoder_id.cast_const())?,
+        start_sample: raw.start_sample,
+        end_sample: raw.end_sample,
+        annotation_class: raw.ann_class,
+        annotation_type: raw.ann_type,
+        texts,
     })
 }
 
