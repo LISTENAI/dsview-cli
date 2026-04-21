@@ -1,104 +1,119 @@
 #include "libsigrok-internal.h"
 #include <glib.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "config.h"
 
 #undef LOG_PREFIX
 #define LOG_PREFIX "vcd: "
 
-struct minimal_vcd_context {
+struct vcd_context {
     int num_enabled_channels;
-    int *channel_index;
     uint8_t *prevsample;
     gboolean header_done;
+    int period;
+    int *channel_index;
     uint64_t samplerate;
     uint64_t samplecount;
-    int period;
 };
 
-static const char *const output_vcd_exts[] = {"vcd", NULL};
-
-static int minimal_vcd_init(struct sr_output *o, GHashTable *options)
+static int vcd_init(struct sr_output *output, GHashTable *options)
 {
-    struct minimal_vcd_context *ctx;
+    struct vcd_context *ctx;
     struct sr_channel *channel;
     GSList *node;
+    int num_enabled_channels;
     int index;
 
     (void)options;
 
-    ctx = g_malloc0(sizeof(*ctx));
+    num_enabled_channels = 0;
+    for (node = output->sdi->channels; node != NULL; node = node->next) {
+        channel = node->data;
+        if (channel->type == SR_CHANNEL_LOGIC && channel->enabled) {
+            num_enabled_channels++;
+        }
+    }
+    if (num_enabled_channels > 94) {
+        sr_err("VCD only supports 94 channels.");
+        return SR_ERR;
+    }
+
+    ctx = malloc(sizeof(*ctx));
     if (ctx == NULL) {
         sr_err("%s,ERROR:failed to alloc memory.", __func__);
         return SR_ERR_MALLOC;
     }
+    memset(ctx, 0, sizeof(*ctx));
 
-    for (node = o->sdi->channels; node != NULL; node = node->next) {
-        channel = node->data;
-        if (channel->type == SR_CHANNEL_LOGIC && channel->enabled) {
-            ctx->num_enabled_channels++;
-        }
-    }
-
-    if (ctx->num_enabled_channels <= 0 || ctx->num_enabled_channels > 94) {
-        g_free(ctx);
-        return SR_ERR;
-    }
-
-    ctx->channel_index = g_new(int, ctx->num_enabled_channels);
+    output->priv = ctx;
+    ctx->num_enabled_channels = num_enabled_channels;
+    ctx->channel_index = malloc(sizeof(int) * ctx->num_enabled_channels);
     if (ctx->channel_index == NULL) {
-        g_free(ctx);
+        free(ctx);
+        output->priv = NULL;
+        sr_err("%s,ERROR:failed to alloc memory.", __func__);
         return SR_ERR_MALLOC;
     }
 
-    index = 0;
-    for (node = o->sdi->channels; node != NULL; node = node->next) {
+    for (index = 0, node = output->sdi->channels; node != NULL; node = node->next) {
         channel = node->data;
-        if (channel->type == SR_CHANNEL_LOGIC && channel->enabled) {
-            ctx->channel_index[index++] = channel->index;
+        if (channel->type != SR_CHANNEL_LOGIC || !channel->enabled) {
+            continue;
         }
+        ctx->channel_index[index++] = channel->index;
     }
 
-    o->priv = ctx;
     return SR_OK;
 }
 
-static GString *minimal_vcd_header(const struct sr_output *o)
+static GString *vcd_header(const struct sr_output *output)
 {
-    struct minimal_vcd_context *ctx = o->priv;
+    struct vcd_context *ctx = output->priv;
     struct sr_channel *channel;
-    GSList *node;
+    GVariant *variant;
     GString *header;
-    char timestamp[64];
+    GSList *node;
     time_t now;
-    struct tm local_time;
+    int num_channels;
     int signal_index;
-    int total_channels;
+    char *samplerate_string;
+    char *period_string;
+    char *timestamp;
 
     header = g_string_sized_new(512);
-    total_channels = g_slist_length(o->sdi->channels);
+    num_channels = g_slist_length(output->sdi->channels);
 
     now = time(NULL);
-#if defined(_WIN32)
-    localtime_s(&local_time, &now);
-#else
-    localtime_r(&now, &local_time);
-#endif
-    strftime(timestamp, sizeof(timestamp), "%c", &local_time);
-
+    timestamp = g_strdup(ctime(&now));
+    timestamp[strlen(timestamp) - 1] = 0;
     g_string_printf(header, "$date %s $end\n", timestamp);
-    g_string_append(header, "$version dsview_runtime $end\n");
+    g_free(timestamp);
+
+    g_string_append_printf(header, "$version %s %s $end\n", PACKAGE, PACKAGE_VERSION);
     g_string_append_printf(
         header,
-        "$comment\n  Acquisition with %d/%d channels\n$end\n",
+        "$comment\n  Acquisition with %d/%d channels",
         ctx->num_enabled_channels,
-        total_channels
+        num_channels
     );
 
     if (ctx->samplerate == 0) {
-        ctx->samplerate = SR_MHZ(1);
+        if (sr_config_get(output->sdi->driver, output->sdi, NULL, NULL, SR_CONF_SAMPLERATE, &variant) == SR_OK) {
+            if (variant != NULL) {
+                ctx->samplerate = g_variant_get_uint64(variant);
+                g_variant_unref(variant);
+            }
+        }
     }
+    if (ctx->samplerate != 0) {
+        samplerate_string = sr_samplerate_string(ctx->samplerate);
+        g_string_append_printf(header, " at %s", samplerate_string);
+        g_free(samplerate_string);
+    }
+    g_string_append_printf(header, "\n$end\n");
 
     if (ctx->samplerate > SR_MHZ(1)) {
         ctx->period = SR_GHZ(1);
@@ -107,23 +122,19 @@ static GString *minimal_vcd_header(const struct sr_output *o)
     } else {
         ctx->period = SR_KHZ(1);
     }
+    period_string = sr_period_string(ctx->period);
+    g_string_append_printf(header, "$timescale %s $end\n", period_string);
+    g_free(period_string);
 
-    g_string_append(header, "$timescale 1 ns $end\n");
-    g_string_append(header, "$scope module dsview_runtime $end\n");
+    g_string_append_printf(header, "$scope module %s $end\n", PACKAGE);
 
     signal_index = 0;
-    for (node = o->sdi->channels; node != NULL; node = node->next) {
+    for (node = output->sdi->channels; node != NULL; node = node->next) {
         channel = node->data;
         if (channel->type != SR_CHANNEL_LOGIC || !channel->enabled) {
             continue;
         }
-
-        g_string_append_printf(
-            header,
-            "$var wire 1 %c %s $end\n",
-            (char)('!' + signal_index),
-            channel->name
-        );
+        g_string_append_printf(header, "$var wire 1 %c %s $end\n", (char)('!' + signal_index), channel->name);
         signal_index++;
     }
 
@@ -131,31 +142,27 @@ static GString *minimal_vcd_header(const struct sr_output *o)
     return header;
 }
 
-static int minimal_vcd_receive(
-    const struct sr_output *o,
-    const struct sr_datafeed_packet *packet,
-    GString **out
-)
+static int vcd_receive(const struct sr_output *output, const struct sr_datafeed_packet *packet, GString **out)
 {
-    const struct sr_datafeed_logic *logic;
     const struct sr_datafeed_meta *meta;
+    const struct sr_datafeed_logic *logic;
     const struct sr_config *config;
-    struct minimal_vcd_context *ctx;
     GSList *node;
-    const uint8_t *sample;
+    struct vcd_context *ctx;
     unsigned int offset;
+    int signal_index;
     int bit_index;
-    int channel_index;
     int current_bit;
     int previous_bit;
+    uint8_t *sample;
     gboolean timestamp_written;
 
     *out = NULL;
-    ctx = o->priv;
-    if (ctx == NULL) {
+    if (output == NULL || output->priv == NULL) {
         return SR_ERR_BUG;
     }
 
+    ctx = output->priv;
     switch (packet->type) {
     case SR_DF_META:
         meta = packet->payload;
@@ -165,90 +172,101 @@ static int minimal_vcd_receive(
                 ctx->samplerate = g_variant_get_uint64(config->data);
             }
         }
-        return SR_OK;
+        break;
     case SR_DF_LOGIC:
         logic = packet->payload;
         if (!ctx->header_done) {
-            *out = minimal_vcd_header(o);
+            *out = vcd_header(output);
             ctx->header_done = TRUE;
         } else {
             *out = g_string_sized_new(512);
         }
 
         if (ctx->prevsample == NULL) {
-            ctx->prevsample = g_malloc0(logic->unitsize);
+            ctx->prevsample = malloc(logic->unitsize);
             if (ctx->prevsample == NULL) {
+                sr_err("%s,ERROR:failed to alloc memory.", __func__);
                 g_string_free(*out, TRUE);
                 *out = NULL;
                 return SR_ERR_MALLOC;
             }
+            memset(ctx->prevsample, 0, logic->unitsize);
         }
 
-        for (offset = 0; offset + logic->unitsize <= logic->length; offset += logic->unitsize) {
-            sample = ((const uint8_t *)logic->data) + offset;
+        for (offset = 0; offset <= logic->length - logic->unitsize; offset += logic->unitsize) {
+            sample = ((uint8_t *)logic->data) + offset;
             timestamp_written = FALSE;
 
-            for (bit_index = 0; bit_index < ctx->num_enabled_channels; bit_index++) {
-                channel_index = ctx->channel_index[bit_index];
-                current_bit = (sample[channel_index / 8] >> (channel_index % 8)) & 1;
-                previous_bit = (ctx->prevsample[channel_index / 8] >> (channel_index % 8)) & 1;
+            for (signal_index = 0; signal_index < ctx->num_enabled_channels; signal_index++) {
+                bit_index = signal_index;
+                current_bit = ((unsigned)sample[bit_index / 8] >> (bit_index % 8)) & 1;
+                previous_bit = ((unsigned)ctx->prevsample[bit_index / 8] >> (bit_index % 8)) & 1;
 
                 if (previous_bit == current_bit && ctx->samplecount > 0) {
                     continue;
                 }
 
                 if (!timestamp_written) {
-                    g_string_append_printf(*out, "#%llu", (unsigned long long)ctx->samplecount);
-                    timestamp_written = TRUE;
+                    g_string_append_printf(
+                        *out,
+                        "#%.0f",
+                        (double)ctx->samplecount / ctx->samplerate * ctx->period
+                    );
                 }
 
                 g_string_append_c(*out, ' ');
-                g_string_append_c(*out, (char)('0' + current_bit));
-                g_string_append_c(*out, (char)('!' + bit_index));
+                g_string_append_c(*out, '0' + current_bit);
+                g_string_append_c(*out, '!' + signal_index);
+                timestamp_written = TRUE;
             }
 
             if (timestamp_written) {
                 g_string_append_c(*out, '\n');
             }
 
-            memcpy(ctx->prevsample, sample, logic->unitsize);
             ctx->samplecount++;
+            memcpy(ctx->prevsample, sample, logic->unitsize);
         }
-        return SR_OK;
+        break;
     case SR_DF_END:
-        *out = g_string_sized_new(64);
-        g_string_append_printf(*out, "#%llu\n", (unsigned long long)ctx->samplecount);
-        return SR_OK;
+        *out = g_string_sized_new(512);
+        g_string_printf(
+            *out,
+            "#%.0f\n",
+            (double)ctx->samplecount / ctx->samplerate * ctx->period
+        );
+        break;
     default:
-        return SR_OK;
-    }
-}
-
-static int minimal_vcd_cleanup(struct sr_output *o)
-{
-    struct minimal_vcd_context *ctx;
-
-    if (o == NULL || o->priv == NULL) {
-        return SR_ERR_ARG;
+        break;
     }
 
-    ctx = o->priv;
-    g_free(ctx->prevsample);
-    g_free(ctx->channel_index);
-    g_free(ctx);
-    o->priv = NULL;
     return SR_OK;
 }
 
-SR_PRIV struct sr_output_module output_vcd = {
-    "vcd",
-    "VCD",
-    "Value Change Dump",
-    output_vcd_exts,
-    NULL,
-    minimal_vcd_init,
-    minimal_vcd_receive,
-    minimal_vcd_cleanup,
+static int vcd_cleanup(struct sr_output *output)
+{
+    struct vcd_context *ctx;
+
+    if (output == NULL || output->priv == NULL) {
+        return SR_ERR_ARG;
+    }
+
+    ctx = output->priv;
+    g_free(ctx->prevsample);
+    g_free(ctx->channel_index);
+    g_free(ctx);
+    return SR_OK;
+}
+
+struct sr_output_module output_vcd = {
+    .id = "vcd",
+    .name = "VCD",
+    .desc = "Value Change Dump",
+    .exts = (const char *[]){"vcd", NULL},
+    .options = NULL,
+    .init = vcd_init,
+    .receive = vcd_receive,
+    .cleanup = vcd_cleanup,
 };
 
 SR_API const struct sr_output_module **sr_output_list(void)
@@ -266,7 +284,6 @@ SR_API const struct sr_output_module *sr_output_find(char *id)
     if (id != NULL && strcmp(id, "vcd") == 0) {
         return &output_vcd;
     }
-
     return NULL;
 }
 
@@ -278,19 +295,19 @@ SR_API const struct sr_output *sr_output_new(
 {
     struct sr_output *output;
 
-    if (module == NULL || module->init == NULL) {
+    if (module == NULL) {
         return NULL;
     }
 
-    output = g_malloc0(sizeof(*output));
+    output = calloc(1, sizeof(*output));
     if (output == NULL) {
         return NULL;
     }
 
     output->module = module;
     output->sdi = sdi;
-    if (module->init(output, options) != SR_OK) {
-        g_free(output);
+    if (module->init != NULL && module->init(output, options) != SR_OK) {
+        free(output);
         return NULL;
     }
 
@@ -308,17 +325,16 @@ SR_API int sr_output_send(const struct sr_output *output, const struct sr_datafe
 
 SR_API int sr_output_free(const struct sr_output *output)
 {
-    int status;
+    int status = SR_OK;
 
     if (output == NULL) {
         return SR_ERR_ARG;
     }
 
-    status = SR_OK;
     if (output->module != NULL && output->module->cleanup != NULL) {
         status = output->module->cleanup((struct sr_output *)output);
     }
 
-    g_free((gpointer)output);
+    free((void *)output);
     return status;
 }
