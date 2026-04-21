@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -43,7 +44,7 @@ use dsview_sys::{
     DecodeInput as SysDecodeInput, DecodeOption as SysDecodeOption,
     DecodeOutput as SysDecodeOutput,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -265,6 +266,69 @@ fn normalize_decoder_annotation_row(
         description: row.description,
         annotation_classes: row.annotation_classes,
     }
+}
+
+pub const DECODE_CONFIG_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecodeConfig {
+    #[serde(default = "default_decode_config_version")]
+    pub version: u32,
+    pub decoder: DecodeDecoderConfig,
+    #[serde(default)]
+    pub stack: Vec<DecodeStackEntryConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecodeDecoderConfig {
+    pub id: String,
+    #[serde(default)]
+    pub channels: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub options: BTreeMap<String, DecodeOptionValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecodeStackEntryConfig {
+    pub id: String,
+    #[serde(default)]
+    pub options: BTreeMap<String, DecodeOptionValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DecodeOptionValue {
+    String(String),
+    Integer(i64),
+    Float(f64),
+}
+
+#[derive(Debug, Error)]
+pub enum DecodeConfigParseError {
+    #[error("decode config JSON did not match the expected schema: {detail}")]
+    Json {
+        detail: String,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+pub fn parse_decode_config(json: &str) -> Result<DecodeConfig, DecodeConfigParseError> {
+    parse_decode_config_slice(json.as_bytes())
+}
+
+pub fn parse_decode_config_slice(json: &[u8]) -> Result<DecodeConfig, DecodeConfigParseError> {
+    serde_json::from_slice::<DecodeConfig>(json).map_err(|source| DecodeConfigParseError::Json {
+        detail: source.to_string(),
+        source,
+    })
+}
+
+fn default_decode_config_version() -> u32 {
+    DECODE_CONFIG_VERSION
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

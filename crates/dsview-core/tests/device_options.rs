@@ -3,9 +3,9 @@ use dsview_core::{
     DeviceHandle, SelectionHandle, SupportedDevice, SupportedDeviceKind,
 };
 use dsview_sys::{
-    DecodeAnnotation, DecodeAnnotationRow, DecodeChannel, DecodeDecoder, DecodeInput, DecodeOption,
-    DecodeOutput, DeviceOptionChannelMode, DeviceOptionChannelModeGroup, DeviceOptionValue,
-    DeviceOptionsSnapshot as NativeDeviceOptionsSnapshot,
+    DecodeAnnotation, DecodeAnnotationRow, DecodeChannel, DecodeDecoder, DecodeInput,
+    DecodeOption, DecodeOptionValueKind, DecodeOutput, DeviceOptionChannelMode,
+    DeviceOptionChannelModeGroup, DeviceOptionValue, DeviceOptionsSnapshot as NativeDeviceOptionsSnapshot,
     LegacyThresholdMetadata as NativeLegacyThresholdMetadata, ThresholdVoltageRange,
 };
 
@@ -156,6 +156,7 @@ fn native_decoder() -> DecodeDecoder {
             id: "address_format".to_string(),
             idn: Some("address_format".to_string()),
             description: Some("show 7-bit or 8-bit addresses".to_string()),
+            value_kind: DecodeOptionValueKind::String,
             default_value: Some("7-bit".to_string()),
             values: vec!["7-bit".to_string(), "8-bit".to_string()],
         }],
