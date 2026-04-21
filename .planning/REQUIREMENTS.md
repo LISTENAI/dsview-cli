@@ -8,8 +8,8 @@
 
 ### Decoder Discovery and Inspection
 
-- [ ] **DEC-01**: User can list the available DSView protocol decoders from the CLI.
-- [ ] **DEC-02**: User can inspect a decoder's channels, options, annotations, and stack-relevant metadata from the CLI.
+- [x] **DEC-01**: User can list the available DSView protocol decoders from the CLI.
+- [x] **DEC-02**: User can inspect a decoder's channels, options, annotations, and stack-relevant metadata from the CLI.
 
 ### Decode Configuration
 
@@ -50,8 +50,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEC-01 | Phase 14 | Planned |
-| DEC-02 | Phase 14 | Planned |
+| DEC-01 | Phase 14 | Complete |
+| DEC-02 | Phase 14 | Complete |
 | DEC-03 | Phase 15 | Planned |
 | DEC-04 | Phase 15 | Planned |
 | DEC-05 | Phase 16 | Planned |
@@ -66,4 +66,4 @@
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-14 after milestone `v1.2` definition*
+*Last updated: 2026-04-21 after completing Phase 14*

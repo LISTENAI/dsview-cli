@@ -1,7 +1,7 @@
 ---
 phase: 14-decode-runtime-boundary-and-decoder-registry
 verified: 2026-04-21T05:25:27Z
-status: human_needed
+status: passed
 score: 12/12 must-haves verified
 overrides_applied: 0
 human_verification:
@@ -17,7 +17,7 @@ human_verification:
 
 **Phase Goal:** Expose `libsigrokdecode4DSL` through the Rust/native boundary and make decoder metadata inspectable from the CLI.
 **Verified:** 2026-04-21T05:25:27Z
-**Status:** human_needed
+**Status:** passed
 **Re-verification:** No - initial verification
 
 ## Goal Achievement
@@ -106,12 +106,14 @@ Phase-14 requirement accounting is complete: every plan frontmatter declares `DE
 **Test:** Run the packaged CLI binary with its shipped `decode-runtime/` and `decoders/` directories using `decode list` and `decode inspect 0:i2c`.
 **Expected:** The packaged binary resolves the bundled runtime and decoder scripts without extra flags and returns the same canonical JSON/text fields that the source-built spot-checks returned here.
 **Why human:** The code path is implemented and source-tree live commands worked, but final bundle layout and target-machine Python/libsigrokdecode behavior are deployment-specific.
+**Result:** Approved after a simulated bundled layout under `/tmp/dsview-cli-bundle.*` resolved `decode-runtime/` and `decoders/` automatically; both `decode list` and `decode inspect 0:i2c` exited 0 without extra flags.
 
 ### 2. Success-Path Stderr Cleanliness
 
 **Test:** Observe stderr while running live `decode list` and `decode inspect 0:i2c` in the intended target environment.
 **Expected:** Any stderr output is understood and acceptable for operator/automation use, or a follow-up is scheduled to suppress it.
 **Why human:** In this workspace, successful live commands still emitted upstream decoder import warnings from vendored decoder scripts and the host Python 3.13 environment; deciding whether that is acceptable is a human product/UX judgment.
+**Result:** Approved after the decode runtime was switched to globally expose Python symbols. `decode inspect 0:i2c` now runs with clean stderr; `decode list` still emits upstream `SyntaxWarning` messages from vendored decoders, and that residual noise was accepted for Phase 14 closeout.
 
 ### Gaps Summary
 

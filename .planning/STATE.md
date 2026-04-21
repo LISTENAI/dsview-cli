@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: DSView protocol decode CLI foundation
-current_phase: 14
-current_phase_name: Decode Runtime Boundary and Decoder Registry
-current_plan: 1
-status: executing
-stopped_at: Milestone initialized; Phase 14 ready for discuss/plan
-last_updated: "2026-04-21T04:04:58.471Z"
-last_activity: 2026-04-21 -- Phase 14 execution started
+current_phase: 15
+current_phase_name: Decode Config Model and Validation
+current_plan: -
+status: ready
+stopped_at: Phase 14 completed; awaiting Phase 15 discussion/planning
+last_updated: "2026-04-21T08:02:49.423Z"
+last_activity: 2026-04-21 -- Phase 14 completed and ready to start Phase 15
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 3
+  percent: 25
 ---
 
 # Session State
@@ -24,19 +24,17 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 14 — Decode Runtime Boundary and Decoder Registry
+**Current focus:** Prepare and plan `Phase 15: Decode Config Model and Validation`
 
 ## Current Position
 
-Phase: 14 (Decode Runtime Boundary and Decoder Registry) — EXECUTING
-Plan: 1 of 3
-Current Phase: 14
-Current Phase Name: Decode Runtime Boundary and Decoder Registry
-Current Plan: 1
+Current Phase: 15
+Current Phase Name: `Decode Config Model and Validation`
+Current Plan: -
 Total Plans in Milestone: 3
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Executing Phase 14
-Last activity: 2026-04-21 -- Phase 14 execution started
+Status: Phase 14 complete; ready for Phase 15
+Last activity: 2026-04-21 -- Phase 14 completed and ready to start Phase 15
 
 ## Accumulated Context
 
@@ -85,12 +83,12 @@ Last activity: 2026-04-21 -- Phase 14 execution started
 
 Last session: 2026-04-14T07:58:43Z
 
-Stopped At: Milestone initialized; Phase 14 ready for discuss/plan
+Stopped At: Phase 14 completed; awaiting Phase 15 discussion/planning
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Run `/gsd-execute-phase 14` to begin executing the planned decode runtime boundary work.
-- Review `.planning/phases/14-decode-runtime-boundary-and-decoder-registry/*-PLAN.md` before execution if you want to inspect the wave layout.
-- Preserve the shipped `v1.0` and `v1.1` workflows while introducing decode support as a separate layer.
+- Run `/gsd-discuss-phase 15` to capture the config-model decisions before planning.
+- Or run `/gsd-plan-phase 15` to start Phase 15 planning directly.
+- Preserve the shipped `v1.0`, `v1.1`, and the newly completed Phase 14 discovery baseline while extending decode support.
