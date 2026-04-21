@@ -428,8 +428,8 @@ fn join_ids(values: &[String]) -> String {
 mod tests {
     use super::{
         build_decode_inspect_response, build_decode_list_response,
-        build_decode_validate_response, render_decode_inspect_text, render_decode_list_text,
-        render_decode_validate_text,
+        build_decode_run_response, build_decode_validate_response, render_decode_inspect_text,
+        render_decode_list_text, render_decode_run_text, render_decode_validate_text,
     };
     use dsview_core::{
         DecoderAnnotationDescriptor, DecoderAnnotationRowDescriptor, DecoderChannelDescriptor,
@@ -578,5 +578,39 @@ mod tests {
         assert!(text.contains("root decoder: 0:i2c"));
         assert!(text.contains("stack depth: 1"));
         assert!(text.contains("bound channels: scl, sda"));
+    }
+
+    #[test]
+    fn decode_run_response_and_text_summarize_execution() {
+        let response = build_decode_run_response(
+            1,
+            "0:i2c",
+            1,
+            128,
+            3,
+            &["0:i2c".to_string(), "1:eeprom24xx".to_string()],
+        );
+        let value = serde_json::to_value(&response).expect("run response should serialize");
+
+        assert_eq!(
+            value,
+            json!({
+                "ok": true,
+                "config_version": 1,
+                "root_decoder_id": "0:i2c",
+                "stack_depth": 1,
+                "sample_count": 128,
+                "annotation_count": 3,
+                "annotation_decoder_ids": ["0:i2c", "1:eeprom24xx"]
+            })
+        );
+
+        let text = render_decode_run_text(&response);
+        assert!(text.contains("decode run succeeded"));
+        assert!(text.contains("root decoder: 0:i2c"));
+        assert!(text.contains("stack depth: 1"));
+        assert!(text.contains("sample count: 128"));
+        assert!(text.contains("annotation count: 3"));
+        assert!(text.contains("annotation decoders: 0:i2c, 1:eeprom24xx"));
     }
 }
