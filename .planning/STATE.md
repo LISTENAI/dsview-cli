@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: DSView protocol decode CLI foundation
-current_phase: 16
-current_phase_name: Offline Decode Execution
+current_phase: 17
+current_phase_name: Decode Output and Workflow Reporting
 current_plan: -
 status: ready
 stopped_at: Phase 16 completed; awaiting Phase 17 discussion/planning
-last_updated: "2026-04-21T12:09:05Z"
-last_activity: 2026-04-21 -- Phase 16 completed and ready to start Phase 17
+last_updated: "2026-04-21T12:43:32.651Z"
+last_activity: 2026-04-21 -- Phase 17 planning complete
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 9
+  total_plans: 12
   completed_plans: 9
   percent: 75
 ---
@@ -33,8 +33,8 @@ Current Phase Name: `Decode Output and Workflow Reporting`
 Current Plan: -
 Total Plans in Milestone: 9
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Phase 16 complete; ready for Phase 17
-Last activity: 2026-04-21 -- Phase 16 completed and ready to start Phase 17
+Status: Ready to execute
+Last activity: 2026-04-21 -- Phase 17 planning complete
 
 ## Accumulated Context
 
