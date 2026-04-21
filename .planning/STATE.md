@@ -4,11 +4,11 @@ milestone: v1.2
 milestone_name: DSView protocol decode CLI foundation
 current_phase: 17
 current_phase_name: Decode Output and Workflow Reporting
-current_plan: -
-status: ready
+current_plan: 1
+status: executing
 stopped_at: Phase 16 completed; awaiting Phase 17 discussion/planning
-last_updated: "2026-04-21T12:43:32.651Z"
-last_activity: 2026-04-21 -- Phase 17 planning complete
+last_updated: "2026-04-21T12:46:38.671Z"
+last_activity: 2026-04-21 -- Phase 17 execution started
 progress:
   total_phases: 4
   completed_phases: 3
@@ -24,17 +24,19 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Prepare and plan `Phase 17: Decode Output and Workflow Reporting`
+**Current focus:** Phase 17 — Decode Output and Workflow Reporting
 
 ## Current Position
 
+Phase: 17 (Decode Output and Workflow Reporting) — EXECUTING
+Plan: 1 of 3
 Current Phase: 17
-Current Phase Name: `Decode Output and Workflow Reporting`
-Current Plan: -
+Current Phase Name: Decode Output and Workflow Reporting
+Current Plan: 1
 Total Plans in Milestone: 9
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Ready to execute
-Last activity: 2026-04-21 -- Phase 17 planning complete
+Status: Executing Phase 17
+Last activity: 2026-04-21 -- Phase 17 execution started
 
 ## Accumulated Context
 
