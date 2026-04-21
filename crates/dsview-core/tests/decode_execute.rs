@@ -5,10 +5,11 @@ use std::rc::Rc;
 
 use dsview_core::{
     run_offline_decode, DecodeCapturedAnnotation, DecodeExecutionLogicFormat, DecodeOptionValue,
-    DecodeRuntimeError, DecoderChannelDescriptor, DecoderDescriptor, DecoderInputDescriptor,
-    DecoderOutputDescriptor, OfflineDecodeDataFormat, OfflineDecodeInput, OfflineDecodeRuntime,
-    OfflineDecodeRuntimeSession, ValidatedDecodeConfig, ValidatedDecodeDecoderConfig,
-    ValidatedDecodeStackEntryConfig, OFFLINE_DECODE_FIXED_CHUNK_BYTES,
+    DecodeRunStatus, DecodeRuntimeError, DecoderChannelDescriptor, DecoderDescriptor,
+    DecoderInputDescriptor, DecoderOutputDescriptor, OfflineDecodeDataFormat,
+    OfflineDecodeInput, OfflineDecodeRuntime, OfflineDecodeRuntimeSession, ValidatedDecodeConfig,
+    ValidatedDecodeDecoderConfig, ValidatedDecodeStackEntryConfig,
+    OFFLINE_DECODE_FIXED_CHUNK_BYTES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -323,6 +324,94 @@ fn offline_decode_collects_fixture_annotations_for_successful_runs() {
             stack_annotation,
         ]
     );
+}
+
+#[test]
+fn offline_decode_result_projects_to_flat_event_report() {
+    let root_annotation = DecodeCapturedAnnotation {
+        decoder_id: "0:i2c".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 0,
+        annotation_type: 11,
+        texts: vec!["start".to_string()],
+    };
+    let stack_annotation = DecodeCapturedAnnotation {
+        decoder_id: "eeprom24xx".to_string(),
+        start_sample: 2,
+        end_sample: 4,
+        annotation_class: 1,
+        annotation_type: 21,
+        texts: vec!["write".to_string(), "0x50".to_string()],
+    };
+    let runtime = RecordingRuntime::with_send_and_end(
+        vec![SessionResponse::Ok(vec![root_annotation.clone()])],
+        SessionResponse::Ok(vec![stack_annotation.clone()]),
+    );
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x01, 0x02, 0x03, 0x04],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![4]),
+    };
+
+    let result = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect("decode run should succeed");
+
+    let report = result.to_report("0:i2c", 1, input.sample_count().unwrap());
+
+    assert_eq!(report.run.status, DecodeRunStatus::Success);
+    assert_eq!(report.run.root_decoder_id, "0:i2c");
+    assert_eq!(report.run.stack_depth, 1);
+    assert_eq!(report.run.sample_count, Some(4));
+    assert_eq!(report.run.event_count, Some(2));
+    assert_eq!(report.events.len(), 2);
+    assert_eq!(report.events[0].decoder_id, "0:i2c");
+    assert_eq!(report.events[1].decoder_id, "eeprom24xx");
+    assert_eq!(report.events[1].texts, vec!["write", "0x50"]);
+}
+
+#[test]
+fn failed_decode_report_retains_partial_events_without_partial_success_state() {
+    let retained = DecodeCapturedAnnotation {
+        decoder_id: "eeprom24xx".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 9,
+        annotation_type: 9,
+        texts: vec!["Byte write".to_string()],
+    };
+    let runtime = RecordingRuntime::with_send_responses(vec![
+        SessionResponse::Ok(vec![retained.clone()]),
+        SessionResponse::Err("second chunk failed"),
+    ]);
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x01, 0x02, 0x03, 0x04],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![2, 2]),
+    };
+
+    let error = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect_err("send failures should keep the run in a binary failure state");
+
+    let report = error.to_failure_report("0:i2c", 1, Some(input.sample_count().unwrap()));
+
+    assert_eq!(report.run.status, DecodeRunStatus::Failure);
+    assert_eq!(report.run.root_decoder_id, "0:i2c");
+    assert_eq!(report.run.sample_count, Some(4));
+    assert_eq!(report.run.event_count, None);
+    assert_eq!(report.partial_events.len(), 1);
+    assert_eq!(report.partial_events[0].decoder_id, "eeprom24xx");
+    let diagnostics = report.diagnostics.expect("runtime failures retain diagnostics");
+    assert_eq!(diagnostics.completed_chunks, 1);
+    assert_eq!(diagnostics.consumed_samples, 2);
+    assert_eq!(diagnostics.partial_event_count, 1);
+    assert!(diagnostics.partial_events_available);
 }
 
 fn fixture_cli_input() -> OfflineDecodeInput {

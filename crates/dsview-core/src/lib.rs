@@ -511,6 +511,70 @@ pub struct DecodeCapturedAnnotation {
     pub texts: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecodeRunStatus {
+    Success,
+    Failure,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeRunSummary {
+    pub status: DecodeRunStatus,
+    pub root_decoder_id: String,
+    pub stack_depth: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeEvent {
+    pub decoder_id: String,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub annotation_class: i32,
+    pub annotation_type: i32,
+    pub texts: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeReport {
+    pub run: DecodeRunSummary,
+    pub events: Vec<DecodeEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeFailureDiagnostics {
+    pub completed_chunks: usize,
+    pub consumed_samples: u64,
+    pub partial_event_count: usize,
+    pub partial_events_available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeFailureReport {
+    pub run: DecodeRunSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub partial_events: Vec<DecodeEvent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<DecodeFailureDiagnostics>,
+}
+
+impl From<&DecodeCapturedAnnotation> for DecodeEvent {
+    fn from(annotation: &DecodeCapturedAnnotation) -> Self {
+        Self {
+            decoder_id: annotation.decoder_id.clone(),
+            start_sample: annotation.start_sample,
+            end_sample: annotation.end_sample,
+            annotation_class: annotation.annotation_class,
+            annotation_type: annotation.annotation_type,
+            texts: annotation.texts.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OfflineDecodeResult {
     annotations: Vec<DecodeCapturedAnnotation>,
@@ -521,6 +585,24 @@ pub struct OfflineDecodeResult {
 impl OfflineDecodeResult {
     pub fn annotations(&self) -> &[DecodeCapturedAnnotation] {
         &self.annotations
+    }
+
+    pub fn to_report(
+        &self,
+        root_decoder_id: impl Into<String>,
+        stack_depth: usize,
+        sample_count: u64,
+    ) -> DecodeReport {
+        DecodeReport {
+            run: DecodeRunSummary {
+                status: DecodeRunStatus::Success,
+                root_decoder_id: root_decoder_id.into(),
+                stack_depth,
+                sample_count: Some(sample_count),
+                event_count: Some(self.annotations.len()),
+            },
+            events: self.annotations.iter().map(DecodeEvent::from).collect(),
+        }
     }
 }
 
@@ -563,6 +645,58 @@ impl OfflineDecodeRunError {
         match self {
             Self::InvalidInput(_) => 0,
             Self::Runtime { diagnostics, .. } => diagnostics.completed_chunks,
+        }
+    }
+
+    pub fn to_failure_report(
+        &self,
+        root_decoder_id: impl Into<String>,
+        stack_depth: usize,
+        sample_count: Option<u64>,
+    ) -> DecodeFailureReport {
+        let partial_events = self
+            .retained_annotations()
+            .iter()
+            .map(DecodeEvent::from)
+            .collect::<Vec<_>>();
+        let diagnostics = match self {
+            Self::InvalidInput(_) => None,
+            Self::Runtime { diagnostics, .. } => Some(diagnostics.to_failure_diagnostics()),
+        };
+
+        DecodeFailureReport {
+            run: DecodeRunSummary {
+                status: DecodeRunStatus::Failure,
+                root_decoder_id: root_decoder_id.into(),
+                stack_depth,
+                sample_count,
+                event_count: None,
+            },
+            partial_events,
+            diagnostics,
+        }
+    }
+}
+
+impl OfflineDecodeDiagnostics {
+    pub fn completed_chunks(&self) -> usize {
+        self.completed_chunks
+    }
+
+    pub fn consumed_samples(&self) -> u64 {
+        self.consumed_samples
+    }
+
+    pub fn partial_annotations(&self) -> &[DecodeCapturedAnnotation] {
+        &self.partial_annotations
+    }
+
+    fn to_failure_diagnostics(&self) -> DecodeFailureDiagnostics {
+        DecodeFailureDiagnostics {
+            completed_chunks: self.completed_chunks(),
+            consumed_samples: self.consumed_samples(),
+            partial_event_count: self.partial_annotations().len(),
+            partial_events_available: !self.partial_annotations().is_empty(),
         }
     }
 }
