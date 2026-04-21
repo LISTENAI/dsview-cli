@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: DSView protocol decode CLI foundation
 current_phase: 16
 current_phase_name: Offline Decode Execution
-current_plan: 1
-status: executing
-stopped_at: Phase 15 completed; awaiting Phase 16 discussion/planning
-last_updated: "2026-04-21T10:00:08.823Z"
-last_activity: 2026-04-21 -- Phase 16 execution started
+current_plan: -
+status: ready
+stopped_at: Phase 16 completed; awaiting Phase 17 discussion/planning
+last_updated: "2026-04-21T12:09:05Z"
+last_activity: 2026-04-21 -- Phase 16 completed and ready to start Phase 17
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 6
-  percent: 67
+  completed_plans: 9
+  percent: 75
 ---
 
 # Session State
@@ -24,19 +24,17 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 16 — Offline Decode Execution
+**Current focus:** Prepare and plan `Phase 17: Decode Output and Workflow Reporting`
 
 ## Current Position
 
-Phase: 16 (Offline Decode Execution) — EXECUTING
-Plan: 1 of 3
-Current Phase: 16
-Current Phase Name: Offline Decode Execution
-Current Plan: 1
+Current Phase: 17
+Current Phase Name: `Decode Output and Workflow Reporting`
+Current Plan: -
 Total Plans in Milestone: 9
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Executing Phase 16
-Last activity: 2026-04-21 -- Phase 16 execution started
+Status: Phase 16 complete; ready for Phase 17
+Last activity: 2026-04-21 -- Phase 16 completed and ready to start Phase 17
 
 ## Accumulated Context
 
@@ -85,12 +83,12 @@ Last activity: 2026-04-21 -- Phase 16 execution started
 
 Last session: 2026-04-14T07:58:43Z
 
-Stopped At: Phase 15 completed; awaiting Phase 16 discussion/planning
+Stopped At: Phase 16 completed; awaiting Phase 17 discussion/planning
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Run `/gsd-discuss-phase 16` to capture execution/input-contract decisions before planning.
-- Or run `/gsd-plan-phase 16` to start Phase 16 planning directly.
-- Preserve the shipped `v1.0`, `v1.1`, and the completed Phases 14-15 decode validation baseline while extending into execution.
+- Run `/gsd-discuss-phase 17` to decide how annotation/report output should look before planning.
+- Or run `/gsd-plan-phase 17` to start Phase 17 planning directly.
+- Preserve the shipped `v1.0`, `v1.1`, and the completed Phases 14-16 decode execution baseline while finalizing reporting.

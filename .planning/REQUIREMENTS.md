@@ -18,8 +18,8 @@
 
 ### Offline Decode Execution
 
-- [ ] **DEC-05**: User can run DSView protocol decoders against previously captured logic data from the CLI.
-- [ ] **DEC-07**: User can execute stacked decoders where upstream decoder output feeds downstream decoder input.
+- [x] **DEC-05**: User can run DSView protocol decoders against previously captured logic data from the CLI.
+- [x] **DEC-07**: User can execute stacked decoders where upstream decoder output feeds downstream decoder input.
 
 ### Output and Reporting
 
@@ -54,8 +54,8 @@
 | DEC-02 | Phase 14 | Complete |
 | DEC-03 | Phase 15 | Complete |
 | DEC-04 | Phase 15 | Complete |
-| DEC-05 | Phase 16 | Planned |
-| DEC-07 | Phase 16 | Planned |
+| DEC-05 | Phase 16 | Complete |
+| DEC-07 | Phase 16 | Complete |
 | DEC-06 | Phase 17 | Planned |
 | PIPE-01 | Phase 17 | Planned |
 
@@ -66,4 +66,4 @@
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-21 after completing Phase 15*
+*Last updated: 2026-04-21 after completing Phase 16*
