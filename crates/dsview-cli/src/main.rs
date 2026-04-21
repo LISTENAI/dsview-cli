@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -402,6 +402,19 @@ pub(crate) struct ErrorResponse {
     pub(crate) cleanup: Option<CaptureCleanupResponse>,
 }
 
+#[derive(Serialize, Debug, PartialEq, Eq)]
+struct DecodeFailureErrorResponse {
+    code: &'static str,
+    message: String,
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+struct DecodeRunFailureResponse {
+    #[serde(flatten)]
+    report: DecodeFailureReport,
+    error: DecodeFailureErrorResponse,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
@@ -422,7 +435,9 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(FailedCommand { format, error }) => {
-            render_error(format, &error);
+            if let Some(error) = error {
+                render_error(format, &error);
+            }
             ExitCode::from(1)
         }
     }
@@ -531,16 +546,18 @@ fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
     let result = match core_run_offline_decode(&validated, &input, discovery.runtime()) {
         Ok(result) => result,
         Err(error) => {
-            let _failure_report: DecodeFailureReport = build_decode_failure_report_response(
+            let classified = classify_decode_run_error(&error);
+            let failure_report: DecodeFailureReport = build_decode_failure_report_response(
                 validated.decoder.descriptor.id.clone(),
                 validated.stack.len(),
                 Some(sample_count),
                 &error,
             );
-            return Err(command_error(
+            render_decode_run_failure(
                 args.decode.format,
-                classify_decode_run_error(&error),
-            ));
+                &build_decode_run_failure_response(failure_report, &classified),
+            );
+            return Err(rendered_command_failure(args.decode.format));
         }
     };
     let response: DecodeReport = build_decode_report_response(
@@ -573,17 +590,18 @@ fn run_decode_run_from_fixture(
             let result = match core_run_offline_decode(&validated, &input, &runtime) {
                 Ok(result) => result,
                 Err(error) => {
-                    let _failure_report: DecodeFailureReport =
-                        build_decode_failure_report_response(
-                            validated.decoder.descriptor.id.clone(),
-                            validated.stack.len(),
-                            Some(sample_count),
-                            &error,
-                        );
-                    return Err(command_error(
+                    let classified = classify_decode_run_error(&error);
+                    let failure_report: DecodeFailureReport = build_decode_failure_report_response(
+                        validated.decoder.descriptor.id.clone(),
+                        validated.stack.len(),
+                        Some(sample_count),
+                        &error,
+                    );
+                    render_decode_run_failure(
                         args.decode.format,
-                        classify_decode_run_error(&error),
-                    ));
+                        &build_decode_run_failure_response(failure_report, &classified),
+                    );
+                    return Err(rendered_command_failure(args.decode.format));
                 }
             };
             let response: DecodeReport = build_decode_report_response(
@@ -1074,7 +1092,7 @@ fn validation_decode_fixture_registry() -> Vec<dsview_core::DecoderDescriptor> {
 
 struct FailedCommand {
     format: OutputFormat,
-    error: ErrorResponse,
+    error: Option<ErrorResponse>,
 }
 
 fn run_list(args: ListArgs) -> Result<(), FailedCommand> {
@@ -1853,7 +1871,14 @@ fn classify_decode_run_error(error: &OfflineDecodeRunError) -> ErrorResponse {
             source,
             ..
         } => ErrorResponse {
-            code: "decode_run_failed",
+            code: match *operation {
+                "create session" | "set samplerate" | "build linear stack" | "start session" => {
+                    "decode_session_start_failed"
+                }
+                "send logic chunk" => "decode_session_send_failed",
+                "end session" => "decode_session_end_failed",
+                _ => "decode_runtime_failed",
+            },
             message: format!("offline decode failed during {operation}: {source}"),
             detail: Some(
                 "Execution stays binary in Phase 16; check the validated config, raw input artifact, and decoder runtime."
@@ -1863,6 +1888,17 @@ fn classify_decode_run_error(error: &OfflineDecodeRunError) -> ErrorResponse {
             terminal_event: None,
             cleanup: None,
         },
+    }
+}
+
+fn classify_decode_output_write_error(path: &Path, error: &std::io::Error) -> ErrorResponse {
+    ErrorResponse {
+        code: "decode_output_write_failed",
+        message: format!("failed to write decode report `{}`", path.display()),
+        detail: Some(error.to_string()),
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
     }
 }
 
@@ -2644,7 +2680,17 @@ fn capture_cleanup_response(cleanup: &CaptureCleanup) -> CaptureCleanupResponse 
 }
 
 fn command_error(format: OutputFormat, error: ErrorResponse) -> FailedCommand {
-    FailedCommand { format, error }
+    FailedCommand {
+        format,
+        error: Some(error),
+    }
+}
+
+fn rendered_command_failure(format: OutputFormat) -> FailedCommand {
+    FailedCommand {
+        format,
+        error: None,
+    }
 }
 
 fn render_device_list_success(format: OutputFormat, response: &DeviceListResponse) {
@@ -2729,6 +2775,30 @@ fn render_decode_run_success(format: OutputFormat, response: &DecodeReport) {
     }
 }
 
+fn build_decode_run_failure_response(
+    report: DecodeFailureReport,
+    error: &ErrorResponse,
+) -> DecodeRunFailureResponse {
+    DecodeRunFailureResponse {
+        report,
+        error: DecodeFailureErrorResponse {
+            code: error.code,
+            message: error.message.clone(),
+        },
+    }
+}
+
+fn render_decode_run_failure(format: OutputFormat, response: &DecodeRunFailureResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            println!("{}", decode_run_failure_text(response));
+        }
+    }
+}
+
 fn render_device_options_success(format: OutputFormat, response: &DeviceOptionsResponse) {
     match format {
         OutputFormat::Json => {
@@ -2785,6 +2855,26 @@ pub(crate) fn capture_success_text(response: &CaptureResponse) -> String {
     lines.join("\n")
 }
 
+fn decode_run_failure_text(response: &DecodeRunFailureResponse) -> String {
+    let mut lines = vec![
+        "decode run failed".to_string(),
+        format!("error code: {}", response.error.code),
+        format!("error: {}", response.error.message),
+        format!("root decoder: {}", response.report.run.root_decoder_id),
+        format!("stack depth: {}", response.report.run.stack_depth),
+    ];
+    if let Some(sample_count) = response.report.run.sample_count {
+        lines.push(format!("sample count: {sample_count}"));
+    }
+    if let Some(diagnostics) = response.report.diagnostics.as_ref() {
+        lines.push(format!(
+            "partial event count: {}",
+            diagnostics.partial_event_count
+        ));
+    }
+    lines.join("\n")
+}
+
 fn render_error(format: OutputFormat, error: &ErrorResponse) {
     match format {
         OutputFormat::Json => {
@@ -2803,8 +2893,9 @@ mod tests {
     use dsview_cli::capture_device_options::resolve_capture_device_option_request;
     use dsview_core::{
         AcquisitionSummary, AcquisitionTerminalEvent, CaptureConfigError, ChannelModeGroupSnapshot,
-        ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DeviceIdentitySnapshot,
-        DeviceOptionValidationCapabilities, EnumOptionSnapshot,
+        ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DecodeRunStatus,
+        DeviceIdentitySnapshot, DeviceOptionValidationCapabilities, EnumOptionSnapshot,
+        OfflineDecodeDiagnostics, OfflineDecodeRunError,
         OperationModeValidationCapabilities, SelectionHandle, ThresholdCapabilitySnapshot,
     };
 
@@ -2954,6 +3045,72 @@ mod tests {
         });
         assert_eq!(error.code, "capture_timeout");
         assert_eq!(error.terminal_event, Some("none"));
+    }
+
+    #[test]
+    fn decode_session_send_failures_use_stable_error_code() {
+        let error = classify_decode_run_error(&OfflineDecodeRunError::Runtime {
+            operation: "send logic chunk",
+            source: DecodeRuntimeError::InvalidArgument("fixture send failure".to_string()),
+            diagnostics: OfflineDecodeDiagnostics::default(),
+        });
+
+        assert_eq!(error.code, "decode_session_send_failed");
+        assert!(error.message.contains("send logic chunk"));
+    }
+
+    #[test]
+    fn decode_session_end_failures_use_stable_error_code() {
+        let error = classify_decode_run_error(&OfflineDecodeRunError::Runtime {
+            operation: "end session",
+            source: DecodeRuntimeError::InvalidArgument("fixture end failure".to_string()),
+            diagnostics: OfflineDecodeDiagnostics::default(),
+        });
+
+        assert_eq!(error.code, "decode_session_end_failed");
+        assert!(error.message.contains("end session"));
+    }
+
+    #[test]
+    fn decode_output_write_failures_use_stable_error_code() {
+        let error = classify_decode_output_write_error(
+            Path::new("/tmp/decode-report.json"),
+            &std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied"),
+        );
+
+        assert_eq!(error.code, "decode_output_write_failed");
+        assert!(error.message.contains("decode-report.json"));
+    }
+
+    #[test]
+    fn decode_failure_report_payload_keeps_failure_status_and_partial_events() {
+        let runtime_error = OfflineDecodeRunError::Runtime {
+            operation: "send logic chunk",
+            source: DecodeRuntimeError::InvalidArgument("fixture send failure".to_string()),
+            diagnostics: OfflineDecodeDiagnostics::default(),
+        };
+        let classified = classify_decode_run_error(&runtime_error);
+        let report = build_decode_failure_report_response(
+            "fixture:i2c",
+            1,
+            Some(4),
+            &runtime_error,
+        );
+        let response = build_decode_run_failure_response(report, &classified);
+        let value = serde_json::to_value(&response).expect("failure response should serialize");
+
+        assert_eq!(response.report.run.status, DecodeRunStatus::Failure);
+        assert_eq!(classified.code, "decode_session_send_failed");
+        assert_eq!(value["run"]["status"], "failure");
+        assert_eq!(value["error"]["code"], "decode_session_send_failed");
+        assert!(value.get("partial_events").is_none());
+        assert_eq!(value["diagnostics"]["partial_event_count"], 0);
+        let degraded_state = ["partial", "success"].join("_");
+        assert!(
+            !serde_json::to_string(&value)
+                .expect("serialized failure report should be valid json")
+                .contains(&degraded_state)
+        );
     }
 
     #[test]
