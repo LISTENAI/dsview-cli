@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 pub mod capture_device_options;
 pub mod device_options;
 
@@ -50,6 +52,17 @@ pub struct DecodeValidateResponse {
     pub root_decoder_id: String,
     pub stack_depth: usize,
     pub bound_channel_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeRunResponse {
+    pub ok: bool,
+    pub config_version: u32,
+    pub root_decoder_id: String,
+    pub stack_depth: usize,
+    pub sample_count: u64,
+    pub annotation_count: usize,
+    pub annotation_decoder_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -214,6 +227,30 @@ pub fn build_decode_validate_response(
     }
 }
 
+pub fn build_decode_run_response(
+    config_version: u32,
+    root_decoder_id: impl Into<String>,
+    stack_depth: usize,
+    sample_count: u64,
+    annotation_count: usize,
+    annotation_decoder_ids: &[String],
+) -> DecodeRunResponse {
+    DecodeRunResponse {
+        ok: true,
+        config_version,
+        root_decoder_id: root_decoder_id.into(),
+        stack_depth,
+        sample_count,
+        annotation_count,
+        annotation_decoder_ids: annotation_decoder_ids
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+    }
+}
+
 pub fn render_decode_list_text(response: &DecodeListResponse) -> String {
     response
         .decoders
@@ -340,6 +377,22 @@ pub fn render_decode_validate_text(response: &DecodeValidateResponse) -> String 
         format!("config version: {}", response.config_version),
         format!("stack depth: {}", response.stack_depth),
         format!("bound channels: {}", join_ids(&response.bound_channel_ids)),
+    ]
+    .join("\n")
+}
+
+pub fn render_decode_run_text(response: &DecodeRunResponse) -> String {
+    [
+        "decode run succeeded".to_string(),
+        format!("root decoder: {}", response.root_decoder_id),
+        format!("config version: {}", response.config_version),
+        format!("stack depth: {}", response.stack_depth),
+        format!("sample count: {}", response.sample_count),
+        format!("annotation count: {}", response.annotation_count),
+        format!(
+            "annotation decoders: {}",
+            join_ids(&response.annotation_decoder_ids)
+        ),
     ]
     .join("\n")
 }

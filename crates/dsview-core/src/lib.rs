@@ -1679,6 +1679,10 @@ impl DecodeDiscovery {
         &self.paths
     }
 
+    pub fn runtime(&self) -> &DecodeRuntimeBridge {
+        &self.runtime
+    }
+
     pub fn decode_list(&self) -> Result<Vec<DecoderDescriptor>, DecodeBringUpError> {
         let decoders = self
             .runtime

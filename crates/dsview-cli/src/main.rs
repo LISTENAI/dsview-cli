@@ -6,23 +6,23 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
-    DecodeInspectResponse, DecodeListResponse, DecodeValidateResponse,
-    build_decode_inspect_response, build_decode_list_response, build_decode_validate_response,
-    build_device_options_response,
+    DecodeInspectResponse, DecodeListResponse, DecodeRunResponse, DecodeValidateResponse,
+    build_decode_inspect_response, build_decode_list_response, build_decode_run_response,
+    build_decode_validate_response, build_device_options_response,
     capture_device_options::{
         resolve_capture_device_option_request, CaptureDeviceOptionParseError,
     },
-    render_decode_inspect_text, render_decode_list_text, render_decode_validate_text,
-    render_device_options_text,
-    DeviceOptionsResponse,
+    render_decode_inspect_text, render_decode_list_text, render_decode_run_text,
+    render_decode_validate_text, render_device_options_text, DeviceOptionsResponse,
 };
 use dsview_core::{
     DecodeBringUpError, DecodeConfigLoadError, DecodeConfigParseError,
-    DecodeConfigValidationError,
+    DecodeConfigValidationError, DecodeDiscovery,
     DecoderRuntimeError, DecoderRuntimeErrorCode,
     describe_native_error, resolve_capture_artifact_paths,
     decode_inspect as core_decode_inspect, decode_list as core_decode_list,
-    parse_decode_config_slice, validate_decode_config,
+    parse_decode_config_slice, run_offline_decode as core_run_offline_decode,
+    validate_decode_config,
     validate_decode_config_file as core_validate_decode_config_file,
     validated_capture_config_from_device_options, AcquisitionSummary, AcquisitionTerminalEvent,
     BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion, CaptureConfigError,
@@ -31,9 +31,10 @@ use dsview_core::{
     CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionApplyFailure,
     DeviceOptionValidationCapabilities, DeviceOptionValidationError, DeviceOptionsSnapshot,
     Discovery, EnumOptionSnapshot, MetadataAcquisitionInfo, MetadataArtifactInfo,
-    MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OperationModeValidationCapabilities,
+    MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OfflineDecodeInput,
+    OfflineDecodeInputError, OfflineDecodeRunError, OperationModeValidationCapabilities,
     RuntimeError, SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
-    ValidatedCaptureConfig,
+    ValidatedCaptureConfig, ValidatedDecodeConfig,
 };
 use serde::Serialize;
 
@@ -87,6 +88,7 @@ enum DecodeCommand {
     List(DecodeListArgs),
     Inspect(DecodeInspectArgs),
     Validate(DecodeValidateArgs),
+    Run(DecodeRunArgs),
 }
 
 #[derive(Args, Debug)]
@@ -136,6 +138,24 @@ struct DecodeValidateArgs {
         help = "JSON decode config path to validate without running a decode session"
     )]
     config: PathBuf,
+}
+
+#[derive(Args, Debug)]
+struct DecodeRunArgs {
+    #[command(flatten)]
+    decode: SharedDecodeArgs,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "JSON decode config path to validate before running the offline decode session"
+    )]
+    config: PathBuf,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "JSON offline raw logic artifact containing samplerate, format, and sample bytes"
+    )]
+    input: PathBuf,
 }
 
 #[derive(Args, Debug)]
@@ -387,6 +407,7 @@ fn main() -> ExitCode {
             DecodeCommand::List(args) => run_decode_list(args),
             DecodeCommand::Inspect(args) => run_decode_inspect(args),
             DecodeCommand::Validate(args) => run_decode_validate(args),
+            DecodeCommand::Run(args) => run_decode_run(args),
         },
         Command::Capture(args) => run_capture(args),
     };
@@ -477,6 +498,138 @@ fn run_decode_validate(args: DecodeValidateArgs) -> Result<(), FailedCommand> {
     );
     render_decode_validate_success(args.decode.format, &response);
     Ok(())
+}
+
+fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
+    let discovery = DecodeDiscovery::connect_auto(
+        args.decode.decode_runtime.as_deref(),
+        args.decode.decoder_dir.as_deref(),
+    )
+    .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
+    let registry = discovery
+        .decode_list()
+        .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
+    let validated = load_decode_run_config(&args.config, &registry, args.decode.format)?;
+    let input = load_offline_decode_input(&args.input, args.decode.format)?;
+    let result = core_run_offline_decode(&validated, &input, discovery.runtime())
+        .map_err(|error| command_error(args.decode.format, classify_decode_run_error(&error)))?;
+    let sample_count = input
+        .sample_count()
+        .map_err(|error| command_error(args.decode.format, classify_decode_input_error(&error)))?;
+    let annotation_decoder_ids = result
+        .annotations()
+        .iter()
+        .map(|annotation| annotation.decoder_id.clone())
+        .collect::<Vec<_>>();
+    let response = build_decode_run_response(
+        validated.version,
+        validated.decoder.descriptor.id.clone(),
+        validated.stack.len(),
+        sample_count,
+        result.annotations().len(),
+        &annotation_decoder_ids,
+    );
+    render_decode_run_success(args.decode.format, &response);
+    Ok(())
+}
+
+fn load_decode_run_config(
+    config_path: &PathBuf,
+    registry: &[dsview_core::DecoderDescriptor],
+    format: OutputFormat,
+) -> Result<ValidatedDecodeConfig, FailedCommand> {
+    let config_bytes = fs::read(config_path).map_err(|error| {
+        let response = if error.kind() == std::io::ErrorKind::NotFound {
+            ErrorResponse {
+                code: "decode_config_file_missing",
+                message: format!("decode config file `{}` was not found", config_path.display()),
+                detail: Some(
+                    "Pass `--config <PATH>` pointing at a readable JSON decode config file."
+                        .to_string(),
+                ),
+                native_error: None,
+                terminal_event: None,
+                cleanup: None,
+            }
+        } else {
+            ErrorResponse {
+                code: "decode_config_file_unreadable",
+                message: format!(
+                    "decode config file `{}` could not be read: {error}",
+                    config_path.display()
+                ),
+                detail: Some(
+                    "Check filesystem permissions and that the config path points at a readable JSON file."
+                        .to_string(),
+                ),
+                native_error: None,
+                terminal_event: None,
+                cleanup: None,
+            }
+        };
+        command_error(format, response)
+    })?;
+    let config = parse_decode_config_slice(&config_bytes)
+        .map_err(|error| command_error(format, classify_decode_config_parse_error(&error)))?;
+    validate_decode_config(&config, registry)
+        .map_err(|error| command_error(format, classify_decode_config_validation_error(&error)))
+}
+
+fn load_offline_decode_input(
+    input_path: &PathBuf,
+    format: OutputFormat,
+) -> Result<OfflineDecodeInput, FailedCommand> {
+    let input_bytes = fs::read(input_path).map_err(|error| {
+        let response = if error.kind() == std::io::ErrorKind::NotFound {
+            ErrorResponse {
+                code: "decode_input_file_missing",
+                message: format!("decode input file `{}` was not found", input_path.display()),
+                detail: Some(
+                    "Pass `--input <PATH>` pointing at a readable JSON offline decode input artifact."
+                        .to_string(),
+                ),
+                native_error: None,
+                terminal_event: None,
+                cleanup: None,
+            }
+        } else {
+            ErrorResponse {
+                code: "decode_input_file_unreadable",
+                message: format!(
+                    "decode input file `{}` could not be read: {error}",
+                    input_path.display()
+                ),
+                detail: Some(
+                    "Check filesystem permissions and that the input path points at a readable JSON artifact."
+                        .to_string(),
+                ),
+                native_error: None,
+                terminal_event: None,
+                cleanup: None,
+            }
+        };
+        command_error(format, response)
+    })?;
+    let input = serde_json::from_slice::<OfflineDecodeInput>(&input_bytes).map_err(|error| {
+        command_error(
+            format,
+            ErrorResponse {
+                code: "decode_input_parse_failed",
+                message: format!("failed to parse offline decode input JSON: {error}"),
+                detail: Some(
+                    "Provide a JSON artifact matching the offline decode input contract."
+                        .to_string(),
+                ),
+                native_error: None,
+                terminal_event: None,
+                cleanup: None,
+            },
+        )
+    })?;
+    input
+        .validate_basic_shape()
+        .map_err(|error| command_error(format, classify_decode_input_error(&error)))?;
+    Ok(input)
 }
 
 #[cfg(debug_assertions)]
@@ -1494,6 +1647,41 @@ fn classify_decode_validate_error(error: &DecodeConfigLoadError) -> ErrorRespons
     }
 }
 
+fn classify_decode_input_error(error: &OfflineDecodeInputError) -> ErrorResponse {
+    ErrorResponse {
+        code: "decode_input_invalid",
+        message: error.to_string(),
+        detail: Some(
+            "Use the offline raw logic artifact contract with samplerate, format, sample bytes, and aligned packet lengths."
+                .to_string(),
+        ),
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    }
+}
+
+fn classify_decode_run_error(error: &OfflineDecodeRunError) -> ErrorResponse {
+    match error {
+        OfflineDecodeRunError::InvalidInput(error) => classify_decode_input_error(error),
+        OfflineDecodeRunError::Runtime {
+            operation,
+            source,
+            ..
+        } => ErrorResponse {
+            code: "decode_run_failed",
+            message: format!("offline decode failed during {operation}: {source}"),
+            detail: Some(
+                "Execution stays binary in Phase 16; check the validated config, raw input artifact, and decoder runtime."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+    }
+}
+
 fn device_record(device: &SupportedDevice) -> DeviceRecord {
     DeviceRecord {
         handle: device.selection_handle.raw(),
@@ -2342,6 +2530,17 @@ fn render_decode_validate_success(format: OutputFormat, response: &DecodeValidat
         }
         OutputFormat::Text => {
             println!("{}", render_decode_validate_text(response));
+        }
+    }
+}
+
+fn render_decode_run_success(format: OutputFormat, response: &DecodeRunResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            println!("{}", render_decode_run_text(response));
         }
     }
 }
