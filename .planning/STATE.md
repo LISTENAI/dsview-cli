@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: DSView protocol decode CLI foundation
 current_phase: 14
-current_phase_name: decode runtime boundary and decoder registry
+current_phase_name: `Decode Runtime Boundary and Decoder Registry`
 current_plan: -
 status: ready
 stopped_at: Milestone initialized; Phase 14 ready for discuss/plan
-last_updated: "2026-04-14T07:58:43Z"
-last_activity: 2026-04-14 -- milestone v1.2 initialized and Phase 14 is ready for planning
+last_updated: "2026-04-14T08:59:31.246Z"
+last_activity: 2026-04-14 -- Phase 14 planning complete
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
+  total_plans: 3
   completed_plans: 0
   percent: 0
 ---
@@ -31,10 +31,10 @@ See: `.planning/PROJECT.md` (updated 2026-04-14)
 Current Phase: 14
 Current Phase Name: `Decode Runtime Boundary and Decoder Registry`
 Current Plan: -
-Total Plans in Milestone: 0
+Total Plans in Milestone: 3
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Milestone initialized and ready for phase discussion/planning
-Last activity: 2026-04-14 -- defined `v1.2` milestone, requirements, roadmap, and next phase
+Status: Ready to execute
+Last activity: 2026-04-14 -- Phase 14 planning complete
 
 ## Accumulated Context
 
@@ -89,6 +89,6 @@ Resume File: None
 
 ## Immediate Next Steps
 
-- Run `/gsd-discuss-phase 14` to clarify the decode runtime boundary approach.
-- Or run `/gsd-plan-phase 14` to start planning directly.
+- Run `/gsd-execute-phase 14` to begin executing the planned decode runtime boundary work.
+- Review `.planning/phases/14-decode-runtime-boundary-and-decoder-registry/*-PLAN.md` before execution if you want to inspect the wave layout.
 - Preserve the shipped `v1.0` and `v1.1` workflows while introducing decode support as a separate layer.
