@@ -1,6 +1,11 @@
 pub mod capture_device_options;
 pub mod device_options;
 
+use dsview_core::{
+    DecoderAnnotationDescriptor, DecoderAnnotationRowDescriptor, DecoderChannelDescriptor,
+    DecoderDescriptor, DecoderInputDescriptor, DecoderOptionDescriptor,
+    DecoderOutputDescriptor,
+};
 pub use capture_device_options::{
     CaptureTokenGuide, CaptureTokenLookupMaps, CliChannelModeOption, CliTokenOption,
     build_capture_token_guide, token_lookup_maps,
@@ -9,6 +14,380 @@ pub use device_options::{
     DeviceIdentityResponse, DeviceOptionsResponse, build_device_options_response,
     render_device_options_text,
 };
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeListResponse {
+    pub decoders: Vec<DecodeListEntryResponse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeListEntryResponse {
+    pub id: String,
+    pub name: String,
+    pub longname: String,
+    pub description: String,
+    pub license: String,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub tags: Vec<String>,
+    pub required_channel_ids: Vec<String>,
+    pub optional_channel_ids: Vec<String>,
+    pub option_ids: Vec<String>,
+    pub annotation_ids: Vec<String>,
+    pub annotation_row_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeInspectResponse {
+    pub decoder: DecodeInspectDecoderResponse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeInspectDecoderResponse {
+    pub id: String,
+    pub name: String,
+    pub longname: String,
+    pub description: String,
+    pub license: String,
+    pub inputs: Vec<DecodeIoResponse>,
+    pub outputs: Vec<DecodeIoResponse>,
+    pub tags: Vec<String>,
+    pub required_channels: Vec<DecodeChannelResponse>,
+    pub optional_channels: Vec<DecodeChannelResponse>,
+    pub options: Vec<DecodeOptionResponse>,
+    pub annotations: Vec<DecodeAnnotationResponse>,
+    pub annotation_rows: Vec<DecodeAnnotationRowResponse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeIoResponse {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeChannelResponse {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub order: i32,
+    pub channel_type: i32,
+    pub idn: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeOptionResponse {
+    pub id: String,
+    pub idn: Option<String>,
+    pub description: Option<String>,
+    pub default_value: Option<String>,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeAnnotationResponse {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub annotation_type: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeAnnotationRowResponse {
+    pub id: String,
+    pub description: Option<String>,
+    pub annotation_classes: Vec<usize>,
+}
+
+pub fn build_decode_list_response(decoders: &[DecoderDescriptor]) -> DecodeListResponse {
+    DecodeListResponse {
+        decoders: decoders
+            .iter()
+            .map(|decoder| DecodeListEntryResponse {
+                id: decoder.id.clone(),
+                name: decoder.name.clone(),
+                longname: decoder.longname.clone(),
+                description: decoder.description.clone(),
+                license: decoder.license.clone(),
+                inputs: decoder.inputs.iter().map(|input| input.id.clone()).collect(),
+                outputs: decoder
+                    .outputs
+                    .iter()
+                    .map(|output| output.id.clone())
+                    .collect(),
+                tags: decoder.tags.clone(),
+                required_channel_ids: decoder
+                    .required_channels
+                    .iter()
+                    .map(|channel| channel.id.clone())
+                    .collect(),
+                optional_channel_ids: decoder
+                    .optional_channels
+                    .iter()
+                    .map(|channel| channel.id.clone())
+                    .collect(),
+                option_ids: decoder.options.iter().map(|option| option.id.clone()).collect(),
+                annotation_ids: decoder
+                    .annotations
+                    .iter()
+                    .map(|annotation| annotation.id.clone())
+                    .collect(),
+                annotation_row_ids: decoder
+                    .annotation_rows
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+pub fn build_decode_inspect_response(decoder: &DecoderDescriptor) -> DecodeInspectResponse {
+    DecodeInspectResponse {
+        decoder: DecodeInspectDecoderResponse {
+            id: decoder.id.clone(),
+            name: decoder.name.clone(),
+            longname: decoder.longname.clone(),
+            description: decoder.description.clone(),
+            license: decoder.license.clone(),
+            inputs: decoder
+                .inputs
+                .iter()
+                .map(decode_input_response)
+                .collect(),
+            outputs: decoder
+                .outputs
+                .iter()
+                .map(decode_output_response)
+                .collect(),
+            tags: decoder.tags.clone(),
+            required_channels: decoder
+                .required_channels
+                .iter()
+                .map(decode_channel_response)
+                .collect(),
+            optional_channels: decoder
+                .optional_channels
+                .iter()
+                .map(decode_channel_response)
+                .collect(),
+            options: decoder
+                .options
+                .iter()
+                .map(decode_option_response)
+                .collect(),
+            annotations: decoder
+                .annotations
+                .iter()
+                .map(decode_annotation_response)
+                .collect(),
+            annotation_rows: decoder
+                .annotation_rows
+                .iter()
+                .map(decode_annotation_row_response)
+                .collect(),
+        },
+    }
+}
+
+pub fn render_decode_list_text(response: &DecodeListResponse) -> String {
+    response
+        .decoders
+        .iter()
+        .map(|decoder| {
+            let mut lines = vec![format!(
+                "{}\t{}\t{}",
+                decoder.id, decoder.name, decoder.longname
+            )];
+            lines.push(format!(
+                "  required: {}",
+                join_ids(&decoder.required_channel_ids)
+            ));
+            lines.push(format!(
+                "  optional: {}",
+                join_ids(&decoder.optional_channel_ids)
+            ));
+            lines.push(format!("  inputs: {}", join_ids(&decoder.inputs)));
+            lines.push(format!("  outputs: {}", join_ids(&decoder.outputs)));
+            if !decoder.tags.is_empty() {
+                lines.push(format!("  tags: {}", join_ids(&decoder.tags)));
+            }
+            lines.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+pub fn render_decode_inspect_text(response: &DecodeInspectResponse) -> String {
+    let decoder = &response.decoder;
+    let mut lines = vec![
+        format!("decoder {}", decoder.id),
+        format!("name: {}", decoder.name),
+        format!("long name: {}", decoder.longname),
+        format!("description: {}", decoder.description),
+        format!("license: {}", decoder.license),
+        format!(
+            "inputs: {}",
+            join_ids(&decoder.inputs.iter().map(|input| input.id.clone()).collect::<Vec<_>>())
+        ),
+        format!(
+            "outputs: {}",
+            join_ids(
+                &decoder
+                    .outputs
+                    .iter()
+                    .map(|output| output.id.clone())
+                    .collect::<Vec<_>>()
+            )
+        ),
+    ];
+    if !decoder.tags.is_empty() {
+        lines.push(format!("tags: {}", join_ids(&decoder.tags)));
+    }
+
+    lines.push("required channels:".to_string());
+    lines.extend(render_channel_lines(&decoder.required_channels));
+
+    lines.push("optional channels:".to_string());
+    lines.extend(render_channel_lines(&decoder.optional_channels));
+
+    lines.push("options:".to_string());
+    if decoder.options.is_empty() {
+        lines.push("  - none".to_string());
+    } else {
+        lines.extend(decoder.options.iter().map(|option| {
+            let values = if option.values.is_empty() {
+                "values: none".to_string()
+            } else {
+                format!("values: {}", join_ids(&option.values))
+            };
+            format!(
+                "  - {} ({}) default={} {}",
+                option.id,
+                option
+                    .description
+                    .as_deref()
+                    .unwrap_or("no description"),
+                option.default_value.as_deref().unwrap_or("none"),
+                values
+            )
+        }));
+    }
+
+    lines.push("annotations:".to_string());
+    if decoder.annotations.is_empty() {
+        lines.push("  - none".to_string());
+    } else {
+        lines.extend(decoder.annotations.iter().map(|annotation| {
+            format!(
+                "  - {} label={} description={}",
+                annotation.id,
+                annotation.label.as_deref().unwrap_or("none"),
+                annotation.description.as_deref().unwrap_or("none")
+            )
+        }));
+    }
+
+    lines.push("annotation rows:".to_string());
+    if decoder.annotation_rows.is_empty() {
+        lines.push("  - none".to_string());
+    } else {
+        lines.extend(decoder.annotation_rows.iter().map(|row| {
+            format!(
+                "  - {} classes={} description={}",
+                row.id,
+                row.annotation_classes
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                row.description.as_deref().unwrap_or("none")
+            )
+        }));
+    }
+
+    lines.join("\n")
+}
+
+fn decode_input_response(input: &DecoderInputDescriptor) -> DecodeIoResponse {
+    DecodeIoResponse {
+        id: input.id.clone(),
+    }
+}
+
+fn decode_output_response(output: &DecoderOutputDescriptor) -> DecodeIoResponse {
+    DecodeIoResponse {
+        id: output.id.clone(),
+    }
+}
+
+fn decode_channel_response(channel: &DecoderChannelDescriptor) -> DecodeChannelResponse {
+    DecodeChannelResponse {
+        id: channel.id.clone(),
+        name: channel.name.clone(),
+        description: channel.description.clone(),
+        order: channel.order,
+        channel_type: channel.channel_type,
+        idn: channel.idn.clone(),
+    }
+}
+
+fn decode_option_response(option: &DecoderOptionDescriptor) -> DecodeOptionResponse {
+    DecodeOptionResponse {
+        id: option.id.clone(),
+        idn: option.idn.clone(),
+        description: option.description.clone(),
+        default_value: option.default_value.clone(),
+        values: option.values.clone(),
+    }
+}
+
+fn decode_annotation_response(annotation: &DecoderAnnotationDescriptor) -> DecodeAnnotationResponse {
+    DecodeAnnotationResponse {
+        id: annotation.id.clone(),
+        label: annotation.label.clone(),
+        description: annotation.description.clone(),
+        annotation_type: annotation.annotation_type,
+    }
+}
+
+fn decode_annotation_row_response(
+    row: &DecoderAnnotationRowDescriptor,
+) -> DecodeAnnotationRowResponse {
+    DecodeAnnotationRowResponse {
+        id: row.id.clone(),
+        description: row.description.clone(),
+        annotation_classes: row.annotation_classes.clone(),
+    }
+}
+
+fn render_channel_lines(channels: &[DecodeChannelResponse]) -> Vec<String> {
+    if channels.is_empty() {
+        return vec!["  - none".to_string()];
+    }
+
+    channels
+        .iter()
+        .map(|channel| {
+            format!(
+                "  - {} ({}) order={} type={} idn={}",
+                channel.id,
+                channel.name,
+                channel.order,
+                channel.channel_type,
+                channel.idn.as_deref().unwrap_or("none")
+            )
+        })
+        .collect()
+}
+
+fn join_ids(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values.join(", ")
+    }
+}
 
 #[cfg(test)]
 mod tests {

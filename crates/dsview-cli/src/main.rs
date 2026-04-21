@@ -6,14 +6,20 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
+    DecodeInspectResponse, DecodeListResponse, build_decode_inspect_response,
+    build_decode_list_response,
     build_device_options_response,
     capture_device_options::{
         resolve_capture_device_option_request, CaptureDeviceOptionParseError,
     },
-    render_device_options_text, DeviceOptionsResponse,
+    render_decode_inspect_text, render_decode_list_text, render_device_options_text,
+    DeviceOptionsResponse,
 };
 use dsview_core::{
+    DecodeBringUpError,
+    DecoderRuntimeError, DecoderRuntimeErrorCode,
     describe_native_error, resolve_capture_artifact_paths,
+    decode_inspect as core_decode_inspect, decode_list as core_decode_list,
     validated_capture_config_from_device_options, AcquisitionSummary, AcquisitionTerminalEvent,
     BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion, CaptureConfigError,
     CaptureConfigRequest, CaptureDeviceOptionFacts, CaptureExportError, CaptureRunError,
@@ -47,6 +53,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     Devices(DeviceArgs),
+    Decode(DecodeArgs),
     Capture(CaptureArgs),
 }
 
@@ -61,6 +68,55 @@ enum DeviceCommand {
     List(ListArgs),
     Open(OpenArgs),
     Options(OptionsArgs),
+}
+
+#[derive(Args, Debug)]
+struct DecodeArgs {
+    #[command(subcommand)]
+    command: DecodeCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum DecodeCommand {
+    List(DecodeListArgs),
+    Inspect(DecodeInspectArgs),
+}
+
+#[derive(Args, Debug)]
+struct SharedDecodeArgs {
+    #[arg(
+        long = "decode-runtime",
+        value_name = "PATH",
+        help = "Path to the decoder runtime shared library; bundled decoder runtime is used by default"
+    )]
+    decode_runtime: Option<PathBuf>,
+    #[arg(
+        long = "decoder-dir",
+        value_name = "PATH",
+        help = "Directory containing decoder scripts; bundled decoder scripts are used by default"
+    )]
+    decoder_dir: Option<PathBuf>,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = OutputFormat::Json,
+        help = "Output format: json is stable for automation, text is for direct shell use"
+    )]
+    format: OutputFormat,
+}
+
+#[derive(Args, Debug)]
+struct DecodeListArgs {
+    #[command(flatten)]
+    decode: SharedDecodeArgs,
+}
+
+#[derive(Args, Debug)]
+struct DecodeInspectArgs {
+    #[command(flatten)]
+    decode: SharedDecodeArgs,
+    #[arg(value_name = "DECODER_ID", help = "Canonical upstream decoder id from `decode list`")]
+    decoder_id: String,
 }
 
 #[derive(Args, Debug)]
@@ -308,6 +364,10 @@ fn main() -> ExitCode {
             DeviceCommand::Open(args) => run_open(args),
             DeviceCommand::Options(args) => run_options(args),
         },
+        Command::Decode(args) => match args.command {
+            DecodeCommand::List(args) => run_decode_list(args),
+            DecodeCommand::Inspect(args) => run_decode_inspect(args),
+        },
         Command::Capture(args) => run_capture(args),
     };
 
@@ -318,6 +378,29 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn run_decode_list(args: DecodeListArgs) -> Result<(), FailedCommand> {
+    let decoders = core_decode_list(
+        args.decode.decode_runtime.as_deref(),
+        args.decode.decoder_dir.as_deref(),
+    )
+    .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
+    let response = build_decode_list_response(&decoders);
+    render_decode_list_success(args.decode.format, &response);
+    Ok(())
+}
+
+fn run_decode_inspect(args: DecodeInspectArgs) -> Result<(), FailedCommand> {
+    let decoder = core_decode_inspect(
+        args.decode.decode_runtime.as_deref(),
+        args.decode.decoder_dir.as_deref(),
+        &args.decoder_id,
+    )
+    .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
+    let response = build_decode_inspect_response(&decoder);
+    render_decode_inspect_success(args.decode.format, &response);
+    Ok(())
 }
 
 struct FailedCommand {
@@ -788,6 +871,150 @@ fn run_options(args: OptionsArgs) -> Result<(), FailedCommand> {
 fn connect_runtime(args: &SharedRuntimeArgs) -> Result<Discovery, FailedCommand> {
     Discovery::connect_auto(args.resource_dir.as_deref())
         .map_err(|error| command_error(args.format, classify_error(&error)))
+}
+
+fn classify_decode_error(error: &DecodeBringUpError) -> ErrorResponse {
+    match error {
+        DecodeBringUpError::CurrentExecutableUnavailable { detail } => ErrorResponse {
+            code: "decode_current_executable_unavailable",
+            message: format!(
+                "could not determine the executable location used for decoder runtime discovery: {detail}"
+            ),
+            detail: Some(
+                "The CLI resolves bundled `decode-runtime/` and `decoders/` relative to the executable; rerun from a normal filesystem location or pass explicit decode paths."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeBringUpError::BundledRuntimeMissing {
+            path,
+            executable_dir,
+        } => ErrorResponse {
+            code: "decode_runtime_missing",
+            message: format!(
+                "decoder runtime `{}` was not found relative to executable directory `{}`",
+                path.display(),
+                executable_dir.display()
+            ),
+            detail: Some(
+                "Build or unpack the CLI with its sibling `decode-runtime/` directory, or pass `--decode-runtime <PATH>`."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeBringUpError::MissingDecoderDirectory { path } => ErrorResponse {
+            code: "decoder_scripts_missing",
+            message: format!("decoder scripts directory `{}` is missing", path.display()),
+            detail: Some(
+                "Provide `--decoder-dir <PATH>` pointing at a valid DSView decoder scripts directory."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeBringUpError::UnreadableDecoderDirectory { path } => ErrorResponse {
+            code: "decoder_scripts_unreadable",
+            message: format!("decoder scripts directory `{}` is not readable", path.display()),
+            detail: Some(
+                "Check filesystem permissions or provide `--decoder-dir <PATH>` to a readable decoder scripts directory."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeBringUpError::DecoderScriptsMissing { path } => ErrorResponse {
+            code: "decoder_metadata_missing",
+            message: format!(
+                "decoder scripts directory `{}` did not yield any decoder metadata",
+                path.display()
+            ),
+            detail: Some(
+                "Check that the directory contains DSView decoder scripts and that the decoder runtime can import them."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeBringUpError::UnknownDecoder { decoder_id } => ErrorResponse {
+            code: "decoder_not_found",
+            message: format!("decoder `{decoder_id}` was not found in the loaded registry"),
+            detail: Some(
+                "Run `decode list` to inspect the canonical upstream decoder ids before calling `decode inspect <decoder-id>`."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeBringUpError::Runtime(runtime) => classify_decode_runtime_error(runtime),
+    }
+}
+
+fn classify_decode_runtime_error(error: &DecoderRuntimeError) -> ErrorResponse {
+    match error {
+        DecoderRuntimeError::LibraryLoad { path, detail } => ErrorResponse {
+            code: "decode_runtime_load_failed",
+            message: format!("failed to load decoder runtime `{}`: {detail}", path.display()),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecoderRuntimeError::SymbolLoad { path, detail } => ErrorResponse {
+            code: "decode_runtime_symbol_load_failed",
+            message: format!(
+                "`{}` is missing required decoder runtime symbols: {detail}",
+                path.display()
+            ),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecoderRuntimeError::BridgeNotLoaded => ErrorResponse {
+            code: "decode_runtime_not_loaded",
+            message: "the decoder runtime bridge is not loaded".to_string(),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecoderRuntimeError::NativeCall {
+            operation,
+            code,
+            detail,
+        } => ErrorResponse {
+            code: match code {
+                DecoderRuntimeErrorCode::DecoderDirectory => "decoder_scripts_missing",
+                DecoderRuntimeErrorCode::Python => "decode_python_failed",
+                DecoderRuntimeErrorCode::DecoderLoad => "decoder_load_failed",
+                DecoderRuntimeErrorCode::UnknownDecoder => "decoder_not_found",
+                DecoderRuntimeErrorCode::OutOfMemory => "decode_out_of_memory",
+                DecoderRuntimeErrorCode::Upstream
+                | DecoderRuntimeErrorCode::Unknown(_) => "decode_runtime_failed",
+            },
+            message: format!("decoder runtime operation `{operation}` failed: {detail}"),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        other => ErrorResponse {
+            code: "decode_runtime_error",
+            message: other.to_string(),
+            detail: None,
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+    }
 }
 
 fn device_record(device: &SupportedDevice) -> DeviceRecord {
@@ -1605,6 +1832,28 @@ fn render_capture_success(format: OutputFormat, response: &CaptureResponse) {
         }
         OutputFormat::Text => {
             println!("{}", capture_success_text(response));
+        }
+    }
+}
+
+fn render_decode_list_success(format: OutputFormat, response: &DecodeListResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            println!("{}", render_decode_list_text(response));
+        }
+    }
+}
+
+fn render_decode_inspect_success(format: OutputFormat, response: &DecodeInspectResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            println!("{}", render_decode_inspect_text(response));
         }
     }
 }

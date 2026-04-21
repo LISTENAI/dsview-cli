@@ -25,11 +25,18 @@ pub use device_options::{
     LegacyThresholdMetadataSnapshot, RawOptionMetadataSnapshot, ThresholdCapabilitySnapshot,
 };
 pub use dsview_sys::{
-    runtime_library_name, source_runtime_library_path, AcquisitionSummary,
-    AcquisitionTerminalEvent, DeviceHandle, DeviceSummary, ExportErrorCode, NativeErrorCode,
+    decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
+    source_runtime_library_path, AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle,
+    DeviceSummary, DecodeRuntimeError, DecodeRuntimeErrorCode, ExportErrorCode, NativeErrorCode,
     RuntimeError, VcdExportFacts, VcdExportRequest,
 };
-use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
+pub use dsview_sys::{
+    DecodeRuntimeError as DecoderRuntimeError,
+    DecodeRuntimeErrorCode as DecoderRuntimeErrorCode,
+};
+use dsview_sys::{
+    AcquisitionPacketStatus, DecodeRuntimeBridge, RuntimeBridge,
+};
 use dsview_sys::{
     DecodeAnnotation as SysDecodeAnnotation, DecodeAnnotationRow as SysDecodeAnnotationRow,
     DecodeChannel as SysDecodeChannel, DecodeDecoder as SysDecodeDecoder,
@@ -47,6 +54,8 @@ const DSLOGIC_PLUS_FIRMWARE_FALLBACKS: &[&str] = &["DSLogic.fw"];
 const DSLOGIC_PLUS_BITSTREAMS: &[&str] = &["DSLogicPlus.bin", "DSLogicPlus-pgl12.bin"];
 const BUNDLED_RUNTIME_DIR: &str = "runtime";
 const BUNDLED_RESOURCE_DIR: &str = "resources";
+const BUNDLED_DECODE_RUNTIME_DIR: &str = "decode-runtime";
+const BUNDLED_DECODER_DIR: &str = "decoders";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionHandle(NonZeroU64);
@@ -269,6 +278,12 @@ pub struct RuntimeDiscoveryPaths {
     pub resource_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeDiscoveryPaths {
+    pub runtime_library: PathBuf,
+    pub decoder_dir: PathBuf,
+}
+
 impl RuntimeDiscoveryPaths {
     pub fn discover(resource_override: Option<impl AsRef<Path>>) -> Result<Self, BringUpError> {
         let executable =
@@ -316,6 +331,70 @@ impl RuntimeDiscoveryPaths {
         Err(BringUpError::BundledRuntimeMissing {
             path: bundled_runtime,
             executable_dir: executable_dir.to_path_buf(),
+        })
+    }
+}
+
+impl DecodeDiscoveryPaths {
+    pub fn discover(
+        runtime_override: Option<impl AsRef<Path>>,
+        decoder_dir_override: Option<impl AsRef<Path>>,
+    ) -> Result<Self, DecodeBringUpError> {
+        let executable =
+            env::current_exe().map_err(|error| DecodeBringUpError::CurrentExecutableUnavailable {
+                detail: error.to_string(),
+            })?;
+        let executable_dir =
+            executable
+                .parent()
+                .ok_or_else(|| DecodeBringUpError::CurrentExecutableUnavailable {
+                    detail: format!("path `{}` has no parent directory", executable.display()),
+                })?;
+        Self::from_executable_dir(executable_dir, runtime_override, decoder_dir_override)
+    }
+
+    pub fn from_executable_dir(
+        executable_dir: impl AsRef<Path>,
+        runtime_override: Option<impl AsRef<Path>>,
+        decoder_dir_override: Option<impl AsRef<Path>>,
+    ) -> Result<Self, DecodeBringUpError> {
+        let executable_dir = executable_dir.as_ref();
+        let runtime_override = runtime_override.map(|path| path.as_ref().to_path_buf());
+        let decoder_dir_override = decoder_dir_override.map(|path| path.as_ref().to_path_buf());
+
+        let bundled_runtime = executable_dir
+            .join(BUNDLED_DECODE_RUNTIME_DIR)
+            .join(decode_runtime_library_name());
+        let bundled_decoder_dir = executable_dir.join(BUNDLED_DECODER_DIR);
+
+        let runtime_library = if let Some(path) = runtime_override {
+            path
+        } else if bundled_runtime.is_file() {
+            bundled_runtime.clone()
+        } else if let Some(source_runtime) =
+            source_decode_runtime_library_path().filter(|path| path.is_file())
+        {
+            source_runtime.to_path_buf()
+        } else {
+            return Err(DecodeBringUpError::BundledRuntimeMissing {
+                path: bundled_runtime,
+                executable_dir: executable_dir.to_path_buf(),
+            });
+        };
+
+        let decoder_dir = if let Some(path) = decoder_dir_override {
+            path
+        } else if runtime_library == bundled_runtime {
+            bundled_decoder_dir
+        } else {
+            developer_decoder_dir()
+        };
+
+        ensure_decoder_script_dir(&decoder_dir)?;
+
+        Ok(Self {
+            runtime_library,
+            decoder_dir,
         })
     }
 }
@@ -684,6 +763,12 @@ pub struct Discovery {
     resources: ResourceDirectory,
 }
 
+#[derive(Debug)]
+pub struct DecodeDiscovery {
+    runtime: DecodeRuntimeBridge,
+    paths: DecodeDiscoveryPaths,
+}
+
 impl Discovery {
     pub fn connect(
         library_path: impl AsRef<Path>,
@@ -748,6 +833,90 @@ impl Drop for Discovery {
     fn drop(&mut self) {
         let _ = self.runtime.exit();
     }
+}
+
+impl DecodeDiscovery {
+    pub fn connect(
+        library_path: impl AsRef<Path>,
+        decoder_dir: impl AsRef<Path>,
+    ) -> Result<Self, DecodeBringUpError> {
+        let library_path = library_path.as_ref().to_path_buf();
+        let decoder_dir = decoder_dir.as_ref().to_path_buf();
+        ensure_decoder_script_dir(&decoder_dir)?;
+        let runtime =
+            DecodeRuntimeBridge::load(&library_path).map_err(DecodeBringUpError::Runtime)?;
+        runtime.init(&decoder_dir).map_err(DecodeBringUpError::Runtime)?;
+        Ok(Self {
+            runtime,
+            paths: DecodeDiscoveryPaths {
+                runtime_library: library_path,
+                decoder_dir,
+            },
+        })
+    }
+
+    pub fn connect_auto(
+        runtime_override: Option<impl AsRef<Path>>,
+        decoder_dir_override: Option<impl AsRef<Path>>,
+    ) -> Result<Self, DecodeBringUpError> {
+        let paths = DecodeDiscoveryPaths::discover(runtime_override, decoder_dir_override)?;
+        Self::connect(&paths.runtime_library, &paths.decoder_dir)
+    }
+
+    pub fn discovery_paths(
+        runtime_override: Option<impl AsRef<Path>>,
+        decoder_dir_override: Option<impl AsRef<Path>>,
+    ) -> Result<DecodeDiscoveryPaths, DecodeBringUpError> {
+        DecodeDiscoveryPaths::discover(runtime_override, decoder_dir_override)
+    }
+
+    pub fn paths(&self) -> &DecodeDiscoveryPaths {
+        &self.paths
+    }
+
+    pub fn decode_list(&self) -> Result<Vec<DecoderDescriptor>, DecodeBringUpError> {
+        let decoders = self
+            .runtime
+            .decode_list()
+            .map_err(|error| map_decode_runtime_error(error, None))?;
+        if decoders.is_empty() {
+            return Err(DecodeBringUpError::DecoderScriptsMissing {
+                path: self.paths.decoder_dir.clone(),
+            });
+        }
+        Ok(normalize_decoder_registry(decoders))
+    }
+
+    pub fn decode_inspect(&self, decoder_id: &str) -> Result<DecoderDescriptor, DecodeBringUpError> {
+        let decoder = self
+            .runtime
+            .decode_inspect(decoder_id)
+            .map_err(|error| map_decode_runtime_error(error, Some(decoder_id)))?;
+        Ok(normalize_decoder_descriptor(decoder))
+    }
+}
+
+impl Drop for DecodeDiscovery {
+    fn drop(&mut self) {
+        let _ = self.runtime.exit();
+    }
+}
+
+pub fn decode_list(
+    runtime_override: Option<impl AsRef<Path>>,
+    decoder_dir_override: Option<impl AsRef<Path>>,
+) -> Result<Vec<DecoderDescriptor>, DecodeBringUpError> {
+    let discovery = DecodeDiscovery::connect_auto(runtime_override, decoder_dir_override)?;
+    discovery.decode_list()
+}
+
+pub fn decode_inspect(
+    runtime_override: Option<impl AsRef<Path>>,
+    decoder_dir_override: Option<impl AsRef<Path>>,
+    decoder_id: &str,
+) -> Result<DecoderDescriptor, DecodeBringUpError> {
+    let discovery = DecodeDiscovery::connect_auto(runtime_override, decoder_dir_override)?;
+    discovery.decode_inspect(decoder_id)
 }
 
 pub fn validated_capture_config_from_device_options(
@@ -1294,6 +1463,29 @@ pub enum BringUpError {
     NoSupportedDevices,
 }
 
+#[derive(Debug, Error)]
+pub enum DecodeBringUpError {
+    #[error(transparent)]
+    Runtime(#[from] DecodeRuntimeError),
+    #[error("could not determine the current executable path: {detail}")]
+    CurrentExecutableUnavailable { detail: String },
+    #[error(
+        "bundled decode runtime `{path}` was not found next to executable directory `{executable_dir}` and no developer source decode runtime is available"
+    )]
+    BundledRuntimeMissing {
+        path: PathBuf,
+        executable_dir: PathBuf,
+    },
+    #[error("decoder scripts directory `{path}` is missing")]
+    MissingDecoderDirectory { path: PathBuf },
+    #[error("decoder scripts directory `{path}` is not readable")]
+    UnreadableDecoderDirectory { path: PathBuf },
+    #[error("decoder scripts directory `{path}` does not contain any decoder scripts")]
+    DecoderScriptsMissing { path: PathBuf },
+    #[error("decoder `{decoder_id}` was not found in the loaded registry")]
+    UnknownDecoder { decoder_id: String },
+}
+
 pub fn filter_supported_devices(devices: &[DeviceSummary]) -> Vec<SupportedDevice> {
     devices
         .iter()
@@ -1797,6 +1989,15 @@ fn developer_resource_dir() -> PathBuf {
         .join("res")
 }
 
+fn developer_decoder_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("DSView")
+        .join("libsigrokdecode4DSL")
+        .join("decoders")
+}
+
 fn ensure_resource_file_set(path: &Path) -> Result<(), BringUpError> {
     if !path.exists() {
         return Err(BringUpError::MissingResourceDirectory {
@@ -1834,6 +2035,50 @@ fn ensure_resource_file_set(path: &Path) -> Result<(), BringUpError> {
             path: path.to_path_buf(),
             missing,
         })
+    }
+}
+
+fn ensure_decoder_script_dir(path: &Path) -> Result<(), DecodeBringUpError> {
+    if !path.exists() {
+        return Err(DecodeBringUpError::MissingDecoderDirectory {
+            path: path.to_path_buf(),
+        });
+    }
+
+    let metadata = fs::metadata(path).map_err(|_| DecodeBringUpError::UnreadableDecoderDirectory {
+        path: path.to_path_buf(),
+    })?;
+    if !metadata.is_dir() {
+        return Err(DecodeBringUpError::UnreadableDecoderDirectory {
+            path: path.to_path_buf(),
+        });
+    }
+
+    let mut entries =
+        fs::read_dir(path).map_err(|_| DecodeBringUpError::UnreadableDecoderDirectory {
+            path: path.to_path_buf(),
+        })?;
+    if entries.next().is_none() {
+        return Err(DecodeBringUpError::DecoderScriptsMissing {
+            path: path.to_path_buf(),
+        });
+    }
+
+    Ok(())
+}
+
+fn map_decode_runtime_error(
+    error: DecodeRuntimeError,
+    decoder_id: Option<&str>,
+) -> DecodeBringUpError {
+    match error {
+        DecodeRuntimeError::NativeCall {
+            code: DecodeRuntimeErrorCode::UnknownDecoder,
+            ..
+        } => DecodeBringUpError::UnknownDecoder {
+            decoder_id: decoder_id.unwrap_or("unknown").to_string(),
+        },
+        other => DecodeBringUpError::Runtime(other),
     }
 }
 
