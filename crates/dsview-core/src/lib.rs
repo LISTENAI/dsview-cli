@@ -418,6 +418,20 @@ pub enum DecodeConfigValidationError {
     },
 }
 
+#[derive(Debug, Error)]
+pub enum DecodeConfigLoadError {
+    #[error("decode config file `{path}` is missing")]
+    MissingFile { path: PathBuf },
+    #[error("decode config file `{path}` is not readable: {detail}")]
+    UnreadableFile { path: PathBuf, detail: String },
+    #[error(transparent)]
+    Discovery(#[from] DecodeBringUpError),
+    #[error(transparent)]
+    Parse(#[from] DecodeConfigParseError),
+    #[error(transparent)]
+    Validation(#[from] DecodeConfigValidationError),
+}
+
 pub fn validate_decode_config(
     config: &DecodeConfig,
     registry: &[DecoderDescriptor],
@@ -1255,6 +1269,29 @@ pub fn decode_inspect(
 ) -> Result<DecoderDescriptor, DecodeBringUpError> {
     let discovery = DecodeDiscovery::connect_auto(runtime_override, decoder_dir_override)?;
     discovery.decode_inspect(decoder_id)
+}
+
+pub fn validate_decode_config_file(
+    runtime_override: Option<impl AsRef<Path>>,
+    decoder_dir_override: Option<impl AsRef<Path>>,
+    config_path: impl AsRef<Path>,
+) -> Result<ValidatedDecodeConfig, DecodeConfigLoadError> {
+    let config_path = config_path.as_ref();
+    let config_bytes = fs::read(config_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            DecodeConfigLoadError::MissingFile {
+                path: config_path.to_path_buf(),
+            }
+        } else {
+            DecodeConfigLoadError::UnreadableFile {
+                path: config_path.to_path_buf(),
+                detail: error.to_string(),
+            }
+        }
+    })?;
+    let config = parse_decode_config_slice(&config_bytes)?;
+    let registry = decode_list(runtime_override, decoder_dir_override)?;
+    validate_decode_config(&config, &registry).map_err(DecodeConfigLoadError::from)
 }
 
 pub fn validated_capture_config_from_device_options(

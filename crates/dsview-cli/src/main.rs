@@ -6,20 +6,23 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
-    DecodeInspectResponse, DecodeListResponse, build_decode_inspect_response,
-    build_decode_list_response,
+    DecodeInspectResponse, DecodeListResponse, DecodeValidateResponse,
+    build_decode_inspect_response, build_decode_list_response, build_decode_validate_response,
     build_device_options_response,
     capture_device_options::{
         resolve_capture_device_option_request, CaptureDeviceOptionParseError,
     },
-    render_decode_inspect_text, render_decode_list_text, render_device_options_text,
+    render_decode_inspect_text, render_decode_list_text, render_decode_validate_text,
+    render_device_options_text,
     DeviceOptionsResponse,
 };
 use dsview_core::{
-    DecodeBringUpError, DecodeConfigParseError, DecodeConfigValidationError,
+    DecodeBringUpError, DecodeConfigLoadError, DecodeConfigParseError,
+    DecodeConfigValidationError,
     DecoderRuntimeError, DecoderRuntimeErrorCode,
     describe_native_error, resolve_capture_artifact_paths,
     decode_inspect as core_decode_inspect, decode_list as core_decode_list,
+    validate_decode_config_file as core_validate_decode_config_file,
     validated_capture_config_from_device_options, AcquisitionSummary, AcquisitionTerminalEvent,
     BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion, CaptureConfigError,
     CaptureConfigRequest, CaptureDeviceOptionFacts, CaptureExportError, CaptureRunError,
@@ -82,6 +85,7 @@ struct DecodeArgs {
 enum DecodeCommand {
     List(DecodeListArgs),
     Inspect(DecodeInspectArgs),
+    Validate(DecodeValidateArgs),
 }
 
 #[derive(Args, Debug)]
@@ -119,6 +123,18 @@ struct DecodeInspectArgs {
     decode: SharedDecodeArgs,
     #[arg(value_name = "DECODER_ID", help = "Canonical upstream decoder id from `decode list`")]
     decoder_id: String,
+}
+
+#[derive(Args, Debug)]
+struct DecodeValidateArgs {
+    #[command(flatten)]
+    decode: SharedDecodeArgs,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "JSON decode config path to validate without running a decode session"
+    )]
+    config: PathBuf,
 }
 
 #[derive(Args, Debug)]
@@ -369,6 +385,7 @@ fn main() -> ExitCode {
         Command::Decode(args) => match args.command {
             DecodeCommand::List(args) => run_decode_list(args),
             DecodeCommand::Inspect(args) => run_decode_inspect(args),
+            DecodeCommand::Validate(args) => run_decode_validate(args),
         },
         Command::Capture(args) => run_capture(args),
     };
@@ -427,6 +444,24 @@ fn run_decode_inspect(args: DecodeInspectArgs) -> Result<(), FailedCommand> {
     .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
     let response = build_decode_inspect_response(&decoder);
     render_decode_inspect_success(args.decode.format, &response);
+    Ok(())
+}
+
+fn run_decode_validate(args: DecodeValidateArgs) -> Result<(), FailedCommand> {
+    let validated = core_validate_decode_config_file(
+        args.decode.decode_runtime.as_deref(),
+        args.decode.decoder_dir.as_deref(),
+        &args.config,
+    )
+    .map_err(|error| command_error(args.decode.format, classify_decode_validate_error(&error)))?;
+    let bound_channel_ids = validated.decoder.channels.keys().cloned().collect::<Vec<_>>();
+    let response = build_decode_validate_response(
+        validated.version,
+        validated.decoder.descriptor.id.clone(),
+        &bound_channel_ids,
+        validated.stack.len(),
+    );
+    render_decode_validate_success(args.decode.format, &response);
     Ok(())
 }
 
@@ -1271,6 +1306,39 @@ fn classify_decode_config_validation_error(error: &DecodeConfigValidationError) 
     }
 }
 
+fn classify_decode_validate_error(error: &DecodeConfigLoadError) -> ErrorResponse {
+    match error {
+        DecodeConfigLoadError::MissingFile { path } => ErrorResponse {
+            code: "decode_config_file_missing",
+            message: format!("decode config file `{}` was not found", path.display()),
+            detail: Some(
+                "Pass `--config <PATH>` pointing at a readable JSON decode config file."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigLoadError::UnreadableFile { path, detail } => ErrorResponse {
+            code: "decode_config_file_unreadable",
+            message: format!(
+                "decode config file `{}` could not be read: {detail}",
+                path.display()
+            ),
+            detail: Some(
+                "Check filesystem permissions and that the config path points at a readable JSON file."
+                    .to_string(),
+            ),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeConfigLoadError::Discovery(error) => classify_decode_error(error),
+        DecodeConfigLoadError::Parse(error) => classify_decode_config_parse_error(error),
+        DecodeConfigLoadError::Validation(error) => classify_decode_config_validation_error(error),
+    }
+}
+
 fn device_record(device: &SupportedDevice) -> DeviceRecord {
     DeviceRecord {
         handle: device.selection_handle.raw(),
@@ -2108,6 +2176,17 @@ fn render_decode_inspect_success(format: OutputFormat, response: &DecodeInspectR
         }
         OutputFormat::Text => {
             println!("{}", render_decode_inspect_text(response));
+        }
+    }
+}
+
+fn render_decode_validate_success(format: OutputFormat, response: &DecodeValidateResponse) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(response).unwrap());
+        }
+        OutputFormat::Text => {
+            println!("{}", render_decode_validate_text(response));
         }
     }
 }

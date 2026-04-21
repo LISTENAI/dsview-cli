@@ -44,6 +44,15 @@ pub struct DecodeInspectResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeValidateResponse {
+    pub valid: bool,
+    pub config_version: u32,
+    pub root_decoder_id: String,
+    pub stack_depth: usize,
+    pub bound_channel_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DecodeInspectDecoderResponse {
     pub id: String,
     pub name: String,
@@ -190,6 +199,21 @@ pub fn build_decode_inspect_response(decoder: &DecoderDescriptor) -> DecodeInspe
     }
 }
 
+pub fn build_decode_validate_response(
+    config_version: u32,
+    root_decoder_id: impl Into<String>,
+    bound_channel_ids: &[String],
+    stack_depth: usize,
+) -> DecodeValidateResponse {
+    DecodeValidateResponse {
+        valid: true,
+        config_version,
+        root_decoder_id: root_decoder_id.into(),
+        stack_depth,
+        bound_channel_ids: bound_channel_ids.to_vec(),
+    }
+}
+
 pub fn render_decode_list_text(response: &DecodeListResponse) -> String {
     response
         .decoders
@@ -309,6 +333,17 @@ pub fn render_decode_inspect_text(response: &DecodeInspectResponse) -> String {
     lines.join("\n")
 }
 
+pub fn render_decode_validate_text(response: &DecodeValidateResponse) -> String {
+    [
+        "decode config valid".to_string(),
+        format!("root decoder: {}", response.root_decoder_id),
+        format!("config version: {}", response.config_version),
+        format!("stack depth: {}", response.stack_depth),
+        format!("bound channels: {}", join_ids(&response.bound_channel_ids)),
+    ]
+    .join("\n")
+}
+
 fn decode_input_response(input: &DecoderInputDescriptor) -> DecodeIoResponse {
     DecodeIoResponse {
         id: input.id.clone(),
@@ -392,8 +427,9 @@ fn join_ids(values: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_decode_inspect_response, build_decode_list_response, render_decode_inspect_text,
-        render_decode_list_text,
+        build_decode_inspect_response, build_decode_list_response,
+        build_decode_validate_response, render_decode_inspect_text, render_decode_list_text,
+        render_decode_validate_text,
     };
     use dsview_core::{
         DecoderAnnotationDescriptor, DecoderAnnotationRowDescriptor, DecoderChannelDescriptor,
