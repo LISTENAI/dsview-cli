@@ -78,14 +78,14 @@ def main() -> int:
         exe_name = "dsview-cli.exe" if "windows" in args.target else "dsview-cli"
         exe_path = bundle_root / exe_name
         require_exists(exe_path, "Executable")
+        if "windows" in args.target:
+            for dependency in expected_windows_runtime_dependencies():
+                require_exists(bundle_root / dependency, "Windows runtime dependency")
 
         runtime_dir = bundle_root / "runtime"
         if not runtime_dir.is_dir():
             raise FileNotFoundError("runtime/ directory not found")
         require_exists(runtime_dir / runtime_library_name(args.target), "Runtime library")
-        if "windows" in args.target:
-            for dependency in expected_windows_runtime_dependencies():
-                require_exists(runtime_dir / dependency, "Windows runtime dependency")
 
         resources_dir = bundle_root / "resources"
         if not resources_dir.is_dir():

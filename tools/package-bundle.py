@@ -114,7 +114,7 @@ def main() -> int:
                 add_file(
                     archive,
                     dependency,
-                    f"{archive_root}/runtime/{dependency.name}",
+                    f"{archive_root}/{dependency.name}",
                 )
 
         for resource_name in required_resources:
