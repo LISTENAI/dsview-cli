@@ -25,6 +25,20 @@ pub fn runtime_library_name() -> &'static str {
     }
 }
 
+/// Returns the platform-specific decode runtime library filename.
+///
+/// This stays distinct from the capture runtime so decoder discovery can be
+/// packaged and resolved without mutating the shipped capture dependency graph.
+pub fn decode_runtime_library_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "dsview_decode_runtime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libdsview_decode_runtime.dylib"
+    } else {
+        "libdsview_decode_runtime.so"
+    }
+}
+
 #[cfg(dsview_runtime_smoke_available)]
 unsafe extern "C" {
     /// Public frontend symbol exported by `DSView/libsigrok4DSL`.
@@ -1509,6 +1523,11 @@ pub fn source_runtime_available() -> bool {
     cfg!(dsview_source_runtime_available)
 }
 
+/// Reports whether a source-built DSView decode runtime library is available.
+pub fn source_decode_runtime_available() -> bool {
+    cfg!(dsview_source_decode_runtime_available)
+}
+
 /// Returns the public libsigrok4DSL version string when a native library is linked.
 #[cfg(dsview_runtime_smoke_available)]
 pub fn lib_version_string() -> Option<&'static CStr> {
@@ -1536,6 +1555,10 @@ pub fn upstream_header_path() -> &'static Path {
 
 pub fn source_runtime_library_path() -> Option<&'static Path> {
     option_env!("DSVIEW_SOURCE_RUNTIME_LIBRARY").map(Path::new)
+}
+
+pub fn source_decode_runtime_library_path() -> Option<&'static Path> {
+    option_env!("DSVIEW_SOURCE_DECODE_RUNTIME_LIBRARY").map(Path::new)
 }
 
 fn write_vcd_atomically(final_path: &Path, bytes: &[u8]) -> Result<(), RuntimeError> {

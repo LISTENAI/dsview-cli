@@ -26,6 +26,14 @@ impl TargetInfo {
         }
     }
 
+    fn decode_runtime_library_name(&self) -> String {
+        match self.os.as_str() {
+            "windows" => "dsview_decode_runtime.dll".to_string(),
+            "macos" => "libdsview_decode_runtime.dylib".to_string(),
+            _ => "libdsview_decode_runtime.so".to_string(),
+        }
+    }
+
     fn needs_dl_link(&self) -> bool {
         matches!(self.os.as_str(), "linux" | "android")
     }
@@ -57,6 +65,11 @@ impl TargetInfo {
             _ => None,
         }
     }
+}
+
+struct SourceRuntimeArtifacts {
+    capture_library_path: PathBuf,
+    decode_library_path: PathBuf,
 }
 
 fn main() {
@@ -112,6 +125,18 @@ fn main() {
         "cargo:rerun-if-changed={}",
         dsview_root.join("common/ds_types.h").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        dsview_root.join("libsigrokdecode4DSL/libsigrokdecode.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        dsview_root.join("libsigrokdecode4DSL/srd.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        dsview_root.join("libsigrokdecode4DSL/decoder.c").display()
+    );
     println!("cargo:rerun-if-changed={}", smoke_shim.display());
     println!("cargo:rerun-if-changed={}", runtime_bridge.display());
     println!(
@@ -162,6 +187,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(dsview_runtime_bridge)");
     println!("cargo:rustc-check-cfg=cfg(dsview_runtime_smoke_available)");
     println!("cargo:rustc-check-cfg=cfg(dsview_source_runtime_available)");
+    println!("cargo:rustc-check-cfg=cfg(dsview_source_decode_runtime_available)");
     println!("cargo:rustc-cfg=dsview_native_boundary");
     println!("cargo:rustc-cfg=dsview_runtime_bridge");
     println!("cargo:include={}", libsigrok_root.display());
@@ -216,20 +242,31 @@ fn main() {
         );
     }
 
-    match build_source_runtime(&dsview_repo_root, &native_root, &target) {
-        Ok(library_path) => {
+    match build_source_runtimes(&dsview_repo_root, &native_root, &target) {
+        Ok(artifacts) => {
             println!("cargo:rustc-cfg=dsview_source_runtime_available");
             println!(
                 "cargo:rustc-env=DSVIEW_SOURCE_RUNTIME_LIBRARY={}",
-                library_path.display()
+                artifacts.capture_library_path.display()
+            );
+            println!("cargo:rustc-cfg=dsview_source_decode_runtime_available");
+            println!(
+                "cargo:rustc-env=DSVIEW_SOURCE_DECODE_RUNTIME_LIBRARY={}",
+                artifacts.decode_library_path.display()
             );
             println!(
                 "cargo:warning=Built source-backed DSView runtime at {}.",
-                library_path.display()
+                artifacts.capture_library_path.display()
+            );
+            println!(
+                "cargo:warning=Built source-backed DSView decode runtime at {}.",
+                artifacts.decode_library_path.display()
             );
         }
         Err(message) => {
-            println!("cargo:warning=Skipping source-backed DSView runtime build: {message}");
+            println!(
+                "cargo:warning=Skipping source-backed DSView capture/decode runtime builds: {message}"
+            );
         }
     }
 
@@ -238,6 +275,9 @@ fn main() {
     );
     println!(
         "cargo:warning=dsview-sys can use either a caller-supplied runtime library path or the locally built source runtime when native prerequisites are present."
+    );
+    println!(
+        "cargo:warning=dsview-sys keeps decode discovery on a separate source-built runtime artifact so capture packaging does not inherit decoder prerequisites."
     );
 }
 
@@ -265,7 +305,11 @@ fn should_build_smoke_runtime(target: &TargetInfo) -> bool {
         && command_available("ar")
 }
 
-fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInfo) -> Result<PathBuf, String> {
+fn build_source_runtimes(
+    repo_root: &Path,
+    native_root: &Path,
+    target: &TargetInfo,
+) -> Result<SourceRuntimeArtifacts, String> {
     if !command_available("cmake") {
         return Err("cmake is not available".to_string());
     }
@@ -280,10 +324,45 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
         }
     }
 
+    if !command_available("python3") {
+        return Err("python3 is not available".to_string());
+    }
+
+    let capture_library_path = build_source_runtime_variant(
+        repo_root,
+        native_root,
+        target,
+        "source-runtime-build",
+        "capture",
+    )?;
+    let decode_library_path = build_source_runtime_variant(
+        repo_root,
+        native_root,
+        target,
+        "source-decode-runtime-build",
+        "decode",
+    )?;
+
+    Ok(SourceRuntimeArtifacts {
+        capture_library_path,
+        decode_library_path,
+    })
+}
+
+fn build_source_runtime_variant(
+    repo_root: &Path,
+    native_root: &Path,
+    target: &TargetInfo,
+    build_dir_name: &str,
+    runtime_kind: &str,
+) -> Result<PathBuf, String> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let build_dir = out_dir.join("source-runtime-build");
-    std::fs::create_dir_all(&build_dir)
-        .map_err(|error| format!("failed to create source runtime build directory: {error}"))?;
+    let build_dir = out_dir.join(build_dir_name);
+    std::fs::create_dir_all(&build_dir).map_err(|error| {
+        format!(
+            "failed to create {runtime_kind} source runtime build directory: {error}"
+        )
+    })?;
 
     let mut configure = Command::new("cmake");
     configure
@@ -292,6 +371,20 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
         .arg("-B")
         .arg(&build_dir)
         .arg(format!("-DDSVIEW_REPO_ROOT={}", repo_root.display()));
+
+    match runtime_kind {
+        "capture" => {
+            configure
+                .arg("-DDSVIEW_BUILD_CAPTURE_RUNTIME=ON")
+                .arg("-DDSVIEW_BUILD_DECODE_RUNTIME=OFF");
+        }
+        "decode" => {
+            configure
+                .arg("-DDSVIEW_BUILD_CAPTURE_RUNTIME=OFF")
+                .arg("-DDSVIEW_BUILD_DECODE_RUNTIME=ON");
+        }
+        _ => return Err(format!("unknown source runtime kind `{runtime_kind}`")),
+    }
 
     if let Some(platform) = target.windows_cmake_generator_platform() {
         configure.arg("-A").arg(platform);
@@ -306,12 +399,17 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
         configure.arg(format!("-DVCPKG_TARGET_TRIPLET={triplet}"));
     }
 
-    let configure_output = configure
-        .output()
-        .map_err(|error| format!("failed to launch cmake configure: {error}"))?;
+    let configure_output = configure.output().map_err(|error| {
+        format!(
+            "failed to launch cmake configure for {runtime_kind} runtime: {error}"
+        )
+    })?;
     if !configure_output.status.success() {
         emit_command_failure_diagnostics("cmake configure", &configure, &configure_output);
-        return Err("cmake configure failed for source-backed runtime".to_string());
+        return Err(format!(
+            "cmake configure failed for source-backed {runtime_kind} runtime"
+        ));
+    }
     }
 
     let mut build = Command::new("cmake");
@@ -320,24 +418,32 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
         build.arg("--config").arg(cmake_build_config());
     }
 
-    let build_output = build
-        .output()
-        .map_err(|error| format!("failed to launch cmake build: {error}"))?;
+    let build_output = build.output().map_err(|error| {
+        format!(
+            "failed to launch cmake build for {runtime_kind} runtime: {error}"
+        )
+    })?;
     if !build_output.status.success() {
         emit_command_failure_diagnostics("cmake build", &build, &build_output);
-        return Err("cmake build failed for source-backed runtime".to_string());
+        return Err(format!(
+            "cmake build failed for source-backed {runtime_kind} runtime"
+        ));
+    }
     }
 
+    let library_name = match runtime_kind {
+        "capture" => target.runtime_library_name(),
+        "decode" => target.decode_runtime_library_name(),
+        _ => unreachable!(),
+    };
     let library_path = if target.is_windows_msvc() {
-        build_dir
-            .join(cmake_build_config())
-            .join(target.runtime_library_name())
+        build_dir.join(cmake_build_config()).join(&library_name)
     } else {
-        build_dir.join(target.runtime_library_name())
+        build_dir.join(&library_name)
     };
     if !library_path.exists() {
         return Err(format!(
-            "expected source runtime artifact at {} (target: {}-{})",
+            "expected source-backed {runtime_kind} runtime artifact at {} (target: {}-{})",
             library_path.display(),
             target.os,
             target.arch
