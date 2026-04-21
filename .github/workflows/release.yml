@@ -19,12 +19,21 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
+            package_bundle: true
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
+            package_bundle: true
           - target: x86_64-apple-darwin
             runner: macos-15-intel
+            package_bundle: true
           - target: aarch64-apple-darwin
             runner: macos-14
+            package_bundle: true
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+            msvc_arch: x64
+            # The Windows source-backed runtime still fails to build, so release automation only builds and tests here.
+            package_bundle: false
 
     steps:
       - name: Checkout repository
@@ -36,6 +45,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Initialize MSVC developer command prompt
+        if: contains(matrix.target, 'windows')
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
 
       - name: Setup native prerequisites
         uses: ./.github/actions/setup-native-prereqs
@@ -57,6 +72,7 @@ jobs:
         run: cargo test --workspace --target ${{ matrix.target }}
 
       - name: Find runtime library
+        if: matrix.package_bundle
         id: find-runtime
         shell: bash
         run: |
@@ -70,6 +86,7 @@ jobs:
           echo "runtime-lib=$RUNTIME_LIB" >> $GITHUB_OUTPUT
 
       - name: Determine executable path
+        if: matrix.package_bundle
         id: exe-path
         shell: bash
         run: |
@@ -80,6 +97,7 @@ jobs:
           fi
 
       - name: Package and validate bundle
+        if: matrix.package_bundle
         uses: ./.github/actions/package-and-validate
         with:
           target: ${{ matrix.target }}
