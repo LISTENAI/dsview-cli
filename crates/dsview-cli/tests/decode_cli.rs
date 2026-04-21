@@ -285,6 +285,137 @@ fn decode_run_executes_valid_offline_decode_config() {
 }
 
 #[test]
+fn decode_run_success_json_report_matches_contract() {
+    let config = valid_decode_config("decode-run-contract-success-config");
+    let input = valid_decode_input("decode-run-contract-success-input");
+
+    let output = fixture_cli_command("run-success")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_json(&output);
+    let events = json["events"]
+        .as_array()
+        .expect("success response should include a flat events list");
+
+    assert_eq!(json["run"]["status"], "success");
+    assert_eq!(json["run"]["root_decoder_id"], "fixture:i2c");
+    assert_eq!(json["run"]["stack_depth"], 1);
+    assert_eq!(json["run"]["sample_count"], 4);
+    assert_eq!(json["run"]["event_count"], 3);
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["decoder_id"], "fixture:i2c");
+    assert_eq!(events[0]["start_sample"], 0);
+    assert_eq!(events[0]["end_sample"], 2);
+    assert_eq!(events[0]["annotation_class"], 0);
+    assert_eq!(events[0]["annotation_type"], 0);
+    assert_eq!(events[0]["texts"], serde_json::json!(["chunk-1"]));
+    assert!(json.get("error").is_none());
+    assert!(json.get("partial_events").is_none());
+    assert!(json.get("diagnostics").is_none());
+    assert!(
+        !serde_json::to_string(&json)
+            .expect("success contract should serialize")
+            .contains("partial_success")
+    );
+}
+
+#[test]
+fn decode_run_failure_json_report_matches_contract() {
+    let invalid_input_config = valid_decode_config("decode-run-contract-failure-config");
+    let invalid_input = write_input(
+        "decode-run-contract-invalid-input",
+        r#"{
+            "samplerate_hz": 1000000,
+            "format": "split_logic",
+            "sample_bytes": [1, 2, 3, 4],
+            "unitsize": 1,
+            "logic_packet_lengths": [2, 1]
+        }"#,
+    );
+
+    let invalid_output = fixture_cli_command("run-success")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&invalid_input_config),
+            "--input",
+            fixture_config_path(&invalid_input),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+
+    let invalid_json = parse_json(&invalid_output);
+    assert_eq!(invalid_json["run"]["status"], "failure");
+    assert_eq!(invalid_json["run"]["root_decoder_id"], "fixture:i2c");
+    assert_eq!(invalid_json["run"]["stack_depth"], 1);
+    assert!(invalid_json["run"].get("sample_count").is_none());
+    assert!(invalid_json["run"].get("event_count").is_none());
+    assert_eq!(invalid_json["error"]["code"], "decode_input_invalid");
+    assert!(
+        invalid_json["error"]["message"]
+            .as_str()
+            .expect("failure message should be present")
+            .contains("logic_packet_lengths")
+    );
+    assert!(invalid_json.get("events").is_none());
+    assert!(invalid_json.get("partial_events").is_none());
+    assert!(invalid_json.get("diagnostics").is_none());
+
+    let partial_config = valid_decode_config("decode-run-contract-partial-config");
+    let partial_input = valid_decode_input("decode-run-contract-partial-input");
+
+    let partial_output = fixture_cli_command("run-partial-failure")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&partial_config),
+            "--input",
+            fixture_config_path(&partial_input),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+
+    let partial_json = parse_json(&partial_output);
+    assert_eq!(partial_json["run"]["status"], "failure");
+    assert_eq!(partial_json["error"]["code"], "decode_session_send_failed");
+    assert!(partial_json.get("events").is_none());
+    assert_eq!(
+        partial_json["partial_events"][0]["decoder_id"],
+        serde_json::json!("fixture:i2c")
+    );
+    assert_eq!(partial_json["diagnostics"]["partial_event_count"], 1);
+    assert_eq!(partial_json["diagnostics"]["partial_events_available"], true);
+    assert!(
+        !serde_json::to_string(&partial_json)
+            .expect("failure contract should serialize")
+            .contains("partial_success")
+    );
+}
+
+#[test]
 fn decode_run_rejects_misaligned_logic_packet_lengths() {
     let config = write_config(
         "decode-run-invalid-input-config",
@@ -326,6 +457,35 @@ fn decode_run_rejects_misaligned_logic_packet_lengths() {
         .failure()
         .stdout(predicate::str::contains("\"code\": \"decode_input_invalid\""))
         .stdout(predicate::str::contains("logic_packet_lengths"))
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn decode_run_text_output_is_summary_focused() {
+    let config = valid_decode_config("decode-run-text-summary-config");
+    let input = valid_decode_input("decode-run-text-summary-input");
+
+    fixture_cli_command("run-success")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+            "--format",
+            "text",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("decode run succeeded"))
+        .stdout(predicate::str::contains("root decoder: fixture:i2c"))
+        .stdout(predicate::str::contains("stack depth: 1"))
+        .stdout(predicate::str::contains("sample count: 4"))
+        .stdout(predicate::str::contains("event count: 3"))
+        .stdout(predicate::str::contains("chunk-1").not())
+        .stdout(predicate::str::contains("fixture-complete").not())
+        .stdout(predicate::str::contains("fixture:eeprom24xx").not())
         .stderr(predicate::str::is_empty());
 }
 

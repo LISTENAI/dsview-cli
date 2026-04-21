@@ -331,6 +331,59 @@ fn offline_decode_failure_report_preserves_failure_status_with_partial_annotatio
 }
 
 #[test]
+fn offline_decode_failure_report_keeps_binary_status_with_partial_diagnostics() {
+    let retained = DecodeCapturedAnnotation {
+        decoder_id: "eeprom24xx".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 9,
+        annotation_type: 9,
+        texts: vec!["Byte write".to_string()],
+    };
+    let runtime = RecordingRuntime::with_send_responses(vec![
+        SessionResponse::Ok(vec![retained.clone()]),
+        SessionResponse::Err("second chunk failed"),
+    ]);
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x01, 0x02, 0x03, 0x04],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![2, 2]),
+    };
+
+    let error = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect_err("send failures should keep the run in a binary failure state");
+    let report = error.to_failure_report("fixture:i2c", 1, Some(input.sample_count().unwrap()));
+    let json = serde_json::to_value(&report).expect("failure report should serialize");
+
+    assert_eq!(report.run.status, DecodeRunStatus::Failure);
+    assert_eq!(report.run.root_decoder_id, "fixture:i2c");
+    assert_eq!(report.run.stack_depth, 1);
+    assert_eq!(report.run.sample_count, Some(4));
+    assert_eq!(report.run.event_count, None);
+    assert_eq!(report.partial_events.len(), 1);
+    assert_eq!(report.partial_events[0].decoder_id, "eeprom24xx");
+    assert_eq!(report.diagnostics.as_ref().unwrap().completed_chunks, 1);
+    assert_eq!(report.diagnostics.as_ref().unwrap().consumed_samples, 2);
+    assert_eq!(report.diagnostics.as_ref().unwrap().partial_event_count, 1);
+    assert!(report
+        .diagnostics
+        .as_ref()
+        .unwrap()
+        .partial_events_available);
+    assert!(json.get("events").is_none());
+    assert!(json.get("partial_events").is_some());
+    assert!(json.get("diagnostics").is_some());
+    assert!(
+        !serde_json::to_string(&json)
+            .expect("failure report json should serialize")
+            .contains("partial_success")
+    );
+}
+
+#[test]
 fn offline_decode_collects_fixture_annotations_for_successful_runs() {
     let root_annotation = DecodeCapturedAnnotation {
         decoder_id: "fixture:i2c".to_string(),
