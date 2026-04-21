@@ -68,6 +68,8 @@ enum dsview_decode_status {
     DSVIEW_DECODE_ERR_UNKNOWN_DECODER = -25,
     DSVIEW_DECODE_ERR_UPSTREAM = -26,
     DSVIEW_DECODE_ERR_MALLOC = -27,
+    DSVIEW_DECODE_ERR_INPUT_SHAPE = -28,
+    DSVIEW_DECODE_ERR_SESSION = -29,
 };
 
 struct dsview_channel_mode {
@@ -181,6 +183,48 @@ enum dsview_decode_option_value_kind {
     DSVIEW_DECODE_OPTION_VALUE_KIND_INTEGER = 2,
     DSVIEW_DECODE_OPTION_VALUE_KIND_FLOAT = 3,
 };
+
+enum dsview_decode_logic_format {
+    DSVIEW_DECODE_LOGIC_FORMAT_SPLIT = 1,
+    DSVIEW_DECODE_LOGIC_FORMAT_CROSS = 2,
+};
+
+struct dsview_decode_option_value {
+    int kind;
+    const char *string_value;
+    long long integer_value;
+    double float_value;
+};
+
+struct dsview_decode_option_entry {
+    const char *option_id;
+    struct dsview_decode_option_value value;
+};
+
+struct dsview_decode_channel_binding {
+    const char *channel_id;
+    unsigned int channel_index;
+};
+
+struct dsview_decode_instance_spec {
+    const char *decoder_id;
+    const struct dsview_decode_channel_binding *channel_bindings;
+    size_t channel_binding_count;
+    const struct dsview_decode_option_entry *options;
+    size_t option_count;
+};
+
+struct dsview_decode_logic_chunk {
+    int format;
+    uint16_t unitsize;
+    uint16_t channel_count;
+    uint64_t abs_start_sample;
+    uint64_t abs_end_sample;
+    const uint8_t *sample_bytes;
+    size_t sample_bytes_len;
+};
+
+struct dsview_decode_execution_session;
 
 struct dsview_decode_option {
     char *id;
@@ -310,6 +354,21 @@ int dsview_decode_list(struct dsview_decode_list_entry **out_list, size_t *out_c
 void dsview_decode_free_list(struct dsview_decode_list_entry *list, size_t count);
 int dsview_decode_inspect(const char *decoder_id, struct dsview_decode_metadata *out_metadata);
 void dsview_decode_free_metadata(struct dsview_decode_metadata *metadata);
+int dsview_decode_session_new(struct dsview_decode_execution_session **out_session);
+int dsview_decode_session_set_samplerate(
+    struct dsview_decode_execution_session *session,
+    unsigned long long samplerate_hz);
+int dsview_decode_session_build_linear_stack(
+    struct dsview_decode_execution_session *session,
+    const struct dsview_decode_instance_spec *root,
+    const struct dsview_decode_instance_spec *stack,
+    size_t stack_count);
+int dsview_decode_session_start(struct dsview_decode_execution_session *session);
+int dsview_decode_session_send_logic_chunk(
+    struct dsview_decode_execution_session *session,
+    const struct dsview_decode_logic_chunk *chunk);
+int dsview_decode_session_end(struct dsview_decode_execution_session *session);
+void dsview_decode_session_destroy(struct dsview_decode_execution_session *session);
 
 #ifdef __cplusplus
 }

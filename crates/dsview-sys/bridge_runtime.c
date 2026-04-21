@@ -44,6 +44,28 @@ typedef int (*srd_decoder_load_all_fn)(void);
 typedef GSList *(*srd_searchpaths_get_fn)(void);
 typedef const char *(*srd_strerror_fn)(int error_code);
 typedef const char *(*srd_strerror_name_fn)(int error_code);
+typedef int (*srd_session_new_fn)(struct srd_session **sess);
+typedef int (*srd_session_metadata_set_fn)(struct srd_session *sess, int key, GVariant *data);
+typedef int (*srd_session_start_fn)(struct srd_session *sess, char **error);
+typedef int (*srd_session_send_fn)(
+    struct srd_session *sess,
+    uint64_t abs_start_samplenum,
+    uint64_t abs_end_samplenum,
+    const uint8_t **inbuf,
+    const uint8_t *inbuf_const,
+    uint64_t inbuflen,
+    char **error);
+typedef int (*srd_session_end_fn)(struct srd_session *sess, char **error);
+typedef int (*srd_session_destroy_fn)(struct srd_session *sess);
+typedef struct srd_decoder_inst *(*srd_inst_new_fn)(
+    struct srd_session *sess,
+    const char *decoder_id,
+    GHashTable *options);
+typedef int (*srd_inst_channel_set_all_fn)(struct srd_decoder_inst *di, GHashTable *channels);
+typedef int (*srd_inst_stack_fn)(
+    struct srd_session *sess,
+    struct srd_decoder_inst *di_bottom,
+    struct srd_decoder_inst *di_top);
 
 typedef void (*dslib_event_callback_t)(int event);
 typedef void (*ds_datafeed_callback_t)(const struct sr_dev_inst *sdi, const struct sr_datafeed_packet *packet);
@@ -102,11 +124,28 @@ struct dsview_decode_runtime_api {
     srd_searchpaths_get_fn srd_searchpaths_get;
     srd_strerror_fn srd_strerror;
     srd_strerror_name_fn srd_strerror_name;
+    srd_session_new_fn srd_session_new;
+    srd_session_metadata_set_fn srd_session_metadata_set;
+    srd_session_start_fn srd_session_start;
+    srd_session_send_fn srd_session_send;
+    srd_session_end_fn srd_session_end;
+    srd_session_destroy_fn srd_session_destroy;
+    srd_inst_new_fn srd_inst_new;
+    srd_inst_channel_set_all_fn srd_inst_channel_set_all;
+    srd_inst_stack_fn srd_inst_stack;
     char last_loader_error[512];
     char last_error[512];
     char last_error_name[128];
     int last_error_code;
     int initialized;
+};
+
+struct dsview_decode_execution_session {
+    struct srd_session *session;
+    struct srd_decoder_inst *root;
+    unsigned int input_channel_count;
+    int started;
+    int ended;
 };
 
 struct dsview_retained_packet {
@@ -167,6 +206,40 @@ static int dsview_bridge_copy_option_values(int key, struct dsview_option_value 
 static int dsview_bridge_copy_channel_modes_for_current_operation(struct dsview_channel_mode *out_modes, int max_modes, unsigned short *out_count);
 static int dsview_bridge_restore_device_modes(int has_operation_mode, int operation_mode, int has_channel_mode, int channel_mode);
 static void dsview_bridge_copy_string(char *dst, size_t dst_len, const char *src);
+static void dsview_decode_clear_error_from_gchar(char *message);
+static int dsview_decode_invalid_shape(const char *detail);
+static int dsview_decode_invalid_session(const char *detail);
+static GHashTable *dsview_decode_build_option_table(
+    const struct dsview_decode_option_entry *options,
+    size_t option_count);
+static GHashTable *dsview_decode_build_channel_table(
+    const struct dsview_decode_channel_binding *bindings,
+    size_t binding_count,
+    unsigned int *out_input_channel_count);
+static struct srd_decoder_inst *dsview_decode_create_instance(
+    struct dsview_decode_execution_session *session,
+    const struct dsview_decode_instance_spec *spec,
+    int allow_channel_bindings,
+    unsigned int *out_input_channel_count);
+static int dsview_decode_build_split_chunk(
+    const struct dsview_decode_execution_session *session,
+    const struct dsview_decode_logic_chunk *chunk,
+    const uint8_t ***out_inbuf,
+    uint8_t **out_inbuf_const,
+    uint8_t ***out_owned_buffers,
+    uint64_t *out_sample_count);
+static int dsview_decode_build_cross_chunk(
+    const struct dsview_decode_execution_session *session,
+    const struct dsview_decode_logic_chunk *chunk,
+    const uint8_t ***out_inbuf,
+    uint8_t **out_inbuf_const,
+    uint8_t ***out_owned_buffers,
+    uint64_t *out_sample_count);
+static void dsview_decode_free_chunk_buffers(
+    const struct dsview_decode_execution_session *session,
+    const uint8_t **inbuf,
+    uint8_t *inbuf_const,
+    uint8_t **owned_buffers);
 
 static void dsview_bridge_set_error_from_text(const char *message)
 {
@@ -380,6 +453,34 @@ static void dsview_decode_capture_upstream_error(int status, int during_decoder_
         mapped_code,
         name != NULL ? name : "unknown error code",
         detail != NULL ? detail : "unknown error");
+}
+
+static void dsview_decode_clear_error_from_gchar(char *message)
+{
+    if (message == NULL) {
+        return;
+    }
+
+    dsview_decode_set_error_detail(DSVIEW_DECODE_ERR_PYTHON, "python error", message);
+    g_free(message);
+}
+
+static int dsview_decode_invalid_shape(const char *detail)
+{
+    dsview_decode_set_error_detail(
+        DSVIEW_DECODE_ERR_INPUT_SHAPE,
+        "invalid input shape",
+        detail != NULL ? detail : "logic chunk shape is invalid");
+    return DSVIEW_DECODE_ERR_INPUT_SHAPE;
+}
+
+static int dsview_decode_invalid_session(const char *detail)
+{
+    dsview_decode_set_error_detail(
+        DSVIEW_DECODE_ERR_SESSION,
+        "invalid decode session state",
+        detail != NULL ? detail : "decode session state is invalid");
+    return DSVIEW_DECODE_ERR_SESSION;
 }
 
 static int dsview_decode_not_loaded(void)
@@ -927,6 +1028,60 @@ int dsview_decode_runtime_load(const char *path)
         dsview_decode_runtime_unload();
         return status;
     }
+    g_decode_runtime_api.srd_session_new =
+        (srd_session_new_fn)dsview_decode_load_symbol("srd_session_new", &status);
+    if (g_decode_runtime_api.srd_session_new == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_session_metadata_set =
+        (srd_session_metadata_set_fn)dsview_decode_load_symbol("srd_session_metadata_set", &status);
+    if (g_decode_runtime_api.srd_session_metadata_set == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_session_start =
+        (srd_session_start_fn)dsview_decode_load_symbol("srd_session_start", &status);
+    if (g_decode_runtime_api.srd_session_start == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_session_send =
+        (srd_session_send_fn)dsview_decode_load_symbol("srd_session_send", &status);
+    if (g_decode_runtime_api.srd_session_send == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_session_end =
+        (srd_session_end_fn)dsview_decode_load_symbol("srd_session_end", &status);
+    if (g_decode_runtime_api.srd_session_end == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_session_destroy =
+        (srd_session_destroy_fn)dsview_decode_load_symbol("srd_session_destroy", &status);
+    if (g_decode_runtime_api.srd_session_destroy == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_inst_new =
+        (srd_inst_new_fn)dsview_decode_load_symbol("srd_inst_new", &status);
+    if (g_decode_runtime_api.srd_inst_new == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_inst_channel_set_all =
+        (srd_inst_channel_set_all_fn)dsview_decode_load_symbol("srd_inst_channel_set_all", &status);
+    if (g_decode_runtime_api.srd_inst_channel_set_all == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
+    g_decode_runtime_api.srd_inst_stack =
+        (srd_inst_stack_fn)dsview_decode_load_symbol("srd_inst_stack", &status);
+    if (g_decode_runtime_api.srd_inst_stack == NULL) {
+        dsview_decode_runtime_unload();
+        return status;
+    }
 
     return DSVIEW_DECODE_OK;
 }
@@ -1112,6 +1267,622 @@ void dsview_decode_free_metadata(struct dsview_decode_metadata *metadata)
     dsview_decode_free_annotations(metadata->annotations, metadata->annotation_count);
     dsview_decode_free_annotation_rows(metadata->annotation_rows, metadata->annotation_row_count);
     memset(metadata, 0, sizeof(*metadata));
+}
+
+static GHashTable *dsview_decode_build_option_table(
+    const struct dsview_decode_option_entry *options,
+    size_t option_count)
+{
+    GHashTable *table = NULL;
+    size_t index;
+
+    table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
+    if (table == NULL) {
+        return NULL;
+    }
+
+    for (index = 0; index < option_count; index++) {
+        GVariant *value = NULL;
+
+        if (options[index].option_id == NULL || options[index].option_id[0] == '\0') {
+            g_hash_table_destroy(table);
+            dsview_decode_invalid_session("decode option ids must not be empty");
+            return NULL;
+        }
+
+        switch (options[index].value.kind) {
+        case DSVIEW_DECODE_OPTION_VALUE_KIND_STRING:
+            if (options[index].value.string_value == NULL) {
+                g_hash_table_destroy(table);
+                dsview_decode_invalid_session("string decode option values must not be null");
+                return NULL;
+            }
+            value = g_variant_new_string(options[index].value.string_value);
+            break;
+        case DSVIEW_DECODE_OPTION_VALUE_KIND_INTEGER:
+            value = g_variant_new_int64((gint64)options[index].value.integer_value);
+            break;
+        case DSVIEW_DECODE_OPTION_VALUE_KIND_FLOAT:
+            value = g_variant_new_double(options[index].value.float_value);
+            break;
+        default:
+            g_hash_table_destroy(table);
+            dsview_decode_invalid_session("unsupported decode option value kind");
+            return NULL;
+        }
+
+        g_hash_table_insert(table, g_strdup(options[index].option_id), g_variant_ref_sink(value));
+    }
+
+    return table;
+}
+
+static GHashTable *dsview_decode_build_channel_table(
+    const struct dsview_decode_channel_binding *bindings,
+    size_t binding_count,
+    unsigned int *out_input_channel_count)
+{
+    GHashTable *table = NULL;
+    size_t index;
+    unsigned int input_channel_count = 0;
+
+    table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
+    if (table == NULL) {
+        return NULL;
+    }
+
+    for (index = 0; index < binding_count; index++) {
+        if (bindings[index].channel_id == NULL || bindings[index].channel_id[0] == '\0') {
+            g_hash_table_destroy(table);
+            dsview_decode_invalid_session("decode channel ids must not be empty");
+            return NULL;
+        }
+
+        if (bindings[index].channel_index >= DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY) {
+            g_hash_table_destroy(table);
+            dsview_decode_invalid_session("decode channel bindings exceed supported input channel capacity");
+            return NULL;
+        }
+
+        g_hash_table_insert(
+            table,
+            g_strdup(bindings[index].channel_id),
+            g_variant_ref_sink(g_variant_new_int32((gint32)bindings[index].channel_index)));
+
+        if (bindings[index].channel_index + 1 > input_channel_count) {
+            input_channel_count = bindings[index].channel_index + 1;
+        }
+    }
+
+    if (out_input_channel_count != NULL) {
+        *out_input_channel_count = input_channel_count;
+    }
+
+    return table;
+}
+
+static struct srd_decoder_inst *dsview_decode_create_instance(
+    struct dsview_decode_execution_session *session,
+    const struct dsview_decode_instance_spec *spec,
+    int allow_channel_bindings,
+    unsigned int *out_input_channel_count)
+{
+    GHashTable *options = NULL;
+    GHashTable *channels = NULL;
+    struct srd_decoder_inst *instance = NULL;
+    unsigned int input_channel_count = 0;
+    int status;
+
+    if (session == NULL || spec == NULL || spec->decoder_id == NULL || spec->decoder_id[0] == '\0') {
+        dsview_decode_invalid_session("decode instance spec must include a decoder id");
+        return NULL;
+    }
+
+    if (!allow_channel_bindings && spec->channel_binding_count > 0) {
+        dsview_decode_invalid_session("only the root decoder may bind logic channels");
+        return NULL;
+    }
+
+    options = dsview_decode_build_option_table(spec->options, spec->option_count);
+    if (spec->option_count > 0 && options == NULL) {
+        return NULL;
+    }
+
+    instance = g_decode_runtime_api.srd_inst_new(session->session, spec->decoder_id, options);
+    if (options != NULL) {
+        g_hash_table_destroy(options);
+    }
+    if (instance == NULL) {
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_UPSTREAM,
+            "decoder instance creation failed",
+            "failed to create decode runtime instance");
+        return NULL;
+    }
+
+    if (allow_channel_bindings && spec->channel_binding_count > 0) {
+        channels = dsview_decode_build_channel_table(
+            spec->channel_bindings,
+            spec->channel_binding_count,
+            &input_channel_count);
+        if (channels == NULL) {
+            return NULL;
+        }
+
+        status = g_decode_runtime_api.srd_inst_channel_set_all(instance, channels);
+        g_hash_table_destroy(channels);
+        if (status != SRD_OK) {
+            dsview_decode_capture_upstream_error(status, 0);
+            return NULL;
+        }
+    }
+
+    if (out_input_channel_count != NULL) {
+        *out_input_channel_count = input_channel_count;
+    }
+    return instance;
+}
+
+static int dsview_decode_build_split_chunk(
+    const struct dsview_decode_execution_session *session,
+    const struct dsview_decode_logic_chunk *chunk,
+    const uint8_t ***out_inbuf,
+    uint8_t **out_inbuf_const,
+    uint8_t ***out_owned_buffers,
+    uint64_t *out_sample_count)
+{
+    const uint8_t **inbuf = NULL;
+    uint8_t *inbuf_const = NULL;
+    uint8_t **owned_buffers = NULL;
+    size_t sample_count;
+    size_t root_channel_count;
+    size_t buffer_len;
+    size_t sample_index;
+    int channel_order;
+
+    if (chunk->unitsize == 0) {
+        return dsview_decode_invalid_shape("split-logic chunks require a non-zero unitsize");
+    }
+    if ((chunk->sample_bytes_len % chunk->unitsize) != 0) {
+        return dsview_decode_invalid_shape("split-logic sample bytes must align to unitsize");
+    }
+    if (session->input_channel_count == 0) {
+        return dsview_decode_invalid_session("decode session is missing root channel bindings");
+    }
+    if (((unsigned int)chunk->unitsize * 8U) < session->input_channel_count) {
+        return dsview_decode_invalid_shape("split-logic unitsize cannot represent the bound channel indexes");
+    }
+
+    sample_count = chunk->sample_bytes_len / chunk->unitsize;
+    if (sample_count == 0) {
+        return dsview_decode_invalid_shape("split-logic chunks must contain at least one sample");
+    }
+
+    root_channel_count = (size_t)session->root->dec_num_channels;
+    buffer_len = (sample_count + 7U) / 8U;
+
+    inbuf = (const uint8_t **)calloc(root_channel_count, sizeof(*inbuf));
+    inbuf_const = (uint8_t *)calloc(root_channel_count, sizeof(*inbuf_const));
+    owned_buffers = (uint8_t **)calloc(root_channel_count, sizeof(*owned_buffers));
+    if (inbuf == NULL || inbuf_const == NULL || owned_buffers == NULL) {
+        free((void *)inbuf);
+        free(inbuf_const);
+        free(owned_buffers);
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_MALLOC,
+            "memory allocation error",
+            "failed to allocate split-logic decode buffers");
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    for (channel_order = 0; channel_order < session->root->dec_num_channels; channel_order++) {
+        int raw_channel_index = session->root->dec_channelmap[channel_order];
+
+        if (raw_channel_index < 0) {
+            inbuf[channel_order] = NULL;
+            inbuf_const[channel_order] = 0;
+            continue;
+        }
+
+        owned_buffers[channel_order] = (uint8_t *)calloc(buffer_len, sizeof(uint8_t));
+        if (owned_buffers[channel_order] == NULL) {
+            dsview_decode_free_chunk_buffers(session, inbuf, inbuf_const, owned_buffers);
+            dsview_decode_set_error_detail(
+                DSVIEW_DECODE_ERR_MALLOC,
+                "memory allocation error",
+                "failed to allocate split-logic per-channel buffers");
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+
+        for (sample_index = 0; sample_index < sample_count; sample_index++) {
+            const uint8_t *sample = chunk->sample_bytes + (sample_index * chunk->unitsize);
+            uint8_t sample_byte = sample[raw_channel_index / 8];
+            uint8_t bit = (uint8_t)((sample_byte >> (raw_channel_index % 8)) & 0x1U);
+
+            if (bit != 0) {
+                owned_buffers[channel_order][sample_index / 8] |= (uint8_t)(1U << (sample_index % 8));
+            }
+        }
+
+        inbuf[channel_order] = owned_buffers[channel_order];
+    }
+
+    *out_inbuf = inbuf;
+    *out_inbuf_const = inbuf_const;
+    *out_owned_buffers = owned_buffers;
+    *out_sample_count = (uint64_t)sample_count;
+    return DSVIEW_DECODE_OK;
+}
+
+static int dsview_decode_build_cross_chunk(
+    const struct dsview_decode_execution_session *session,
+    const struct dsview_decode_logic_chunk *chunk,
+    const uint8_t ***out_inbuf,
+    uint8_t **out_inbuf_const,
+    uint8_t ***out_owned_buffers,
+    uint64_t *out_sample_count)
+{
+    const uint8_t **inbuf = NULL;
+    uint8_t *inbuf_const = NULL;
+    uint8_t **owned_buffers = NULL;
+    size_t block_count;
+    size_t root_channel_count;
+    size_t channel_bytes;
+    size_t block_stride;
+    size_t block_index;
+    int channel_order;
+
+    if (chunk->channel_count == 0) {
+        return dsview_decode_invalid_shape("cross-logic chunks require a non-zero channel count");
+    }
+    if (session->input_channel_count == 0) {
+        return dsview_decode_invalid_session("decode session is missing root channel bindings");
+    }
+    if (chunk->channel_count < session->input_channel_count) {
+        return dsview_decode_invalid_shape("cross-logic channel count must cover every bound root channel");
+    }
+
+    block_stride = (size_t)chunk->channel_count * sizeof(uint64_t);
+    if ((chunk->sample_bytes_len % block_stride) != 0) {
+        return dsview_decode_invalid_shape("cross-logic sample bytes must align to channel_count * 8");
+    }
+
+    block_count = chunk->sample_bytes_len / block_stride;
+    if (block_count == 0) {
+        return dsview_decode_invalid_shape("cross-logic chunks must contain at least one sample block");
+    }
+
+    root_channel_count = (size_t)session->root->dec_num_channels;
+    channel_bytes = block_count * sizeof(uint64_t);
+
+    inbuf = (const uint8_t **)calloc(root_channel_count, sizeof(*inbuf));
+    inbuf_const = (uint8_t *)calloc(root_channel_count, sizeof(*inbuf_const));
+    owned_buffers = (uint8_t **)calloc(root_channel_count, sizeof(*owned_buffers));
+    if (inbuf == NULL || inbuf_const == NULL || owned_buffers == NULL) {
+        free((void *)inbuf);
+        free(inbuf_const);
+        free(owned_buffers);
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_MALLOC,
+            "memory allocation error",
+            "failed to allocate cross-logic decode buffers");
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    for (channel_order = 0; channel_order < session->root->dec_num_channels; channel_order++) {
+        int raw_channel_index = session->root->dec_channelmap[channel_order];
+
+        if (raw_channel_index < 0) {
+            inbuf[channel_order] = NULL;
+            inbuf_const[channel_order] = 0;
+            continue;
+        }
+
+        owned_buffers[channel_order] = (uint8_t *)malloc(channel_bytes);
+        if (owned_buffers[channel_order] == NULL) {
+            dsview_decode_free_chunk_buffers(session, inbuf, inbuf_const, owned_buffers);
+            dsview_decode_set_error_detail(
+                DSVIEW_DECODE_ERR_MALLOC,
+                "memory allocation error",
+                "failed to allocate cross-logic per-channel buffers");
+            return DSVIEW_DECODE_ERR_MALLOC;
+        }
+
+        for (block_index = 0; block_index < block_count; block_index++) {
+            const uint8_t *src = chunk->sample_bytes + (block_index * block_stride) + ((size_t)raw_channel_index * sizeof(uint64_t));
+            memcpy(owned_buffers[channel_order] + (block_index * sizeof(uint64_t)), src, sizeof(uint64_t));
+        }
+
+        inbuf[channel_order] = owned_buffers[channel_order];
+    }
+
+    *out_inbuf = inbuf;
+    *out_inbuf_const = inbuf_const;
+    *out_owned_buffers = owned_buffers;
+    *out_sample_count = (uint64_t)(block_count * 64U);
+    return DSVIEW_DECODE_OK;
+}
+
+static void dsview_decode_free_chunk_buffers(
+    const struct dsview_decode_execution_session *session,
+    const uint8_t **inbuf,
+    uint8_t *inbuf_const,
+    uint8_t **owned_buffers)
+{
+    int channel_order;
+
+    if (owned_buffers != NULL && session != NULL && session->root != NULL) {
+        for (channel_order = 0; channel_order < session->root->dec_num_channels; channel_order++) {
+            free(owned_buffers[channel_order]);
+        }
+    }
+
+    free(owned_buffers);
+    free(inbuf_const);
+    free((void *)inbuf);
+}
+
+int dsview_decode_session_new(struct dsview_decode_execution_session **out_session)
+{
+    struct dsview_decode_execution_session *session = NULL;
+    int status;
+
+    if (out_session == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+    *out_session = NULL;
+
+    if (g_decode_runtime_api.library_handle == NULL) {
+        return dsview_decode_not_loaded();
+    }
+    if (!g_decode_runtime_api.initialized) {
+        return dsview_decode_not_initialized();
+    }
+
+    session = (struct dsview_decode_execution_session *)calloc(1, sizeof(*session));
+    if (session == NULL) {
+        dsview_decode_set_error_detail(
+            DSVIEW_DECODE_ERR_MALLOC,
+            "memory allocation error",
+            "failed to allocate decode execution session");
+        return DSVIEW_DECODE_ERR_MALLOC;
+    }
+
+    status = g_decode_runtime_api.srd_session_new(&session->session);
+    if (status != SRD_OK || session->session == NULL) {
+        free(session);
+        dsview_decode_capture_upstream_error(status, 0);
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+
+    dsview_decode_clear_error_state();
+    *out_session = session;
+    return DSVIEW_DECODE_OK;
+}
+
+int dsview_decode_session_set_samplerate(
+    struct dsview_decode_execution_session *session,
+    unsigned long long samplerate_hz)
+{
+    int status;
+
+    if (session == NULL || session->session == NULL) {
+        return dsview_decode_invalid_session("decode session has not been created");
+    }
+    if (samplerate_hz == 0) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+
+    status = g_decode_runtime_api.srd_session_metadata_set(
+        session->session,
+        SRD_CONF_SAMPLERATE,
+        g_variant_new_uint64((guint64)samplerate_hz));
+    if (status != SRD_OK) {
+        dsview_decode_capture_upstream_error(status, 0);
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+
+    dsview_decode_clear_error_state();
+    return DSVIEW_DECODE_OK;
+}
+
+int dsview_decode_session_build_linear_stack(
+    struct dsview_decode_execution_session *session,
+    const struct dsview_decode_instance_spec *root,
+    const struct dsview_decode_instance_spec *stack,
+    size_t stack_count)
+{
+    struct srd_decoder_inst *previous = NULL;
+    size_t index;
+    int status;
+
+    if (session == NULL || session->session == NULL || root == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+    if (session->root != NULL) {
+        return dsview_decode_invalid_session("decode session stack has already been built");
+    }
+
+    session->root = dsview_decode_create_instance(session, root, 1, &session->input_channel_count);
+    if (session->root == NULL) {
+        return g_decode_runtime_api.last_error_code != DSVIEW_DECODE_OK
+            ? g_decode_runtime_api.last_error_code
+            : DSVIEW_DECODE_ERR_UPSTREAM;
+    }
+
+    previous = session->root;
+    for (index = 0; index < stack_count; index++) {
+        struct srd_decoder_inst *current =
+            dsview_decode_create_instance(session, &stack[index], 0, NULL);
+        if (current == NULL) {
+            return g_decode_runtime_api.last_error_code != DSVIEW_DECODE_OK
+                ? g_decode_runtime_api.last_error_code
+                : DSVIEW_DECODE_ERR_UPSTREAM;
+        }
+
+        status = g_decode_runtime_api.srd_inst_stack(session->session, previous, current);
+        if (status != SRD_OK) {
+            dsview_decode_capture_upstream_error(status, 0);
+            return dsview_decode_map_upstream_status(status, 0);
+        }
+
+        previous = current;
+    }
+
+    dsview_decode_clear_error_state();
+    return DSVIEW_DECODE_OK;
+}
+
+int dsview_decode_session_start(struct dsview_decode_execution_session *session)
+{
+    int status;
+    char *error = NULL;
+
+    if (session == NULL || session->session == NULL) {
+        return dsview_decode_invalid_session("decode session has not been created");
+    }
+    if (session->root == NULL) {
+        return dsview_decode_invalid_session("decode session must build a root decoder before start");
+    }
+    if (session->started) {
+        return dsview_decode_invalid_session("decode session has already been started");
+    }
+
+    status = g_decode_runtime_api.srd_session_start(session->session, &error);
+    if (status != SRD_OK) {
+        if (error != NULL) {
+            dsview_decode_clear_error_from_gchar(error);
+        } else {
+            dsview_decode_capture_upstream_error(status, 0);
+        }
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+
+    session->started = 1;
+    session->ended = 0;
+    dsview_decode_clear_error_state();
+    return DSVIEW_DECODE_OK;
+}
+
+int dsview_decode_session_send_logic_chunk(
+    struct dsview_decode_execution_session *session,
+    const struct dsview_decode_logic_chunk *chunk)
+{
+    const uint8_t **inbuf = NULL;
+    uint8_t *inbuf_const = NULL;
+    uint8_t **owned_buffers = NULL;
+    uint64_t sample_count = 0;
+    int status;
+    char *error = NULL;
+
+    if (session == NULL || session->session == NULL || chunk == NULL) {
+        return DSVIEW_DECODE_ERR_ARG;
+    }
+    if (!session->started || session->ended) {
+        return dsview_decode_invalid_session("decode session must be started before sending logic chunks");
+    }
+    if (chunk->sample_bytes == NULL || chunk->sample_bytes_len == 0) {
+        return dsview_decode_invalid_shape("logic chunks must include sample bytes");
+    }
+    if (chunk->abs_end_sample <= chunk->abs_start_sample) {
+        return dsview_decode_invalid_shape("logic chunk absolute bounds must advance forward");
+    }
+
+    switch (chunk->format) {
+    case DSVIEW_DECODE_LOGIC_FORMAT_SPLIT:
+        status = dsview_decode_build_split_chunk(
+            session,
+            chunk,
+            &inbuf,
+            &inbuf_const,
+            &owned_buffers,
+            &sample_count);
+        break;
+    case DSVIEW_DECODE_LOGIC_FORMAT_CROSS:
+        status = dsview_decode_build_cross_chunk(
+            session,
+            chunk,
+            &inbuf,
+            &inbuf_const,
+            &owned_buffers,
+            &sample_count);
+        break;
+    default:
+        return dsview_decode_invalid_shape("unknown decode logic chunk format");
+    }
+
+    if (status != DSVIEW_DECODE_OK) {
+        return status;
+    }
+
+    if ((chunk->abs_end_sample - chunk->abs_start_sample) != sample_count) {
+        dsview_decode_free_chunk_buffers(session, inbuf, inbuf_const, owned_buffers);
+        return dsview_decode_invalid_shape("logic chunk absolute bounds must match the decoded sample count");
+    }
+
+    status = g_decode_runtime_api.srd_session_send(
+        session->session,
+        chunk->abs_start_sample,
+        chunk->abs_end_sample,
+        inbuf,
+        inbuf_const,
+        sample_count,
+        &error);
+    dsview_decode_free_chunk_buffers(session, inbuf, inbuf_const, owned_buffers);
+    if (status != SRD_OK) {
+        if (error != NULL) {
+            dsview_decode_clear_error_from_gchar(error);
+        } else {
+            dsview_decode_capture_upstream_error(status, 0);
+        }
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+
+    dsview_decode_clear_error_state();
+    return DSVIEW_DECODE_OK;
+}
+
+int dsview_decode_session_end(struct dsview_decode_execution_session *session)
+{
+    int status;
+    char *error = NULL;
+
+    if (session == NULL || session->session == NULL) {
+        return dsview_decode_invalid_session("decode session has not been created");
+    }
+    if (!session->started) {
+        return dsview_decode_invalid_session("decode session must be started before it can end");
+    }
+    if (session->ended) {
+        return DSVIEW_DECODE_OK;
+    }
+
+    status = g_decode_runtime_api.srd_session_end(session->session, &error);
+    if (status != SRD_OK) {
+        if (error != NULL) {
+            dsview_decode_clear_error_from_gchar(error);
+        } else {
+            dsview_decode_capture_upstream_error(status, 0);
+        }
+        return dsview_decode_map_upstream_status(status, 0);
+    }
+
+    session->ended = 1;
+    dsview_decode_clear_error_state();
+    return DSVIEW_DECODE_OK;
+}
+
+void dsview_decode_session_destroy(struct dsview_decode_execution_session *session)
+{
+    if (session == NULL) {
+        return;
+    }
+
+    if (session->session != NULL && g_decode_runtime_api.srd_session_destroy != NULL) {
+        g_decode_runtime_api.srd_session_destroy(session->session);
+    }
+
+    free(session);
 }
 
 int dsview_decode_inspect(const char *decoder_id, struct dsview_decode_metadata *out_metadata)

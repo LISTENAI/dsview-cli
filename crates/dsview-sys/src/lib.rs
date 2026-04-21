@@ -8,6 +8,7 @@ use std::fmt;
 use std::fs;
 use std::os::raw::{c_char, c_int};
 use std::path::{Path, PathBuf};
+use std::ptr::NonNull;
 
 use thiserror::Error;
 
@@ -142,6 +143,24 @@ unsafe extern "C" {
         out_metadata: *mut RawDecodeMetadata,
     ) -> c_int;
     fn dsview_decode_free_metadata(metadata: *mut RawDecodeMetadata);
+    fn dsview_decode_session_new(out_session: *mut *mut RawDecodeExecutionSession) -> c_int;
+    fn dsview_decode_session_set_samplerate(
+        session: *mut RawDecodeExecutionSession,
+        samplerate_hz: u64,
+    ) -> c_int;
+    fn dsview_decode_session_build_linear_stack(
+        session: *mut RawDecodeExecutionSession,
+        root: *const RawDecodeInstanceSpec,
+        stack: *const RawDecodeInstanceSpec,
+        stack_count: usize,
+    ) -> c_int;
+    fn dsview_decode_session_start(session: *mut RawDecodeExecutionSession) -> c_int;
+    fn dsview_decode_session_send_logic_chunk(
+        session: *mut RawDecodeExecutionSession,
+        chunk: *const RawDecodeLogicChunk,
+    ) -> c_int;
+    fn dsview_decode_session_end(session: *mut RawDecodeExecutionSession) -> c_int;
+    fn dsview_decode_session_destroy(session: *mut RawDecodeExecutionSession);
 }
 
 const SR_OK: i32 = 0;
@@ -179,6 +198,8 @@ const DSVIEW_DECODE_ERR_DECODER_LOAD: i32 = -24;
 const DSVIEW_DECODE_ERR_UNKNOWN_DECODER: i32 = -25;
 const DSVIEW_DECODE_ERR_UPSTREAM: i32 = -26;
 const DSVIEW_DECODE_ERR_MALLOC: i32 = -27;
+const DSVIEW_DECODE_ERR_INPUT_SHAPE: i32 = -28;
+const DSVIEW_DECODE_ERR_SESSION: i32 = -29;
 
 const DEVICE_NAME_CAPACITY: usize = 150;
 const OPTION_LABEL_CAPACITY: usize = 64;
@@ -399,6 +420,88 @@ struct RawDecodeMetadata {
     annotation_row_count: usize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeOptionValue {
+    kind: c_int,
+    string_value: *const c_char,
+    integer_value: i64,
+    float_value: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeOptionEntry {
+    option_id: *const c_char,
+    value: RawDecodeOptionValue,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeChannelBinding {
+    channel_id: *const c_char,
+    channel_index: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeInstanceSpec {
+    decoder_id: *const c_char,
+    channel_bindings: *const RawDecodeChannelBinding,
+    channel_binding_count: usize,
+    options: *const RawDecodeOptionEntry,
+    option_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawDecodeLogicChunk {
+    format: c_int,
+    unitsize: u16,
+    channel_count: u16,
+    abs_start_sample: u64,
+    abs_end_sample: u64,
+    sample_bytes: *const u8,
+    sample_bytes_len: usize,
+}
+
+#[repr(C)]
+struct RawDecodeExecutionSession {
+    _private: [u8; 0],
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DecodeSessionOptionValue {
+    String(String),
+    Integer(i64),
+    Float(f64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodeSessionOption {
+    pub option_id: String,
+    pub value: DecodeSessionOptionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeSessionChannelBinding {
+    pub channel_id: String,
+    pub channel_index: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodeSessionInstance {
+    pub decoder_id: String,
+    pub channel_bindings: Vec<DecodeSessionChannelBinding>,
+    pub options: Vec<DecodeSessionOption>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeExecutionLogicFormat {
+    SplitLogic { unitsize: u16 },
+    CrossLogic { channel_count: u16 },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VcdExportRequest {
     pub samplerate_hz: u64,
@@ -470,6 +573,8 @@ pub enum DecodeRuntimeErrorCode {
     UnknownDecoder,
     Upstream,
     OutOfMemory,
+    InputShape,
+    SessionState,
     Unknown(i32),
 }
 
@@ -482,6 +587,8 @@ impl DecodeRuntimeErrorCode {
             DSVIEW_DECODE_ERR_UNKNOWN_DECODER => Self::UnknownDecoder,
             DSVIEW_DECODE_ERR_UPSTREAM => Self::Upstream,
             DSVIEW_DECODE_ERR_MALLOC => Self::OutOfMemory,
+            DSVIEW_DECODE_ERR_INPUT_SHAPE => Self::InputShape,
+            DSVIEW_DECODE_ERR_SESSION => Self::SessionState,
             other => Self::Unknown(other),
         }
     }
@@ -1856,6 +1963,405 @@ impl Drop for DecodeRuntimeBridge {
             let _ = dsview_decode_runtime_exit();
         };
     }
+}
+
+pub struct DecodeExecutionSession {
+    raw: NonNull<RawDecodeExecutionSession>,
+    next_abs_start: Option<u64>,
+}
+
+impl DecodeExecutionSession {
+    pub fn new() -> Result<Self, DecodeRuntimeError> {
+        let mut raw = std::ptr::null_mut();
+        decode_native_call_status("decode session new", unsafe {
+            dsview_decode_session_new(&mut raw)
+        })?;
+        let raw = NonNull::new(raw).ok_or_else(|| {
+            DecodeRuntimeError::NativeCall {
+                operation: "decode session new",
+                code: DecodeRuntimeErrorCode::SessionState,
+                detail: "decode session bridge returned a null session".to_string(),
+            }
+        })?;
+        Ok(Self {
+            raw,
+            next_abs_start: None,
+        })
+    }
+
+    pub fn set_samplerate_hz(&mut self, samplerate_hz: u64) -> Result<(), DecodeRuntimeError> {
+        if samplerate_hz == 0 {
+            return Err(DecodeRuntimeError::InvalidArgument(
+                "decode session samplerate must be greater than zero".to_string(),
+            ));
+        }
+        decode_native_call_status("decode session set samplerate", unsafe {
+            dsview_decode_session_set_samplerate(self.raw.as_ptr(), samplerate_hz)
+        })
+    }
+
+    pub fn build_linear_stack(
+        &mut self,
+        root: &DecodeSessionInstance,
+        stack: &[DecodeSessionInstance],
+    ) -> Result<(), DecodeRuntimeError> {
+        let raw_root = OwnedRawDecodeInstanceSpec::new(root)?;
+        let raw_stack = stack
+            .iter()
+            .map(OwnedRawDecodeInstanceSpec::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        let raw_stack_specs = raw_stack
+            .iter()
+            .map(OwnedRawDecodeInstanceSpec::as_raw)
+            .collect::<Vec<_>>();
+        let stack_ptr = if raw_stack_specs.is_empty() {
+            std::ptr::null()
+        } else {
+            raw_stack_specs.as_ptr()
+        };
+        decode_native_call_status("decode session build linear stack", unsafe {
+            dsview_decode_session_build_linear_stack(
+                self.raw.as_ptr(),
+                &raw_root.as_raw(),
+                stack_ptr,
+                raw_stack_specs.len(),
+            )
+        })
+    }
+
+    pub fn start(&mut self) -> Result<(), DecodeRuntimeError> {
+        self.next_abs_start = None;
+        decode_native_call_status("decode session start", unsafe {
+            dsview_decode_session_start(self.raw.as_ptr())
+        })
+    }
+
+    pub fn end(&mut self) -> Result<(), DecodeRuntimeError> {
+        decode_native_call_status("decode session end", unsafe {
+            dsview_decode_session_end(self.raw.as_ptr())
+        })
+    }
+}
+
+impl Drop for DecodeExecutionSession {
+    fn drop(&mut self) {
+        unsafe {
+            dsview_decode_session_destroy(self.raw.as_ptr());
+        }
+    }
+}
+
+pub fn session_send_logic_chunk(
+    session: &mut DecodeExecutionSession,
+    abs_start_sample: u64,
+    sample_bytes: &[u8],
+    format: DecodeExecutionLogicFormat,
+    logic_packet_lengths: Option<&[usize]>,
+) -> Result<(), DecodeRuntimeError> {
+    if sample_bytes.is_empty() {
+        return Err(DecodeRuntimeError::InvalidArgument(
+            "sample bytes must not be empty".to_string(),
+        ));
+    }
+
+    let alignment = logic_chunk_alignment(format)?;
+    validate_logic_packet_lengths(sample_bytes.len(), alignment, logic_packet_lengths)?;
+
+    let expected_start = session.next_abs_start.unwrap_or(abs_start_sample);
+    if abs_start_sample != expected_start {
+        return Err(DecodeRuntimeError::InvalidArgument(
+            "absolute sample progression must continue from the previous chunk end".to_string(),
+        ));
+    }
+
+    let packet_lengths = logic_packet_lengths.unwrap_or(&[]);
+    let mut cursor = abs_start_sample;
+
+    if packet_lengths.is_empty() {
+        send_raw_logic_chunk(session, cursor, sample_bytes, format)?;
+        session.next_abs_start = Some(
+            cursor
+                .checked_add(logic_chunk_sample_count(sample_bytes.len(), format)?)
+                .ok_or_else(|| {
+                    DecodeRuntimeError::InvalidArgument(
+                        "absolute sample progression overflowed u64".to_string(),
+                    )
+                })?,
+        );
+        return Ok(());
+    }
+
+    let mut offset = 0;
+    for packet_len in packet_lengths {
+        let packet = &sample_bytes[offset..offset + packet_len];
+        let packet_samples = logic_chunk_sample_count(packet.len(), format)?;
+        send_raw_logic_chunk(session, cursor, packet, format)?;
+        cursor = cursor.checked_add(packet_samples).ok_or_else(|| {
+            DecodeRuntimeError::InvalidArgument(
+                "absolute sample progression overflowed u64".to_string(),
+            )
+        })?;
+        offset += packet_len;
+    }
+
+    session.next_abs_start = Some(cursor);
+    Ok(())
+}
+
+struct OwnedRawDecodeOptionEntry {
+    option_id: CString,
+    string_value: Option<CString>,
+    integer_value: i64,
+    float_value: f64,
+    kind: c_int,
+}
+
+impl OwnedRawDecodeOptionEntry {
+    fn new(option: &DecodeSessionOption) -> Result<Self, DecodeRuntimeError> {
+        let option_id = CString::new(option.option_id.as_str()).map_err(|_| {
+            DecodeRuntimeError::InvalidArgument(
+                "decode option ids must not contain interior NUL bytes".to_string(),
+            )
+        })?;
+
+        let (kind, string_value, integer_value, float_value) = match &option.value {
+            DecodeSessionOptionValue::String(value) => (
+                1,
+                Some(CString::new(value.as_str()).map_err(|_| {
+                    DecodeRuntimeError::InvalidArgument(
+                        "decode option string values must not contain interior NUL bytes"
+                            .to_string(),
+                    )
+                })?),
+                0,
+                0.0,
+            ),
+            DecodeSessionOptionValue::Integer(value) => (2, None, *value, 0.0),
+            DecodeSessionOptionValue::Float(value) => (3, None, 0, *value),
+        };
+
+        Ok(Self {
+            option_id,
+            string_value,
+            integer_value,
+            float_value,
+            kind,
+        })
+    }
+
+    fn as_raw(&self) -> RawDecodeOptionEntry {
+        RawDecodeOptionEntry {
+            option_id: self.option_id.as_ptr(),
+            value: RawDecodeOptionValue {
+                kind: self.kind,
+                string_value: self
+                    .string_value
+                    .as_ref()
+                    .map_or(std::ptr::null(), |value| value.as_ptr()),
+                integer_value: self.integer_value,
+                float_value: self.float_value,
+            },
+        }
+    }
+}
+
+struct OwnedRawDecodeChannelBinding {
+    channel_id: CString,
+    channel_index: u32,
+}
+
+impl OwnedRawDecodeChannelBinding {
+    fn new(binding: &DecodeSessionChannelBinding) -> Result<Self, DecodeRuntimeError> {
+        Ok(Self {
+            channel_id: CString::new(binding.channel_id.as_str()).map_err(|_| {
+                DecodeRuntimeError::InvalidArgument(
+                    "decode channel ids must not contain interior NUL bytes".to_string(),
+                )
+            })?,
+            channel_index: binding.channel_index,
+        })
+    }
+
+    fn as_raw(&self) -> RawDecodeChannelBinding {
+        RawDecodeChannelBinding {
+            channel_id: self.channel_id.as_ptr(),
+            channel_index: self.channel_index,
+        }
+    }
+}
+
+struct OwnedRawDecodeInstanceSpec {
+    decoder_id: CString,
+    channel_bindings: Vec<OwnedRawDecodeChannelBinding>,
+    options: Vec<OwnedRawDecodeOptionEntry>,
+    raw_channel_bindings: Vec<RawDecodeChannelBinding>,
+    raw_options: Vec<RawDecodeOptionEntry>,
+}
+
+impl OwnedRawDecodeInstanceSpec {
+    fn new(instance: &DecodeSessionInstance) -> Result<Self, DecodeRuntimeError> {
+        Ok(Self {
+            decoder_id: CString::new(instance.decoder_id.as_str()).map_err(|_| {
+                DecodeRuntimeError::InvalidArgument(
+                    "decoder ids must not contain interior NUL bytes".to_string(),
+                )
+            })?,
+            channel_bindings: instance
+                .channel_bindings
+                .iter()
+                .map(OwnedRawDecodeChannelBinding::new)
+                .collect::<Result<Vec<_>, _>>()?,
+            options: instance
+                .options
+                .iter()
+                .map(OwnedRawDecodeOptionEntry::new)
+                .collect::<Result<Vec<_>, _>>()?,
+            raw_channel_bindings: Vec::new(),
+            raw_options: Vec::new(),
+        }
+        .with_raw_views())
+    }
+
+    fn with_raw_views(mut self) -> Self {
+        self.raw_channel_bindings = self
+            .channel_bindings
+            .iter()
+            .map(OwnedRawDecodeChannelBinding::as_raw)
+            .collect::<Vec<_>>();
+        self.raw_options = self
+            .options
+            .iter()
+            .map(OwnedRawDecodeOptionEntry::as_raw)
+            .collect::<Vec<_>>();
+        self
+    }
+
+    fn as_raw(&self) -> RawDecodeInstanceSpec {
+        RawDecodeInstanceSpec {
+            decoder_id: self.decoder_id.as_ptr(),
+            channel_bindings: if self.raw_channel_bindings.is_empty() {
+                std::ptr::null()
+            } else {
+                self.raw_channel_bindings.as_ptr()
+            },
+            channel_binding_count: self.raw_channel_bindings.len(),
+            options: if self.raw_options.is_empty() {
+                std::ptr::null()
+            } else {
+                self.raw_options.as_ptr()
+            },
+            option_count: self.raw_options.len(),
+        }
+    }
+}
+
+fn logic_chunk_alignment(format: DecodeExecutionLogicFormat) -> Result<usize, DecodeRuntimeError> {
+    match format {
+        DecodeExecutionLogicFormat::SplitLogic { unitsize } => {
+            if unitsize == 0 {
+                return Err(DecodeRuntimeError::InvalidArgument(
+                    "split-logic unitsize must be greater than zero".to_string(),
+                ));
+            }
+            Ok(unitsize as usize)
+        }
+        DecodeExecutionLogicFormat::CrossLogic { channel_count } => {
+            if channel_count == 0 {
+                return Err(DecodeRuntimeError::InvalidArgument(
+                    "cross-logic channel_count must be greater than zero".to_string(),
+                ));
+            }
+            Ok(channel_count as usize * std::mem::size_of::<u64>())
+        }
+    }
+}
+
+fn logic_chunk_sample_count(
+    sample_byte_len: usize,
+    format: DecodeExecutionLogicFormat,
+) -> Result<u64, DecodeRuntimeError> {
+    let alignment = logic_chunk_alignment(format)?;
+    if sample_byte_len == 0 {
+        return Err(DecodeRuntimeError::InvalidArgument(
+            "sample bytes must not be empty".to_string(),
+        ));
+    }
+    if sample_byte_len % alignment != 0 {
+        return Err(DecodeRuntimeError::InvalidArgument(
+            "sample bytes must be aligned to the requested logic format".to_string(),
+        ));
+    }
+
+    let sample_count = match format {
+        DecodeExecutionLogicFormat::SplitLogic { unitsize } => sample_byte_len / unitsize as usize,
+        DecodeExecutionLogicFormat::CrossLogic { channel_count } => {
+            (sample_byte_len / (channel_count as usize * std::mem::size_of::<u64>())) * 64
+        }
+    };
+    Ok(sample_count as u64)
+}
+
+fn validate_logic_packet_lengths(
+    sample_byte_len: usize,
+    alignment: usize,
+    logic_packet_lengths: Option<&[usize]>,
+) -> Result<(), DecodeRuntimeError> {
+    let Some(lengths) = logic_packet_lengths else {
+        return Ok(());
+    };
+    if lengths.is_empty() {
+        return Err(DecodeRuntimeError::InvalidArgument(
+            "logic packet lengths must not be empty when packet boundaries are supplied".to_string(),
+        ));
+    }
+
+    let expected_total = lengths.iter().sum::<usize>();
+    if expected_total != sample_byte_len {
+        return Err(DecodeRuntimeError::InvalidArgument(
+            "logic packet lengths must sum to the sample byte length".to_string(),
+        ));
+    }
+    if lengths
+        .iter()
+        .any(|length| *length == 0 || (*length % alignment) != 0)
+    {
+        return Err(DecodeRuntimeError::InvalidArgument(
+            "logic packet lengths must be non-zero and aligned to the requested logic format"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn send_raw_logic_chunk(
+    session: &mut DecodeExecutionSession,
+    abs_start_sample: u64,
+    sample_bytes: &[u8],
+    format: DecodeExecutionLogicFormat,
+) -> Result<(), DecodeRuntimeError> {
+    let sample_count = logic_chunk_sample_count(sample_bytes.len(), format)?;
+    let (format_code, unitsize, channel_count) = match format {
+        DecodeExecutionLogicFormat::SplitLogic { unitsize } => (1, unitsize, 0),
+        DecodeExecutionLogicFormat::CrossLogic { channel_count } => (2, 0, channel_count),
+    };
+    let chunk = RawDecodeLogicChunk {
+        format: format_code,
+        unitsize,
+        channel_count,
+        abs_start_sample,
+        abs_end_sample: abs_start_sample.checked_add(sample_count).ok_or_else(|| {
+            DecodeRuntimeError::InvalidArgument(
+                "absolute sample progression overflowed u64".to_string(),
+            )
+        })?,
+        sample_bytes: sample_bytes.as_ptr(),
+        sample_bytes_len: sample_bytes.len(),
+    };
+
+    decode_native_call_status("decode session send logic chunk", unsafe {
+        dsview_decode_session_send_logic_chunk(session.raw.as_ptr(), &chunk)
+    })
 }
 
 /// Reports whether the sys boundary is wired to the DSView public frontend API.

@@ -4,10 +4,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dsview_sys::{
-    decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
-    source_runtime_library_path, upstream_header_path, DecodeDecoder, DecodeRuntimeBridge,
-    DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode, ExportErrorCode,
-    RuntimeBridge, RuntimeError, VcdExportRequest,
+    decode_runtime_library_name, runtime_library_name, session_send_logic_chunk,
+    source_decode_runtime_library_path, source_runtime_library_path, upstream_header_path,
+    DecodeDecoder, DecodeExecutionLogicFormat, DecodeExecutionSession, DecodeRuntimeBridge,
+    DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode, DecodeSessionChannelBinding,
+    DecodeSessionInstance, ExportErrorCode, RuntimeBridge, RuntimeError, VcdExportRequest,
 };
 
 fn runtime_test_guard() -> &'static Mutex<()> {
@@ -27,6 +28,23 @@ fn skip_windows_vcd_goldens() -> bool {
 fn load_decode_runtime() -> Option<DecodeRuntimeBridge> {
     let path = source_decode_runtime_library_path()?;
     DecodeRuntimeBridge::load(path).ok()
+}
+
+fn i2c_root_instance() -> DecodeSessionInstance {
+    DecodeSessionInstance {
+        decoder_id: "0:i2c".to_string(),
+        channel_bindings: vec![
+            DecodeSessionChannelBinding {
+                channel_id: "scl".to_string(),
+                channel_index: 0,
+            },
+            DecodeSessionChannelBinding {
+                channel_id: "sda".to_string(),
+                channel_index: 1,
+            },
+        ],
+        options: vec![],
+    }
 }
 
 fn source_decoder_dir() -> PathBuf {
@@ -157,6 +175,40 @@ fn pack_cross_logic_blocks(blocks: &[&[u64]]) -> Vec<u8> {
     }
 
     packed
+}
+
+fn with_decode_execution_session(
+    assertion: impl FnOnce(&mut DecodeExecutionSession),
+) {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_decode_runtime() else {
+        return;
+    };
+    let decoder_dir = source_decoder_dir();
+    if !decoder_dir.exists() {
+        return;
+    }
+
+    runtime
+        .init(&decoder_dir)
+        .expect("decode runtime should initialize with source decoder dir");
+
+    let mut session =
+        DecodeExecutionSession::new().expect("decode execution session should construct");
+    session
+        .set_samplerate_hz(1_000_000)
+        .expect("decode execution session should accept samplerate");
+    session
+        .build_linear_stack(&i2c_root_instance(), &[])
+        .expect("decode execution session should build a linear root stack");
+    session
+        .start()
+        .expect("decode execution session should start");
+
+    assertion(&mut session);
+
+    drop(session);
+    runtime.exit().expect("decode runtime exit should succeed");
 }
 
 #[test]
@@ -370,6 +422,79 @@ fn safe_decode_decoder_wrapper_preserves_fixture_ids_and_labels() {
         decoder.longname, "Inter-Integrated Circuit",
         "preserve upstream label in safe wrapper"
     );
+}
+
+#[test]
+fn offline_decode_rejects_empty_sample_bytes() {
+    with_decode_execution_session(|session| {
+        let error = session_send_logic_chunk(
+            session,
+            0,
+            &[],
+            DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DecodeRuntimeError::InvalidArgument(detail) if detail.contains("sample bytes must not be empty")
+        ));
+    });
+}
+
+#[test]
+fn offline_decode_rejects_misaligned_logic_packet_lengths() {
+    with_decode_execution_session(|session| {
+        let sample_bytes = [0b00, 0b01, 0b10];
+        let packet_lengths = [2_usize, 1_usize];
+
+        let error = session_send_logic_chunk(
+            session,
+            0,
+            &sample_bytes,
+            DecodeExecutionLogicFormat::SplitLogic { unitsize: 2 },
+            Some(&packet_lengths),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DecodeRuntimeError::InvalidArgument(detail)
+                if detail.contains("aligned to the requested logic format")
+        ));
+    });
+}
+
+#[test]
+fn offline_decode_session_wrappers_require_absolute_sample_progression() {
+    with_decode_execution_session(|session| {
+        let first = [0b00, 0b01];
+        session_send_logic_chunk(
+            session,
+            0,
+            &first,
+            DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
+            None,
+        )
+        .expect("first chunk should establish the absolute cursor");
+
+        let second = [0b10, 0b11];
+        let error = session_send_logic_chunk(
+            session,
+            0,
+            &second,
+            DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DecodeRuntimeError::InvalidArgument(detail)
+                if detail.contains("absolute sample progression")
+        ));
+    });
 }
 
 #[test]
