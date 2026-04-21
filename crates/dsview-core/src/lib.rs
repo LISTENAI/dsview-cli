@@ -30,6 +30,12 @@ pub use dsview_sys::{
     RuntimeError, VcdExportFacts, VcdExportRequest,
 };
 use dsview_sys::{AcquisitionPacketStatus, RuntimeBridge};
+use dsview_sys::{
+    DecodeAnnotation as SysDecodeAnnotation, DecodeAnnotationRow as SysDecodeAnnotationRow,
+    DecodeChannel as SysDecodeChannel, DecodeDecoder as SysDecodeDecoder,
+    DecodeInput as SysDecodeInput, DecodeOption as SysDecodeOption,
+    DecodeOutput as SysDecodeOutput,
+};
 use serde::Serialize;
 use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
@@ -92,6 +98,164 @@ pub struct SupportedDevice {
     pub name: String,
     pub kind: SupportedDeviceKind,
     pub stable_id: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecoderInputDescriptor {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecoderOutputDescriptor {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecoderChannelDescriptor {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub order: i32,
+    pub channel_type: i32,
+    pub idn: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecoderOptionDescriptor {
+    pub id: String,
+    pub idn: Option<String>,
+    pub description: Option<String>,
+    pub default_value: Option<String>,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecoderAnnotationDescriptor {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub annotation_type: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecoderAnnotationRowDescriptor {
+    pub id: String,
+    pub description: Option<String>,
+    pub annotation_classes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecoderDescriptor {
+    pub id: String,
+    pub name: String,
+    pub longname: String,
+    pub description: String,
+    pub license: String,
+    pub inputs: Vec<DecoderInputDescriptor>,
+    pub outputs: Vec<DecoderOutputDescriptor>,
+    pub tags: Vec<String>,
+    pub required_channels: Vec<DecoderChannelDescriptor>,
+    pub optional_channels: Vec<DecoderChannelDescriptor>,
+    pub options: Vec<DecoderOptionDescriptor>,
+    pub annotations: Vec<DecoderAnnotationDescriptor>,
+    pub annotation_rows: Vec<DecoderAnnotationRowDescriptor>,
+}
+
+pub fn normalize_decoder_registry(decoders: Vec<SysDecodeDecoder>) -> Vec<DecoderDescriptor> {
+    decoders
+        .into_iter()
+        .map(normalize_decoder_descriptor)
+        .collect()
+}
+
+pub fn normalize_decoder_descriptor(decoder: SysDecodeDecoder) -> DecoderDescriptor {
+    DecoderDescriptor {
+        id: decoder.id,
+        name: decoder.name,
+        longname: decoder.longname,
+        description: decoder.description,
+        license: decoder.license,
+        inputs: decoder.inputs.into_iter().map(normalize_decoder_input).collect(),
+        outputs: decoder
+            .outputs
+            .into_iter()
+            .map(normalize_decoder_output)
+            .collect(),
+        tags: decoder.tags,
+        required_channels: decoder
+            .required_channels
+            .into_iter()
+            .map(normalize_decoder_channel)
+            .collect(),
+        optional_channels: decoder
+            .optional_channels
+            .into_iter()
+            .map(normalize_decoder_channel)
+            .collect(),
+        options: decoder
+            .options
+            .into_iter()
+            .map(normalize_decoder_option)
+            .collect(),
+        annotations: decoder
+            .annotations
+            .into_iter()
+            .map(normalize_decoder_annotation)
+            .collect(),
+        annotation_rows: decoder
+            .annotation_rows
+            .into_iter()
+            .map(normalize_decoder_annotation_row)
+            .collect(),
+    }
+}
+
+fn normalize_decoder_input(input: SysDecodeInput) -> DecoderInputDescriptor {
+    DecoderInputDescriptor { id: input.id }
+}
+
+fn normalize_decoder_output(output: SysDecodeOutput) -> DecoderOutputDescriptor {
+    DecoderOutputDescriptor { id: output.id }
+}
+
+fn normalize_decoder_channel(channel: SysDecodeChannel) -> DecoderChannelDescriptor {
+    DecoderChannelDescriptor {
+        id: channel.id,
+        name: channel.name,
+        description: channel.description,
+        order: channel.order,
+        channel_type: channel.channel_type,
+        idn: channel.idn,
+    }
+}
+
+fn normalize_decoder_option(option: SysDecodeOption) -> DecoderOptionDescriptor {
+    DecoderOptionDescriptor {
+        id: option.id,
+        idn: option.idn,
+        description: option.description,
+        default_value: option.default_value,
+        values: option.values,
+    }
+}
+
+fn normalize_decoder_annotation(annotation: SysDecodeAnnotation) -> DecoderAnnotationDescriptor {
+    DecoderAnnotationDescriptor {
+        id: annotation.id,
+        label: annotation.label,
+        description: annotation.description,
+        annotation_type: annotation.annotation_type,
+    }
+}
+
+fn normalize_decoder_annotation_row(
+    row: SysDecodeAnnotationRow,
+) -> DecoderAnnotationRowDescriptor {
+    DecoderAnnotationRowDescriptor {
+        id: row.id,
+        description: row.description,
+        annotation_classes: row.annotation_classes,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
