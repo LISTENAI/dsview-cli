@@ -13,7 +13,7 @@ This roadmap defines milestone `v1.2 DSView protocol decode CLI foundation`. It 
 ## Phases
 
 - [x] **Phase 14: Decode Runtime Boundary and Decoder Registry** - Add the native/runtime seam for `libsigrokdecode4DSL` and expose decoder discovery/inspection metadata to Rust and CLI. (completed 2026-04-21)
-- [ ] **Phase 15: Decode Config Model and Validation** - Define the config-driven decoder stack model and validate channel bindings/options before decode starts.
+- [x] **Phase 15: Decode Config Model and Validation** - Define the config-driven decoder stack model and validate channel bindings/options before decode starts. (completed 2026-04-21)
 - [ ] **Phase 16: Offline Decode Execution** - Execute offline protocol decode against saved logic artifacts, including stacked decoder runs.
 - [ ] **Phase 17: Decode Output and Workflow Reporting** - Publish stable machine-readable decode results and error/artifact reporting for a separate decode workflow.
 
@@ -87,7 +87,7 @@ Phases execute in numeric order: 14 -> 15 -> 16 -> 17
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 14. Decode Runtime Boundary and Decoder Registry | 3/3 | Complete    | 2026-04-21 |
-| 15. Decode Config Model and Validation | 0/3 | Not started | - |
+| 15. Decode Config Model and Validation | 3/3 | Complete    | 2026-04-21 |
 | 16. Offline Decode Execution | 0/3 | Not started | - |
 | 17. Decode Output and Workflow Reporting | 0/3 | Not started | - |
 

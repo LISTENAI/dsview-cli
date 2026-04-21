@@ -13,8 +13,8 @@
 
 ### Decode Configuration
 
-- [ ] **DEC-03**: User can define a decoder stack, channel bindings, and decoder options in a decode configuration file.
-- [ ] **DEC-04**: CLI validates a decode configuration against the selected decoder metadata before execution starts.
+- [x] **DEC-03**: User can define a decoder stack, channel bindings, and decoder options in a decode configuration file.
+- [x] **DEC-04**: CLI validates a decode configuration against the selected decoder metadata before execution starts.
 
 ### Offline Decode Execution
 
@@ -52,8 +52,8 @@
 |-------------|-------|--------|
 | DEC-01 | Phase 14 | Complete |
 | DEC-02 | Phase 14 | Complete |
-| DEC-03 | Phase 15 | Planned |
-| DEC-04 | Phase 15 | Planned |
+| DEC-03 | Phase 15 | Complete |
+| DEC-04 | Phase 15 | Complete |
 | DEC-05 | Phase 16 | Planned |
 | DEC-07 | Phase 16 | Planned |
 | DEC-06 | Phase 17 | Planned |
@@ -66,4 +66,4 @@
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-21 after completing Phase 14*
+*Last updated: 2026-04-21 after completing Phase 15*
