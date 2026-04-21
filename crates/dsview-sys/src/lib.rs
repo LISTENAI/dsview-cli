@@ -339,6 +339,7 @@ struct RawDecodeOption {
     id: *mut c_char,
     idn: *mut c_char,
     desc: *mut c_char,
+    value_kind: c_int,
     default_value: *mut c_char,
     values: *mut *mut c_char,
     value_count: usize,
@@ -523,8 +524,17 @@ pub struct DecodeOption {
     pub id: String,
     pub idn: Option<String>,
     pub description: Option<String>,
+    pub value_kind: DecodeOptionValueKind,
     pub default_value: Option<String>,
     pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeOptionValueKind {
+    Unknown,
+    String,
+    Integer,
+    Float,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1722,6 +1732,12 @@ pub struct DecodeRuntimeBridge {
 impl DecodeRuntimeBridge {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, DecodeRuntimeError> {
         let path = path.as_ref();
+        if !path.is_file() {
+            return Err(DecodeRuntimeError::LibraryLoad {
+                path: path.to_path_buf(),
+                detail: "decode runtime library path does not exist".to_string(),
+            });
+        }
         let c_path = path_to_decode_cstring(path)?;
         let status = unsafe { dsview_decode_runtime_load(c_path.as_ptr()) };
 
@@ -2083,9 +2099,19 @@ fn decode_option_from_raw(raw: &RawDecodeOption) -> Result<DecodeOption, DecodeR
         id: decode_required_c_string(raw.id.cast_const())?,
         idn: decode_optional_c_string(raw.idn.cast_const())?,
         description: decode_optional_c_string(raw.desc.cast_const())?,
+        value_kind: decode_option_value_kind_from_raw(raw.value_kind),
         default_value: decode_optional_c_string(raw.default_value.cast_const())?,
         values: decode_string_array(raw.values.cast_const(), raw.value_count)?,
     })
+}
+
+fn decode_option_value_kind_from_raw(raw: c_int) -> DecodeOptionValueKind {
+    match raw {
+        1 => DecodeOptionValueKind::String,
+        2 => DecodeOptionValueKind::Integer,
+        3 => DecodeOptionValueKind::Float,
+        _ => DecodeOptionValueKind::Unknown,
+    }
 }
 
 fn decode_annotation_from_raw(

@@ -561,6 +561,33 @@ static void dsview_decode_free_options(struct dsview_decode_option *options, siz
     free(options);
 }
 
+static int dsview_decode_option_value_kind_from_variant(const GVariant *value)
+{
+    GVariantClass variant_class;
+
+    if (value == NULL) {
+        return DSVIEW_DECODE_OPTION_VALUE_KIND_UNKNOWN;
+    }
+
+    variant_class = g_variant_classify((GVariant *)value);
+    switch (variant_class) {
+    case G_VARIANT_CLASS_STRING:
+        return DSVIEW_DECODE_OPTION_VALUE_KIND_STRING;
+    case G_VARIANT_CLASS_BYTE:
+    case G_VARIANT_CLASS_INT16:
+    case G_VARIANT_CLASS_UINT16:
+    case G_VARIANT_CLASS_INT32:
+    case G_VARIANT_CLASS_UINT32:
+    case G_VARIANT_CLASS_INT64:
+    case G_VARIANT_CLASS_UINT64:
+        return DSVIEW_DECODE_OPTION_VALUE_KIND_INTEGER;
+    case G_VARIANT_CLASS_DOUBLE:
+        return DSVIEW_DECODE_OPTION_VALUE_KIND_FLOAT;
+    default:
+        return DSVIEW_DECODE_OPTION_VALUE_KIND_UNKNOWN;
+    }
+}
+
 static int dsview_decode_copy_options(
     const GSList *source,
     struct dsview_decode_option **out_options,
@@ -595,6 +622,8 @@ static int dsview_decode_copy_options(
         options[index].id = dsview_decode_strdup(source_option->id);
         options[index].idn = dsview_decode_strdup(source_option->idn);
         options[index].desc = dsview_decode_strdup(source_option->desc);
+        options[index].value_kind =
+            dsview_decode_option_value_kind_from_variant(source_option->def);
         if (source_option->def != NULL) {
             printed = g_variant_print(source_option->def, TRUE);
             options[index].default_value = dsview_decode_strdup(printed);

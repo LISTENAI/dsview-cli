@@ -175,10 +175,18 @@ struct dsview_decode_channel {
     char *idn;
 };
 
+enum dsview_decode_option_value_kind {
+    DSVIEW_DECODE_OPTION_VALUE_KIND_UNKNOWN = 0,
+    DSVIEW_DECODE_OPTION_VALUE_KIND_STRING = 1,
+    DSVIEW_DECODE_OPTION_VALUE_KIND_INTEGER = 2,
+    DSVIEW_DECODE_OPTION_VALUE_KIND_FLOAT = 3,
+};
+
 struct dsview_decode_option {
     char *id;
     char *idn;
     char *desc;
+    int value_kind;
     char *default_value;
     char **values;
     size_t value_count;

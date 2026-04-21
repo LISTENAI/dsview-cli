@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use dsview_sys::{
     decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
     source_runtime_library_path, upstream_header_path, DecodeDecoder, DecodeRuntimeBridge,
-    DecodeRuntimeError, DecodeRuntimeErrorCode, ExportErrorCode, RuntimeBridge, RuntimeError,
-    VcdExportRequest,
+    DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode, ExportErrorCode,
+    RuntimeBridge, RuntimeError, VcdExportRequest,
 };
 
 fn runtime_test_guard() -> &'static Mutex<()> {
@@ -268,6 +268,81 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
             ..
         }
     ));
+
+    runtime.exit().expect("decode runtime exit should succeed");
+}
+
+#[test]
+fn decode_option_value_kind_follows_upstream_default_type() {
+    let _guard = runtime_test_guard().lock().unwrap();
+    let Some(runtime) = load_decode_runtime() else {
+        return;
+    };
+    let decoder_dir = source_decoder_dir();
+    if !decoder_dir.exists() {
+        return;
+    }
+
+    runtime
+        .init(&decoder_dir)
+        .expect("decode runtime should initialize with source decoder dir");
+
+    let list = runtime.decode_list().expect("decode_list should succeed");
+
+    let i2c = runtime
+        .decode_inspect("0:i2c")
+        .expect("i2c metadata should load");
+    let address_format = i2c
+        .options
+        .iter()
+        .find(|option| option.id == "address_format")
+        .expect("i2c should expose address_format");
+    assert_eq!(address_format.id, "address_format");
+    assert_eq!(address_format.value_kind, DecodeOptionValueKind::String);
+
+    let integer_decoder_id = list
+        .iter()
+        .find_map(|decoder| {
+            let inspected = runtime.decode_inspect(&decoder.id).ok()?;
+            inspected
+                .options
+                .iter()
+                .any(|option| option.id == "coilfreq")
+                .then_some(inspected.id)
+        })
+        .expect("expected at least one integer option fixture");
+    let integer_decoder = runtime
+        .decode_inspect(&integer_decoder_id)
+        .expect("integer fixture metadata should load");
+    let integer_option = integer_decoder
+        .options
+        .iter()
+        .find(|option| option.id == "coilfreq")
+        .expect("integer fixture should expose coilfreq");
+    assert_eq!(integer_option.id, "coilfreq");
+    assert_eq!(integer_option.value_kind, DecodeOptionValueKind::Integer);
+
+    let float_decoder_id = list
+        .iter()
+        .find_map(|decoder| {
+            let inspected = runtime.decode_inspect(&decoder.id).ok()?;
+            inspected
+                .options
+                .iter()
+                .any(|option| option.id == "sample_point")
+                .then_some(inspected.id)
+        })
+        .expect("expected at least one float option fixture");
+    let float_decoder = runtime
+        .decode_inspect(&float_decoder_id)
+        .expect("float fixture metadata should load");
+    let float_option = float_decoder
+        .options
+        .iter()
+        .find(|option| option.id == "sample_point")
+        .expect("float fixture should expose sample_point");
+    assert_eq!(float_option.id, "sample_point");
+    assert_eq!(float_option.value_kind, DecodeOptionValueKind::Float);
 
     runtime.exit().expect("decode runtime exit should succeed");
 }
