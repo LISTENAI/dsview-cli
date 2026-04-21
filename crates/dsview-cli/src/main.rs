@@ -38,6 +38,12 @@ use dsview_core::{
 };
 use serde::Serialize;
 
+#[cfg(debug_assertions)]
+use dsview_core::{
+    DecodeCapturedAnnotation, DecodeExecutionLogicFormat, DecodeRuntimeError,
+    OfflineDecodeRuntime, OfflineDecodeRuntimeSession,
+};
+
 const BUILD_VERSION: &str = match option_env!("DSVIEW_BUILD_VERSION") {
     Some(version) => version,
     None => env!("CARGO_PKG_VERSION"),
@@ -501,6 +507,13 @@ fn run_decode_validate(args: DecodeValidateArgs) -> Result<(), FailedCommand> {
 }
 
 fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
+    #[cfg(debug_assertions)]
+    if let Some(mode) = decode_test_fixture_mode() {
+        if let Some(result) = run_decode_run_from_fixture(mode, &args)? {
+            return Ok(result);
+        }
+    }
+
     let discovery = DecodeDiscovery::connect_auto(
         args.decode.decode_runtime.as_deref(),
         args.decode.decoder_dir.as_deref(),
@@ -531,6 +544,54 @@ fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
     );
     render_decode_run_success(args.decode.format, &response);
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn run_decode_run_from_fixture(
+    mode: DecodeTestFixtureMode,
+    args: &DecodeRunArgs,
+) -> Result<Option<()>, FailedCommand> {
+    match mode {
+        DecodeTestFixtureMode::RunSuccess | DecodeTestFixtureMode::RunRuntimeFailure => {
+            let validated = load_decode_run_config(
+                &args.config,
+                &validation_decode_fixture_registry(),
+                args.decode.format,
+            )?;
+            let input = load_offline_decode_input(&args.input, args.decode.format)?;
+            let runtime = DecodeRunFixtureRuntime::new(mode);
+            let result = core_run_offline_decode(&validated, &input, &runtime).map_err(|error| {
+                command_error(args.decode.format, classify_decode_run_error(&error))
+            })?;
+            let sample_count = input.sample_count().map_err(|error| {
+                command_error(args.decode.format, classify_decode_input_error(&error))
+            })?;
+            let annotation_decoder_ids = result
+                .annotations()
+                .iter()
+                .map(|annotation| annotation.decoder_id.clone())
+                .collect::<Vec<_>>();
+            let response = build_decode_run_response(
+                validated.version,
+                validated.decoder.descriptor.id.clone(),
+                validated.stack.len(),
+                sample_count,
+                result.annotations().len(),
+                &annotation_decoder_ids,
+            );
+            render_decode_run_success(args.decode.format, &response);
+            Ok(Some(()))
+        }
+        DecodeTestFixtureMode::MissingRuntime => Err(command_error(
+            args.decode.format,
+            classify_decode_error(&decode_fixture_missing_runtime_error()),
+        )),
+        DecodeTestFixtureMode::MissingMetadata => Err(command_error(
+            args.decode.format,
+            classify_decode_error(&decode_fixture_missing_metadata_error()),
+        )),
+        DecodeTestFixtureMode::Registry | DecodeTestFixtureMode::ValidationRegistry => Ok(None),
+    }
 }
 
 fn load_decode_run_config(
@@ -639,6 +700,8 @@ enum DecodeTestFixtureMode {
     ValidationRegistry,
     MissingRuntime,
     MissingMetadata,
+    RunSuccess,
+    RunRuntimeFailure,
 }
 
 #[cfg(debug_assertions)]
@@ -648,7 +711,106 @@ fn decode_test_fixture_mode() -> Option<DecodeTestFixtureMode> {
         Some("validation-registry") => Some(DecodeTestFixtureMode::ValidationRegistry),
         Some("missing-runtime") => Some(DecodeTestFixtureMode::MissingRuntime),
         Some("missing-metadata") => Some(DecodeTestFixtureMode::MissingMetadata),
+        Some("run-success") => Some(DecodeTestFixtureMode::RunSuccess),
+        Some("run-runtime-failure") => Some(DecodeTestFixtureMode::RunRuntimeFailure),
         _ => None,
+    }
+}
+
+#[cfg(debug_assertions)]
+struct DecodeRunFixtureRuntime {
+    mode: DecodeTestFixtureMode,
+}
+
+#[cfg(debug_assertions)]
+struct DecodeRunFixtureSession {
+    mode: DecodeTestFixtureMode,
+    sent_chunks: usize,
+}
+
+#[cfg(debug_assertions)]
+impl DecodeRunFixtureRuntime {
+    fn new(mode: DecodeTestFixtureMode) -> Self {
+        Self { mode }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl OfflineDecodeRuntime for DecodeRunFixtureRuntime {
+    type Session = DecodeRunFixtureSession;
+
+    fn create_session(&self) -> Result<Self::Session, DecodeRuntimeError> {
+        Ok(DecodeRunFixtureSession {
+            mode: self.mode,
+            sent_chunks: 0,
+        })
+    }
+}
+
+#[cfg(debug_assertions)]
+impl OfflineDecodeRuntimeSession for DecodeRunFixtureSession {
+    fn set_samplerate_hz(&mut self, _samplerate_hz: u64) -> Result<(), DecodeRuntimeError> {
+        Ok(())
+    }
+
+    fn build_linear_stack(
+        &mut self,
+        _root: &dsview_core::DecodeSessionInstance,
+        _stack: &[dsview_core::DecodeSessionInstance],
+    ) -> Result<(), DecodeRuntimeError> {
+        Ok(())
+    }
+
+    fn start(&mut self) -> Result<(), DecodeRuntimeError> {
+        Ok(())
+    }
+
+    fn send_logic_chunk(
+        &mut self,
+        abs_start_sample: u64,
+        sample_bytes: &[u8],
+        format: DecodeExecutionLogicFormat,
+    ) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
+        if self.mode == DecodeTestFixtureMode::RunRuntimeFailure {
+            return Err(DecodeRuntimeError::InvalidArgument(
+                "fixture runtime execution error".to_string(),
+            ));
+        }
+
+        self.sent_chunks += 1;
+        Ok(vec![DecodeCapturedAnnotation {
+            decoder_id: "fixture:i2c".to_string(),
+            start_sample: abs_start_sample,
+            end_sample: abs_start_sample + fixture_chunk_sample_len(sample_bytes, format),
+            annotation_class: 0,
+            annotation_type: 0,
+            texts: vec![format!("chunk-{}", self.sent_chunks)],
+        }])
+    }
+
+    fn end(&mut self) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
+        Ok(vec![DecodeCapturedAnnotation {
+            decoder_id: "fixture:eeprom24xx".to_string(),
+            start_sample: 0,
+            end_sample: self.sent_chunks as u64,
+            annotation_class: 1,
+            annotation_type: 1,
+            texts: vec!["fixture-complete".to_string()],
+        }])
+    }
+}
+
+#[cfg(debug_assertions)]
+fn fixture_chunk_sample_len(sample_bytes: &[u8], format: DecodeExecutionLogicFormat) -> u64 {
+    match format {
+        DecodeExecutionLogicFormat::SplitLogic { unitsize } => {
+            (sample_bytes.len() / usize::from(unitsize)) as u64
+        }
+        DecodeExecutionLogicFormat::CrossLogic { channel_count } => {
+            let sample_words =
+                sample_bytes.len() / (usize::from(channel_count) * std::mem::size_of::<u64>());
+            (sample_words * 64) as u64
+        }
     }
 }
 
@@ -658,7 +820,9 @@ fn decode_list_from_fixture(
 ) -> Result<Vec<dsview_core::DecoderDescriptor>, DecodeBringUpError> {
     match mode {
         DecodeTestFixtureMode::Registry => Ok(vec![decode_fixture_descriptor()]),
-        DecodeTestFixtureMode::ValidationRegistry => Ok(validation_decode_fixture_registry()),
+        DecodeTestFixtureMode::ValidationRegistry
+        | DecodeTestFixtureMode::RunSuccess
+        | DecodeTestFixtureMode::RunRuntimeFailure => Ok(validation_decode_fixture_registry()),
         DecodeTestFixtureMode::MissingRuntime => Err(decode_fixture_missing_runtime_error()),
         DecodeTestFixtureMode::MissingMetadata => Err(decode_fixture_missing_metadata_error()),
     }
@@ -670,7 +834,10 @@ fn decode_inspect_from_fixture(
     decoder_id: &str,
 ) -> Result<dsview_core::DecoderDescriptor, DecodeBringUpError> {
     match mode {
-        DecodeTestFixtureMode::Registry | DecodeTestFixtureMode::ValidationRegistry => decode_list_from_fixture(mode)?
+        DecodeTestFixtureMode::Registry
+        | DecodeTestFixtureMode::ValidationRegistry
+        | DecodeTestFixtureMode::RunSuccess
+        | DecodeTestFixtureMode::RunRuntimeFailure => decode_list_from_fixture(mode)?
             .into_iter()
             .find(|decoder| decoder.id == decoder_id)
             .ok_or_else(|| DecodeBringUpError::UnknownDecoder {
@@ -702,7 +869,9 @@ fn validate_decode_config_from_fixture(
 
     let registry = match mode {
         DecodeTestFixtureMode::Registry => vec![decode_fixture_descriptor()],
-        DecodeTestFixtureMode::ValidationRegistry => validation_decode_fixture_registry(),
+        DecodeTestFixtureMode::ValidationRegistry
+        | DecodeTestFixtureMode::RunSuccess
+        | DecodeTestFixtureMode::RunRuntimeFailure => validation_decode_fixture_registry(),
         DecodeTestFixtureMode::MissingRuntime => {
             return Err(DecodeConfigLoadError::Discovery(
                 decode_fixture_missing_runtime_error(),
@@ -1484,6 +1653,8 @@ fn classify_decode_runtime_error(error: &DecoderRuntimeError) -> ErrorResponse {
                 DecoderRuntimeErrorCode::DecoderLoad => "decoder_load_failed",
                 DecoderRuntimeErrorCode::UnknownDecoder => "decoder_not_found",
                 DecoderRuntimeErrorCode::OutOfMemory => "decode_out_of_memory",
+                DecoderRuntimeErrorCode::InputShape => "decode_input_invalid",
+                DecoderRuntimeErrorCode::SessionState => "decode_runtime_failed",
                 DecoderRuntimeErrorCode::Upstream
                 | DecoderRuntimeErrorCode::Unknown(_) => "decode_runtime_failed",
             },

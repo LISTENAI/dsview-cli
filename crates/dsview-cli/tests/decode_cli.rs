@@ -33,6 +33,13 @@ fn write_config(name: &str, contents: &str) -> PathBuf {
     path
 }
 
+fn write_input(name: &str, contents: &str) -> PathBuf {
+    let dir = temp_dir(name);
+    let path = dir.join("offline-input.json");
+    fs::write(&path, contents).expect("offline decode input fixture should be written");
+    path
+}
+
 fn parse_json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).expect("stdout should contain valid JSON")
 }
@@ -190,5 +197,158 @@ fn decode_validate_reports_schema_errors_with_stable_code() {
             "\"code\": \"decode_config_schema_invalid\"",
         ))
         .stdout(predicate::str::contains("expected a string"))
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn decode_run_executes_valid_offline_decode_config() {
+    let config = write_config(
+        "decode-run-valid",
+        r#"{
+            "version": 1,
+            "decoder": {
+                "id": "fixture:i2c",
+                "channels": {
+                    "scl": 0,
+                    "sda": 1
+                },
+                "options": {
+                    "address_format": "unshifted"
+                }
+            },
+            "stack": [
+                {
+                    "id": "fixture:eeprom24xx",
+                    "options": {
+                        "addr_counter": 0
+                    }
+                }
+            ]
+        }"#,
+    );
+    let input = write_input(
+        "decode-run-input-valid",
+        r#"{
+            "samplerate_hz": 1000000,
+            "format": "split_logic",
+            "sample_bytes": [16, 17, 18, 19],
+            "unitsize": 1,
+            "logic_packet_lengths": [2, 2]
+        }"#,
+    );
+
+    let output = fixture_cli_command("run-success")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_json(&output);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["root_decoder_id"], "fixture:i2c");
+    assert_eq!(json["stack_depth"], 1);
+    assert_eq!(json["sample_count"], 4);
+    assert_eq!(json["annotation_count"], 3);
+    assert_eq!(
+        json["annotation_decoder_ids"],
+        serde_json::json!(["fixture:eeprom24xx", "fixture:i2c"])
+    );
+}
+
+#[test]
+fn decode_run_rejects_misaligned_logic_packet_lengths() {
+    let config = write_config(
+        "decode-run-invalid-input-config",
+        r#"{
+            "version": 1,
+            "decoder": {
+                "id": "fixture:i2c",
+                "channels": {
+                    "scl": 0,
+                    "sda": 1
+                },
+                "options": {
+                    "address_format": "unshifted"
+                }
+            }
+        }"#,
+    );
+    let input = write_input(
+        "decode-run-invalid-input",
+        r#"{
+            "samplerate_hz": 1000000,
+            "format": "split_logic",
+            "sample_bytes": [1, 2, 3, 4],
+            "unitsize": 1,
+            "logic_packet_lengths": [2, 1]
+        }"#,
+    );
+
+    fixture_cli_command("run-success")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"code\": \"decode_input_invalid\""))
+        .stdout(predicate::str::contains("logic_packet_lengths"))
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn decode_run_fails_when_runtime_execution_errors() {
+    let config = write_config(
+        "decode-run-runtime-error-config",
+        r#"{
+            "version": 1,
+            "decoder": {
+                "id": "fixture:i2c",
+                "channels": {
+                    "scl": 0,
+                    "sda": 1
+                },
+                "options": {
+                    "address_format": "unshifted"
+                }
+            }
+        }"#,
+    );
+    let input = write_input(
+        "decode-run-runtime-error-input",
+        r#"{
+            "samplerate_hz": 1000000,
+            "format": "split_logic",
+            "sample_bytes": [170, 187, 204, 221],
+            "unitsize": 1
+        }"#,
+    );
+
+    fixture_cli_command("run-runtime-failure")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"code\": \"decode_run_failed\""))
+        .stdout(predicate::str::contains("send logic chunk"))
         .stderr(predicate::str::is_empty());
 }

@@ -60,6 +60,19 @@ impl RecordingRuntime {
             })),
         }
     }
+
+    fn with_send_and_end(
+        send_responses: Vec<SessionResponse>,
+        end_response: SessionResponse,
+    ) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(RecordingState {
+                send_responses: send_responses.into(),
+                end_response: Some(end_response),
+                ..RecordingState::default()
+            })),
+        }
+    }
 }
 
 impl OfflineDecodeRuntime for RecordingRuntime {
@@ -271,6 +284,56 @@ fn offline_decode_retains_partial_annotations_for_diagnostics_only() {
     assert_eq!(error.operation(), "send logic chunk");
     assert_eq!(error.completed_chunks(), 1);
     assert_eq!(error.retained_annotations(), &[retained]);
+}
+
+#[test]
+fn offline_decode_collects_fixture_annotations_for_successful_runs() {
+    let root_annotation = DecodeCapturedAnnotation {
+        decoder_id: "fixture:i2c".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 0,
+        annotation_type: 0,
+        texts: vec!["chunk-1".to_string()],
+    };
+    let stack_annotation = DecodeCapturedAnnotation {
+        decoder_id: "fixture:eeprom24xx".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 1,
+        annotation_type: 1,
+        texts: vec!["fixture-complete".to_string()],
+    };
+    let runtime = RecordingRuntime::with_send_and_end(
+        vec![
+            SessionResponse::Ok(vec![root_annotation.clone()]),
+            SessionResponse::Ok(vec![root_annotation.clone()]),
+        ],
+        SessionResponse::Ok(vec![stack_annotation.clone()]),
+    );
+
+    let result = run_offline_decode(&validated_decode_config(), &fixture_cli_input(), &runtime)
+        .expect("decode run should succeed");
+
+    assert_eq!(
+        result.annotations(),
+        &[
+            root_annotation.clone(),
+            root_annotation,
+            stack_annotation,
+        ]
+    );
+}
+
+fn fixture_cli_input() -> OfflineDecodeInput {
+    OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x10, 0x11, 0x12, 0x13],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![2, 2]),
+    }
 }
 
 fn validated_decode_config() -> ValidatedDecodeConfig {
