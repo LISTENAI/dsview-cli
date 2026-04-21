@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt;
 use std::fs;
@@ -28,8 +28,8 @@ pub use device_options::{
 pub use dsview_sys::{
     decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
     source_runtime_library_path, AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle,
-    DeviceSummary, DecodeRuntimeError, DecodeRuntimeErrorCode, ExportErrorCode, NativeErrorCode,
-    RuntimeError, VcdExportFacts, VcdExportRequest,
+    DeviceSummary, DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode,
+    ExportErrorCode, NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest,
 };
 pub use dsview_sys::{
     DecodeRuntimeError as DecoderRuntimeError,
@@ -135,6 +135,8 @@ pub struct DecoderOptionDescriptor {
     pub id: String,
     pub idn: Option<String>,
     pub description: Option<String>,
+    #[serde(skip_serializing)]
+    pub value_kind: DecodeOptionValueKind,
     pub default_value: Option<String>,
     pub values: Vec<String>,
 }
@@ -244,6 +246,7 @@ fn normalize_decoder_option(option: SysDecodeOption) -> DecoderOptionDescriptor 
         id: option.id,
         idn: option.idn,
         description: option.description,
+        value_kind: option.value_kind,
         default_value: option.default_value,
         values: option.values,
     }
@@ -308,8 +311,14 @@ pub enum DecodeOptionValue {
 
 #[derive(Debug, Error)]
 pub enum DecodeConfigParseError {
+    #[error("decode config JSON could not be parsed: {detail}")]
+    InvalidJson {
+        detail: String,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("decode config JSON did not match the expected schema: {detail}")]
-    Json {
+    Schema {
         detail: String,
         #[source]
         source: serde_json::Error,
@@ -321,14 +330,279 @@ pub fn parse_decode_config(json: &str) -> Result<DecodeConfig, DecodeConfigParse
 }
 
 pub fn parse_decode_config_slice(json: &[u8]) -> Result<DecodeConfig, DecodeConfigParseError> {
-    serde_json::from_slice::<DecodeConfig>(json).map_err(|source| DecodeConfigParseError::Json {
-        detail: source.to_string(),
-        source,
+    serde_json::from_slice::<DecodeConfig>(json).map_err(|source| match source.classify() {
+        serde_json::error::Category::Data => DecodeConfigParseError::Schema {
+            detail: source.to_string(),
+            source,
+        },
+        serde_json::error::Category::Io
+        | serde_json::error::Category::Syntax
+        | serde_json::error::Category::Eof => DecodeConfigParseError::InvalidJson {
+            detail: source.to_string(),
+            source,
+        },
     })
 }
 
 fn default_decode_config_version() -> u32 {
     DECODE_CONFIG_VERSION
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ValidatedDecodeConfig {
+    pub version: u32,
+    pub decoder: ValidatedDecodeDecoderConfig,
+    pub stack: Vec<ValidatedDecodeStackEntryConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ValidatedDecodeDecoderConfig {
+    pub descriptor: DecoderDescriptor,
+    pub channels: BTreeMap<String, u32>,
+    pub options: BTreeMap<String, DecodeOptionValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ValidatedDecodeStackEntryConfig {
+    pub descriptor: DecoderDescriptor,
+    pub options: BTreeMap<String, DecodeOptionValue>,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum DecodeConfigValidationError {
+    #[error("decode config version `{version}` is not supported")]
+    UnsupportedVersion { version: u32 },
+    #[error("decoder `{decoder_id}` was not found in the loaded registry")]
+    UnknownDecoder { decoder_id: String },
+    #[error("decoder `{decoder_id}` is missing required channel `{channel_id}`")]
+    MissingRequiredChannel {
+        decoder_id: String,
+        channel_id: String,
+    },
+    #[error("decoder `{decoder_id}` received unknown channel binding `{channel_id}`")]
+    UnknownChannelBinding {
+        decoder_id: String,
+        channel_id: String,
+    },
+    #[error("decoder `{decoder_id}` received unknown option `{option_id}`")]
+    UnknownOption {
+        decoder_id: String,
+        option_id: String,
+    },
+    #[error(
+        "decoder `{decoder_id}` option `{option_id}` expected {expected:?} but received {actual:?}"
+    )]
+    InvalidOptionValueType {
+        decoder_id: String,
+        option_id: String,
+        expected: DecodeOptionValueKind,
+        actual: DecodeOptionValueKind,
+    },
+    #[error(
+        "decoder `{decoder_id}` option `{option_id}` value `{value}` is not allowed; expected one of {allowed_values:?}"
+    )]
+    InvalidOptionValue {
+        decoder_id: String,
+        option_id: String,
+        value: String,
+        allowed_values: Vec<String>,
+    },
+    #[error(
+        "decoder `{downstream_decoder_id}` cannot stack after `{upstream_decoder_id}` because inputs {downstream_inputs:?} do not match outputs {upstream_outputs:?}"
+    )]
+    IncompatibleStackLink {
+        upstream_decoder_id: String,
+        downstream_decoder_id: String,
+        upstream_outputs: Vec<String>,
+        downstream_inputs: Vec<String>,
+    },
+}
+
+pub fn validate_decode_config(
+    config: &DecodeConfig,
+    registry: &[DecoderDescriptor],
+) -> Result<ValidatedDecodeConfig, DecodeConfigValidationError> {
+    if config.version != DECODE_CONFIG_VERSION {
+        return Err(DecodeConfigValidationError::UnsupportedVersion {
+            version: config.version,
+        });
+    }
+
+    let validated_decoder = validate_root_decode_decoder(&config.decoder, registry)?;
+    let mut validated_stack = Vec::with_capacity(config.stack.len());
+    let mut previous_descriptor = validated_decoder.descriptor.clone();
+
+    for entry in &config.stack {
+        let validated_entry = validate_stack_decode_decoder(entry, registry)?;
+        ensure_stack_link(&previous_descriptor, &validated_entry.descriptor)?;
+        previous_descriptor = validated_entry.descriptor.clone();
+        validated_stack.push(validated_entry);
+    }
+
+    Ok(ValidatedDecodeConfig {
+        version: config.version,
+        decoder: validated_decoder,
+        stack: validated_stack,
+    })
+}
+
+fn validate_root_decode_decoder(
+    config: &DecodeDecoderConfig,
+    registry: &[DecoderDescriptor],
+) -> Result<ValidatedDecodeDecoderConfig, DecodeConfigValidationError> {
+    let descriptor = lookup_decoder_descriptor(&config.id, registry)?;
+    validate_channel_bindings(&descriptor, &config.channels)?;
+    validate_option_values(&descriptor, &config.options)?;
+    Ok(ValidatedDecodeDecoderConfig {
+        descriptor,
+        channels: config.channels.clone(),
+        options: config.options.clone(),
+    })
+}
+
+fn validate_stack_decode_decoder(
+    config: &DecodeStackEntryConfig,
+    registry: &[DecoderDescriptor],
+) -> Result<ValidatedDecodeStackEntryConfig, DecodeConfigValidationError> {
+    let descriptor = lookup_decoder_descriptor(&config.id, registry)?;
+    validate_option_values(&descriptor, &config.options)?;
+    Ok(ValidatedDecodeStackEntryConfig {
+        descriptor,
+        options: config.options.clone(),
+    })
+}
+
+fn lookup_decoder_descriptor(
+    decoder_id: &str,
+    registry: &[DecoderDescriptor],
+) -> Result<DecoderDescriptor, DecodeConfigValidationError> {
+    registry
+        .iter()
+        .find(|decoder| decoder.id == decoder_id)
+        .cloned()
+        .ok_or_else(|| DecodeConfigValidationError::UnknownDecoder {
+            decoder_id: decoder_id.to_string(),
+        })
+}
+
+fn validate_channel_bindings(
+    descriptor: &DecoderDescriptor,
+    channels: &BTreeMap<String, u32>,
+) -> Result<(), DecodeConfigValidationError> {
+    let valid_channel_ids = descriptor
+        .required_channels
+        .iter()
+        .chain(descriptor.optional_channels.iter())
+        .map(|channel| channel.id.as_str())
+        .collect::<BTreeSet<_>>();
+
+    for channel_id in channels.keys() {
+        if !valid_channel_ids.contains(channel_id.as_str()) {
+            return Err(DecodeConfigValidationError::UnknownChannelBinding {
+                decoder_id: descriptor.id.clone(),
+                channel_id: channel_id.clone(),
+            });
+        }
+    }
+
+    for channel in &descriptor.required_channels {
+        if !channels.contains_key(&channel.id) {
+            return Err(DecodeConfigValidationError::MissingRequiredChannel {
+                decoder_id: descriptor.id.clone(),
+                channel_id: channel.id.clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_option_values(
+    descriptor: &DecoderDescriptor,
+    options: &BTreeMap<String, DecodeOptionValue>,
+) -> Result<(), DecodeConfigValidationError> {
+    for (option_id, value) in options {
+        let metadata =
+            descriptor
+                .options
+                .iter()
+                .find(|option| option.id == *option_id)
+                .ok_or_else(|| DecodeConfigValidationError::UnknownOption {
+                    decoder_id: descriptor.id.clone(),
+                    option_id: option_id.clone(),
+                })?;
+        let actual_kind = decode_option_value_kind(value);
+
+        if metadata.value_kind != DecodeOptionValueKind::Unknown && metadata.value_kind != actual_kind
+        {
+            return Err(DecodeConfigValidationError::InvalidOptionValueType {
+                decoder_id: descriptor.id.clone(),
+                option_id: option_id.clone(),
+                expected: metadata.value_kind,
+                actual: actual_kind,
+            });
+        }
+
+        if !metadata.values.is_empty() {
+            let rendered_value = render_decode_option_value(value);
+            if !metadata.values.iter().any(|candidate| candidate == &rendered_value) {
+                return Err(DecodeConfigValidationError::InvalidOptionValue {
+                    decoder_id: descriptor.id.clone(),
+                    option_id: option_id.clone(),
+                    value: rendered_value,
+                    allowed_values: metadata.values.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_stack_link(
+    upstream: &DecoderDescriptor,
+    downstream: &DecoderDescriptor,
+) -> Result<(), DecodeConfigValidationError> {
+    let upstream_outputs = upstream
+        .outputs
+        .iter()
+        .map(|output| output.id.clone())
+        .collect::<Vec<_>>();
+    let downstream_inputs = downstream
+        .inputs
+        .iter()
+        .map(|input| input.id.clone())
+        .collect::<Vec<_>>();
+
+    if upstream_outputs
+        .iter()
+        .any(|output_id| downstream_inputs.iter().any(|input_id| input_id == output_id))
+    {
+        return Ok(());
+    }
+
+    Err(DecodeConfigValidationError::IncompatibleStackLink {
+        upstream_decoder_id: upstream.id.clone(),
+        downstream_decoder_id: downstream.id.clone(),
+        upstream_outputs,
+        downstream_inputs,
+    })
+}
+
+fn decode_option_value_kind(value: &DecodeOptionValue) -> DecodeOptionValueKind {
+    match value {
+        DecodeOptionValue::String(_) => DecodeOptionValueKind::String,
+        DecodeOptionValue::Integer(_) => DecodeOptionValueKind::Integer,
+        DecodeOptionValue::Float(_) => DecodeOptionValueKind::Float,
+    }
+}
+
+fn render_decode_option_value(value: &DecodeOptionValue) -> String {
+    match value {
+        DecodeOptionValue::String(value) => value.clone(),
+        DecodeOptionValue::Integer(value) => value.to_string(),
+        DecodeOptionValue::Float(value) => value.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
