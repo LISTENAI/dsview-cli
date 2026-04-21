@@ -368,6 +368,108 @@ pub struct ValidatedDecodeStackEntryConfig {
     pub options: BTreeMap<String, DecodeOptionValue>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfflineDecodeDataFormat {
+    SplitLogic,
+    CrossLogic,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OfflineDecodeInput {
+    pub samplerate_hz: u64,
+    pub format: OfflineDecodeDataFormat,
+    pub sample_bytes: Vec<u8>,
+    pub unitsize: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_count: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logic_packet_lengths: Option<Vec<usize>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OfflineDecodeExecutionRequest {
+    pub config: ValidatedDecodeConfig,
+    pub input: OfflineDecodeInput,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum OfflineDecodeInputError {
+    #[error("offline decode input samplerate_hz must be greater than zero")]
+    MissingSamplerate,
+    #[error("offline decode input sample_bytes must not be empty")]
+    MissingSampleBytes,
+    #[error("offline decode split-logic unitsize must be greater than zero")]
+    MissingUnitsize,
+    #[error("offline decode cross-logic inputs require channel_count")]
+    MissingChannelCount,
+    #[error("offline decode cross-logic channel_count must be greater than zero")]
+    InvalidChannelCount,
+    #[error("offline decode input sample_bytes do not align to the declared format")]
+    MisalignedSampleBytes,
+    #[error("offline decode input logic_packet_lengths are invalid for the declared format")]
+    InvalidPacketLengths,
+}
+
+impl OfflineDecodeInput {
+    pub fn sample_count(&self) -> Result<u64, OfflineDecodeInputError> {
+        self.validate_basic_shape()?;
+        Ok(match self.format {
+            OfflineDecodeDataFormat::SplitLogic => {
+                (self.sample_bytes.len() / self.unitsize as usize) as u64
+            }
+            OfflineDecodeDataFormat::CrossLogic => {
+                let channel_count = self.channel_count.expect("validated above") as usize;
+                ((self.sample_bytes.len() / (channel_count * std::mem::size_of::<u64>())) * 64)
+                    as u64
+            }
+        })
+    }
+
+    pub fn validate_basic_shape(&self) -> Result<(), OfflineDecodeInputError> {
+        if self.samplerate_hz == 0 {
+            return Err(OfflineDecodeInputError::MissingSamplerate);
+        }
+        if self.sample_bytes.is_empty() {
+            return Err(OfflineDecodeInputError::MissingSampleBytes);
+        }
+
+        let alignment = match self.format {
+            OfflineDecodeDataFormat::SplitLogic => {
+                if self.unitsize == 0 {
+                    return Err(OfflineDecodeInputError::MissingUnitsize);
+                }
+                self.unitsize as usize
+            }
+            OfflineDecodeDataFormat::CrossLogic => {
+                let channel_count =
+                    self.channel_count.ok_or(OfflineDecodeInputError::MissingChannelCount)?;
+                if channel_count == 0 {
+                    return Err(OfflineDecodeInputError::InvalidChannelCount);
+                }
+                channel_count as usize * std::mem::size_of::<u64>()
+            }
+        };
+
+        if self.sample_bytes.len() % alignment != 0 {
+            return Err(OfflineDecodeInputError::MisalignedSampleBytes);
+        }
+
+        if let Some(packet_lengths) = &self.logic_packet_lengths {
+            if packet_lengths.is_empty()
+                || packet_lengths.iter().sum::<usize>() != self.sample_bytes.len()
+                || packet_lengths
+                    .iter()
+                    .any(|length| *length == 0 || (*length % alignment) != 0)
+            {
+                return Err(OfflineDecodeInputError::InvalidPacketLengths);
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum DecodeConfigValidationError {
     #[error("decode config version `{version}` is not supported")]
@@ -2706,6 +2808,57 @@ mod tests {
         assert_eq!(capabilities.total_channel_count, 16);
         assert_eq!(capabilities.active_channel_mode, 20);
         assert_eq!(capabilities.channel_modes.len(), 3);
+    }
+
+    #[test]
+    fn offline_decode_input_reports_split_logic_sample_count() {
+        let input = OfflineDecodeInput {
+            samplerate_hz: 1_000_000,
+            format: OfflineDecodeDataFormat::SplitLogic,
+            sample_bytes: vec![0b00, 0b01, 0b10, 0b11],
+            unitsize: 1,
+            channel_count: None,
+            logic_packet_lengths: Some(vec![2, 2]),
+        };
+
+        assert_eq!(input.sample_count().unwrap(), 4);
+        input.validate_basic_shape().unwrap();
+    }
+
+    #[test]
+    fn offline_decode_input_rejects_misaligned_split_logic_packets() {
+        let input = OfflineDecodeInput {
+            samplerate_hz: 1_000_000,
+            format: OfflineDecodeDataFormat::SplitLogic,
+            sample_bytes: vec![0b00, 0b01, 0b10, 0b11],
+            unitsize: 2,
+            channel_count: None,
+            logic_packet_lengths: Some(vec![2, 1, 1]),
+        };
+
+        let error = input.validate_basic_shape().unwrap_err();
+        assert!(matches!(
+            error,
+            OfflineDecodeInputError::InvalidPacketLengths { .. }
+        ));
+    }
+
+    #[test]
+    fn offline_decode_input_requires_cross_logic_channel_count() {
+        let input = OfflineDecodeInput {
+            samplerate_hz: 1_000_000,
+            format: OfflineDecodeDataFormat::CrossLogic,
+            sample_bytes: vec![0_u8; 16],
+            unitsize: 1,
+            channel_count: None,
+            logic_packet_lengths: None,
+        };
+
+        let error = input.validate_basic_shape().unwrap_err();
+        assert!(matches!(
+            error,
+            OfflineDecodeInputError::MissingChannelCount
+        ));
     }
 
     fn clean_summary() -> AcquisitionSummary {
