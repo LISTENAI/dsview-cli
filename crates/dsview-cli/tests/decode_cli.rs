@@ -44,8 +44,55 @@ fn parse_json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).expect("stdout should contain valid JSON")
 }
 
+fn parse_json_file(path: &Path) -> Value {
+    serde_json::from_slice(
+        &fs::read(path).expect("output artifact should be readable as bytes"),
+    )
+    .expect("output artifact should contain valid JSON")
+}
+
 fn fixture_config_path(path: &Path) -> &str {
     path.to_str().expect("fixture path should be valid utf-8")
+}
+
+fn valid_decode_config(name: &str) -> PathBuf {
+    write_config(
+        name,
+        r#"{
+            "version": 1,
+            "decoder": {
+                "id": "fixture:i2c",
+                "channels": {
+                    "scl": 0,
+                    "sda": 1
+                },
+                "options": {
+                    "address_format": "unshifted"
+                }
+            },
+            "stack": [
+                {
+                    "id": "fixture:eeprom24xx",
+                    "options": {
+                        "addr_counter": 0
+                    }
+                }
+            ]
+        }"#,
+    )
+}
+
+fn valid_decode_input(name: &str) -> PathBuf {
+    write_input(
+        name,
+        r#"{
+            "samplerate_hz": 1000000,
+            "format": "split_logic",
+            "sample_bytes": [16, 17, 18, 19],
+            "unitsize": 1,
+            "logic_packet_lengths": [2, 2]
+        }"#,
+    )
 }
 
 #[test]
@@ -202,40 +249,8 @@ fn decode_validate_reports_schema_errors_with_stable_code() {
 
 #[test]
 fn decode_run_executes_valid_offline_decode_config() {
-    let config = write_config(
-        "decode-run-valid",
-        r#"{
-            "version": 1,
-            "decoder": {
-                "id": "fixture:i2c",
-                "channels": {
-                    "scl": 0,
-                    "sda": 1
-                },
-                "options": {
-                    "address_format": "unshifted"
-                }
-            },
-            "stack": [
-                {
-                    "id": "fixture:eeprom24xx",
-                    "options": {
-                        "addr_counter": 0
-                    }
-                }
-            ]
-        }"#,
-    );
-    let input = write_input(
-        "decode-run-input-valid",
-        r#"{
-            "samplerate_hz": 1000000,
-            "format": "split_logic",
-            "sample_bytes": [16, 17, 18, 19],
-            "unitsize": 1,
-            "logic_packet_lengths": [2, 2]
-        }"#,
-    );
+    let config = valid_decode_config("decode-run-valid");
+    let input = valid_decode_input("decode-run-input-valid");
 
     let output = fixture_cli_command("run-success")
         .args([
@@ -253,14 +268,19 @@ fn decode_run_executes_valid_offline_decode_config() {
         .clone();
 
     let json = parse_json(&output);
-    assert_eq!(json["ok"], true);
-    assert_eq!(json["root_decoder_id"], "fixture:i2c");
-    assert_eq!(json["stack_depth"], 1);
-    assert_eq!(json["sample_count"], 4);
-    assert_eq!(json["annotation_count"], 3);
+    assert_eq!(json["run"]["status"], "success");
+    assert_eq!(json["run"]["root_decoder_id"], "fixture:i2c");
+    assert_eq!(json["run"]["stack_depth"], 1);
+    assert_eq!(json["run"]["sample_count"], 4);
+    assert_eq!(json["run"]["event_count"], 3);
     assert_eq!(
-        json["annotation_decoder_ids"],
-        serde_json::json!(["fixture:eeprom24xx", "fixture:i2c"])
+        json["events"]
+            .as_array()
+            .expect("success response should include event list")
+            .iter()
+            .map(|event| event["decoder_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["fixture:i2c", "fixture:i2c", "fixture:eeprom24xx"]
     );
 }
 
@@ -311,33 +331,10 @@ fn decode_run_rejects_misaligned_logic_packet_lengths() {
 
 #[test]
 fn decode_run_fails_when_runtime_execution_errors() {
-    let config = write_config(
-        "decode-run-runtime-error-config",
-        r#"{
-            "version": 1,
-            "decoder": {
-                "id": "fixture:i2c",
-                "channels": {
-                    "scl": 0,
-                    "sda": 1
-                },
-                "options": {
-                    "address_format": "unshifted"
-                }
-            }
-        }"#,
-    );
-    let input = write_input(
-        "decode-run-runtime-error-input",
-        r#"{
-            "samplerate_hz": 1000000,
-            "format": "split_logic",
-            "sample_bytes": [170, 187, 204, 221],
-            "unitsize": 1
-        }"#,
-    );
+    let config = valid_decode_config("decode-run-runtime-error-config");
+    let input = valid_decode_input("decode-run-runtime-error-input");
 
-    fixture_cli_command("run-runtime-failure")
+    let output = fixture_cli_command("run-runtime-failure")
         .args([
             "decode",
             "run",
@@ -348,7 +345,111 @@ fn decode_run_fails_when_runtime_execution_errors() {
         ])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("\"code\": \"decode_run_failed\""))
-        .stdout(predicate::str::contains("send logic chunk"))
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_json(&output);
+    assert_eq!(json["run"]["status"], "failure");
+    assert_eq!(json["error"]["code"], "decode_session_send_failed");
+    assert_eq!(json["diagnostics"]["partial_event_count"], 0);
+    assert!(json.get("partial_events").is_none());
+}
+
+#[test]
+fn decode_run_success_writes_output_artifact() {
+    let config = valid_decode_config("decode-run-output-success-config");
+    let input = valid_decode_input("decode-run-output-success-input");
+    let output_dir = temp_dir("decode-run-output-success");
+    let output_path = output_dir.join("decode-report.json");
+
+    fixture_cli_command("run-success")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+            "--output",
+            fixture_config_path(&output_path),
+        ])
+        .assert()
+        .success()
         .stderr(predicate::str::is_empty());
+
+    let json = parse_json_file(&output_path);
+    assert_eq!(json["run"]["status"], "success");
+    assert_eq!(json["run"]["event_count"], 3);
+    assert_eq!(
+        json["events"].as_array().expect("output artifact should contain events").len(),
+        3
+    );
+}
+
+#[test]
+fn decode_run_failure_writes_failure_report_when_output_requested() {
+    let config = valid_decode_config("decode-run-output-failure-config");
+    let input = valid_decode_input("decode-run-output-failure-input");
+    let output_dir = temp_dir("decode-run-output-failure");
+    let output_path = output_dir.join("decode-report.json");
+
+    let stdout = fixture_cli_command("run-partial-failure")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+            "--output",
+            fixture_config_path(&output_path),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout_json = parse_json(&stdout);
+    let file_json = parse_json_file(&output_path);
+
+    assert_eq!(stdout_json["run"]["status"], "failure");
+    assert_eq!(stdout_json["error"]["code"], "decode_session_send_failed");
+    assert_eq!(stdout_json["diagnostics"]["partial_event_count"], 1);
+    assert_eq!(
+        stdout_json["partial_events"][0]["decoder_id"],
+        serde_json::json!("fixture:i2c")
+    );
+    assert_eq!(file_json, stdout_json);
+}
+
+#[test]
+fn decode_run_stdout_and_file_output_share_the_same_schema() {
+    let config = valid_decode_config("decode-run-output-schema-config");
+    let input = valid_decode_input("decode-run-output-schema-input");
+    let output_dir = temp_dir("decode-run-output-schema");
+    let output_path = output_dir.join("decode-report.json");
+
+    let stdout = fixture_cli_command("run-success")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+            "--output",
+            fixture_config_path(&output_path),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(parse_json(&stdout), parse_json_file(&output_path));
 }

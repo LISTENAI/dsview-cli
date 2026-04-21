@@ -14,7 +14,8 @@ use dsview_cli::{
         resolve_capture_device_option_request, CaptureDeviceOptionParseError,
     },
     render_decode_inspect_text, render_decode_list_text, render_decode_report_text,
-    render_decode_validate_text, render_device_options_text, DeviceOptionsResponse,
+    render_decode_validate_text, render_device_options_text, serialize_decode_report,
+    write_decode_report, DecodeReportWriteError, DeviceOptionsResponse,
 };
 use dsview_core::{
     DecodeBringUpError, DecodeConfigLoadError, DecodeConfigParseError,
@@ -163,6 +164,12 @@ struct DecodeRunArgs {
         help = "JSON offline raw logic artifact containing samplerate, format, and sample bytes"
     )]
     input: PathBuf,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Optional JSON output path for persisting the canonical decode report document"
+    )]
+    output: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -547,15 +554,27 @@ fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
         Ok(result) => result,
         Err(error) => {
             let classified = classify_decode_run_error(&error);
-            let failure_report: DecodeFailureReport = build_decode_failure_report_response(
-                validated.decoder.descriptor.id.clone(),
-                validated.stack.len(),
-                Some(sample_count),
-                &error,
+            let failure_response = build_decode_run_failure_response(
+                build_decode_failure_report_response(
+                    validated.decoder.descriptor.id.clone(),
+                    validated.stack.len(),
+                    Some(sample_count),
+                    &error,
+                ),
+                &classified,
             );
+            if let Some(output_path) = args.output.as_deref() {
+                write_decode_report(output_path, &failure_response).map_err(|error| {
+                    command_error(
+                        args.decode.format,
+                        classify_decode_report_write_error(&error),
+                    )
+                })?;
+            }
             render_decode_run_failure(
                 args.decode.format,
-                &build_decode_run_failure_response(failure_report, &classified),
+                &failure_response,
+                args.output.as_deref(),
             );
             return Err(rendered_command_failure(args.decode.format));
         }
@@ -566,7 +585,15 @@ fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
         sample_count,
         &result,
     );
-    render_decode_run_success(args.decode.format, &response);
+    if let Some(output_path) = args.output.as_deref() {
+        write_decode_report(output_path, &response).map_err(|error| {
+            command_error(
+                args.decode.format,
+                classify_decode_report_write_error(&error),
+            )
+        })?;
+    }
+    render_decode_run_success(args.decode.format, &response, args.output.as_deref());
     Ok(())
 }
 
@@ -576,7 +603,9 @@ fn run_decode_run_from_fixture(
     args: &DecodeRunArgs,
 ) -> Result<Option<()>, FailedCommand> {
     match mode {
-        DecodeTestFixtureMode::RunSuccess | DecodeTestFixtureMode::RunRuntimeFailure => {
+        DecodeTestFixtureMode::RunSuccess
+        | DecodeTestFixtureMode::RunRuntimeFailure
+        | DecodeTestFixtureMode::RunPartialFailure => {
             let validated = load_decode_run_config(
                 &args.config,
                 &validation_decode_fixture_registry(),
@@ -591,15 +620,27 @@ fn run_decode_run_from_fixture(
                 Ok(result) => result,
                 Err(error) => {
                     let classified = classify_decode_run_error(&error);
-                    let failure_report: DecodeFailureReport = build_decode_failure_report_response(
-                        validated.decoder.descriptor.id.clone(),
-                        validated.stack.len(),
-                        Some(sample_count),
-                        &error,
+                    let failure_response = build_decode_run_failure_response(
+                        build_decode_failure_report_response(
+                            validated.decoder.descriptor.id.clone(),
+                            validated.stack.len(),
+                            Some(sample_count),
+                            &error,
+                        ),
+                        &classified,
                     );
+                    if let Some(output_path) = args.output.as_deref() {
+                        write_decode_report(output_path, &failure_response).map_err(|error| {
+                            command_error(
+                                args.decode.format,
+                                classify_decode_report_write_error(&error),
+                            )
+                        })?;
+                    }
                     render_decode_run_failure(
                         args.decode.format,
-                        &build_decode_run_failure_response(failure_report, &classified),
+                        &failure_response,
+                        args.output.as_deref(),
                     );
                     return Err(rendered_command_failure(args.decode.format));
                 }
@@ -610,7 +651,15 @@ fn run_decode_run_from_fixture(
                 sample_count,
                 &result,
             );
-            render_decode_run_success(args.decode.format, &response);
+            if let Some(output_path) = args.output.as_deref() {
+                write_decode_report(output_path, &response).map_err(|error| {
+                    command_error(
+                        args.decode.format,
+                        classify_decode_report_write_error(&error),
+                    )
+                })?;
+            }
+            render_decode_run_success(args.decode.format, &response, args.output.as_deref());
             Ok(Some(()))
         }
         DecodeTestFixtureMode::MissingRuntime => Err(command_error(
@@ -733,6 +782,7 @@ enum DecodeTestFixtureMode {
     MissingMetadata,
     RunSuccess,
     RunRuntimeFailure,
+    RunPartialFailure,
 }
 
 #[cfg(debug_assertions)]
@@ -744,6 +794,7 @@ fn decode_test_fixture_mode() -> Option<DecodeTestFixtureMode> {
         Some("missing-metadata") => Some(DecodeTestFixtureMode::MissingMetadata),
         Some("run-success") => Some(DecodeTestFixtureMode::RunSuccess),
         Some("run-runtime-failure") => Some(DecodeTestFixtureMode::RunRuntimeFailure),
+        Some("run-partial-failure") => Some(DecodeTestFixtureMode::RunPartialFailure),
         _ => None,
     }
 }
@@ -807,6 +858,11 @@ impl OfflineDecodeRuntimeSession for DecodeRunFixtureSession {
                 "fixture runtime execution error".to_string(),
             ));
         }
+        if self.mode == DecodeTestFixtureMode::RunPartialFailure && self.sent_chunks >= 1 {
+            return Err(DecodeRuntimeError::InvalidArgument(
+                "fixture runtime execution error".to_string(),
+            ));
+        }
 
         self.sent_chunks += 1;
         Ok(vec![DecodeCapturedAnnotation {
@@ -853,7 +909,8 @@ fn decode_list_from_fixture(
         DecodeTestFixtureMode::Registry => Ok(vec![decode_fixture_descriptor()]),
         DecodeTestFixtureMode::ValidationRegistry
         | DecodeTestFixtureMode::RunSuccess
-        | DecodeTestFixtureMode::RunRuntimeFailure => Ok(validation_decode_fixture_registry()),
+        | DecodeTestFixtureMode::RunRuntimeFailure
+        | DecodeTestFixtureMode::RunPartialFailure => Ok(validation_decode_fixture_registry()),
         DecodeTestFixtureMode::MissingRuntime => Err(decode_fixture_missing_runtime_error()),
         DecodeTestFixtureMode::MissingMetadata => Err(decode_fixture_missing_metadata_error()),
     }
@@ -868,7 +925,8 @@ fn decode_inspect_from_fixture(
         DecodeTestFixtureMode::Registry
         | DecodeTestFixtureMode::ValidationRegistry
         | DecodeTestFixtureMode::RunSuccess
-        | DecodeTestFixtureMode::RunRuntimeFailure => decode_list_from_fixture(mode)?
+        | DecodeTestFixtureMode::RunRuntimeFailure
+        | DecodeTestFixtureMode::RunPartialFailure => decode_list_from_fixture(mode)?
             .into_iter()
             .find(|decoder| decoder.id == decoder_id)
             .ok_or_else(|| DecodeBringUpError::UnknownDecoder {
@@ -902,7 +960,8 @@ fn validate_decode_config_from_fixture(
         DecodeTestFixtureMode::Registry => vec![decode_fixture_descriptor()],
         DecodeTestFixtureMode::ValidationRegistry
         | DecodeTestFixtureMode::RunSuccess
-        | DecodeTestFixtureMode::RunRuntimeFailure => validation_decode_fixture_registry(),
+        | DecodeTestFixtureMode::RunRuntimeFailure
+        | DecodeTestFixtureMode::RunPartialFailure => validation_decode_fixture_registry(),
         DecodeTestFixtureMode::MissingRuntime => {
             return Err(DecodeConfigLoadError::Discovery(
                 decode_fixture_missing_runtime_error(),
@@ -1902,6 +1961,23 @@ fn classify_decode_output_write_error(path: &Path, error: &std::io::Error) -> Er
     }
 }
 
+fn classify_decode_report_write_error(error: &DecodeReportWriteError) -> ErrorResponse {
+    match error {
+        DecodeReportWriteError::Serialize { detail } => ErrorResponse {
+            code: "decode_output_write_failed",
+            message: "failed to serialize decode report".to_string(),
+            detail: Some(detail.clone()),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        },
+        DecodeReportWriteError::Write { path, detail } => classify_decode_output_write_error(
+            path,
+            &std::io::Error::other(detail.clone()),
+        ),
+    }
+}
+
 fn device_record(device: &SupportedDevice) -> DeviceRecord {
     DeviceRecord {
         handle: device.selection_handle.raw(),
@@ -2764,13 +2840,21 @@ fn render_decode_validate_success(format: OutputFormat, response: &DecodeValidat
     }
 }
 
-fn render_decode_run_success(format: OutputFormat, response: &DecodeReport) {
+fn render_decode_run_success(
+    format: OutputFormat,
+    response: &DecodeReport,
+    output_path: Option<&Path>,
+) {
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(response).unwrap());
+            println!("{}", serialize_decode_report(response).unwrap());
         }
         OutputFormat::Text => {
-            println!("{}", render_decode_report_text(response));
+            let mut text = render_decode_report_text(response);
+            if let Some(output_path) = output_path {
+                text.push_str(&format!("\noutput path: {}", output_path.display()));
+            }
+            println!("{text}");
         }
     }
 }
@@ -2788,13 +2872,17 @@ fn build_decode_run_failure_response(
     }
 }
 
-fn render_decode_run_failure(format: OutputFormat, response: &DecodeRunFailureResponse) {
+fn render_decode_run_failure(
+    format: OutputFormat,
+    response: &DecodeRunFailureResponse,
+    output_path: Option<&Path>,
+) {
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(response).unwrap());
+            println!("{}", serialize_decode_report(response).unwrap());
         }
         OutputFormat::Text => {
-            println!("{}", decode_run_failure_text(response));
+            println!("{}", decode_run_failure_text(response, output_path));
         }
     }
 }
@@ -2855,7 +2943,10 @@ pub(crate) fn capture_success_text(response: &CaptureResponse) -> String {
     lines.join("\n")
 }
 
-fn decode_run_failure_text(response: &DecodeRunFailureResponse) -> String {
+fn decode_run_failure_text(
+    response: &DecodeRunFailureResponse,
+    output_path: Option<&Path>,
+) -> String {
     let mut lines = vec![
         "decode run failed".to_string(),
         format!("error code: {}", response.error.code),
@@ -2871,6 +2962,9 @@ fn decode_run_failure_text(response: &DecodeRunFailureResponse) -> String {
             "partial event count: {}",
             diagnostics.partial_event_count
         ));
+    }
+    if let Some(output_path) = output_path {
+        lines.push(format!("output path: {}", output_path.display()));
     }
     lines.join("\n")
 }

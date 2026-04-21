@@ -1,6 +1,10 @@
 pub mod capture_device_options;
 pub mod device_options;
 
+use std::fs;
+use std::fmt;
+use std::path::{Path, PathBuf};
+
 use dsview_core::{
     DecodeFailureReport, DecodeReport, OfflineDecodeResult, OfflineDecodeRunError,
     DecoderAnnotationDescriptor, DecoderAnnotationRowDescriptor, DecoderChannelDescriptor,
@@ -231,6 +235,47 @@ pub fn build_decode_failure_report_response(
     error: &OfflineDecodeRunError,
 ) -> DecodeFailureReport {
     error.to_failure_report(root_decoder_id, stack_depth, sample_count)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeReportWriteError {
+    Serialize { detail: String },
+    Write { path: PathBuf, detail: String },
+}
+
+impl fmt::Display for DecodeReportWriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Serialize { detail } => {
+                write!(f, "failed to serialize decode report: {detail}")
+            }
+            Self::Write { path, detail } => {
+                write!(f, "failed to write decode report `{}`: {detail}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for DecodeReportWriteError {}
+
+pub fn serialize_decode_report<T: Serialize>(
+    payload: &T,
+) -> Result<String, DecodeReportWriteError> {
+    serde_json::to_string_pretty(payload).map_err(|error| DecodeReportWriteError::Serialize {
+        detail: error.to_string(),
+    })
+}
+
+pub fn write_decode_report<T: Serialize>(
+    path: impl AsRef<Path>,
+    payload: &T,
+) -> Result<(), DecodeReportWriteError> {
+    let path = path.as_ref();
+    let json = serialize_decode_report(payload)?;
+    fs::write(path, json).map_err(|error| DecodeReportWriteError::Write {
+        path: path.to_path_buf(),
+        detail: error.to_string(),
+    })
 }
 
 pub fn render_decode_list_text(response: &DecodeListResponse) -> String {
@@ -481,7 +526,8 @@ mod tests {
         build_decode_failure_report_response, build_decode_report_response,
         build_decode_validate_response, render_decode_failure_report_text,
         render_decode_inspect_text, render_decode_list_text, render_decode_report_text,
-        render_decode_validate_text,
+        render_decode_validate_text, serialize_decode_report, write_decode_report,
+        DecodeReportWriteError,
     };
     use dsview_core::{
         run_offline_decode, DecodeCapturedAnnotation, DecodeRunStatus, DecodeRuntimeError,
@@ -495,6 +541,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, VecDeque};
     use std::rc::Rc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[derive(Debug, Default)]
     struct RecordingState {
@@ -861,6 +908,59 @@ mod tests {
         assert!(text.contains("sample count: 4"));
     }
 
+    #[test]
+    fn decode_report_serializer_matches_written_artifact() {
+        let runtime = RecordingRuntime::with_send_and_end(
+            vec![SessionResponse::Ok(vec![DecodeCapturedAnnotation {
+                decoder_id: "0:i2c".to_string(),
+                start_sample: 0,
+                end_sample: 2,
+                annotation_class: 0,
+                annotation_type: 10,
+                texts: vec!["start".to_string()],
+            }])],
+            SessionResponse::Ok(vec![DecodeCapturedAnnotation {
+                decoder_id: "eeprom24xx".to_string(),
+                start_sample: 2,
+                end_sample: 4,
+                annotation_class: 1,
+                annotation_type: 20,
+                texts: vec!["write".to_string()],
+            }]),
+        );
+        let input = fixture_input();
+        let result = run_offline_decode(&fixture_config(), &input, &runtime)
+            .expect("run response should build from successful execution");
+        let response = build_decode_report_response("0:i2c", 1, input.sample_count().unwrap(), &result);
+        let output_path = temp_output_path("decode-report-success");
+
+        write_decode_report(&output_path, &response).expect("decode report should be written");
+
+        let file_json = std::fs::read_to_string(&output_path).expect("decode report file should exist");
+        let stdout_json =
+            serialize_decode_report(&response).expect("decode report should serialize");
+
+        assert_eq!(file_json, stdout_json);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&file_json)
+                .expect("written decode report should be valid json")["run"]["status"],
+            "success"
+        );
+    }
+
+    #[test]
+    fn write_decode_report_returns_path_on_write_failure() {
+        let error = write_decode_report("/proc/self/decode-report.json", &json!({ "run": {} }))
+            .expect_err("writing to a read-only proc path should fail");
+
+        match error {
+            DecodeReportWriteError::Write { path, .. } => {
+                assert!(path.ends_with("decode-report.json"));
+            }
+            other => panic!("expected write failure, got {other:?}"),
+        }
+    }
+
     fn fixture_input() -> OfflineDecodeInput {
         OfflineDecodeInput {
             samplerate_hz: 1_000_000,
@@ -904,5 +1004,13 @@ mod tests {
                 options: BTreeMap::new(),
             }],
         }
+    }
+
+    fn temp_output_path(name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("dsview-cli-{name}-{unique}.json"))
     }
 }
