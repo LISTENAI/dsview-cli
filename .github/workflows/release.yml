@@ -33,6 +33,10 @@ jobs:
             runner: windows-2022
             msvc_arch: x64
             package_bundle: true
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            msvc_arch: arm64
+            package_bundle: true
 
     steps:
       - name: Checkout repository
@@ -158,7 +162,7 @@ jobs:
             This release provides pre-built bundles for:
             - Linux x86_64 and ARM64
             - macOS x86_64 (Intel) and ARM64 (Apple Silicon)
-            - Windows x86_64
+            - Windows x86_64 and ARM64
 
             ### Bundle Contents
 

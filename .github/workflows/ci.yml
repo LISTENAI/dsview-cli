@@ -33,6 +33,10 @@ jobs:
             runner: windows-2022
             msvc_arch: x64
             package_bundle: true
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            msvc_arch: arm64
+            package_bundle: true
 
     steps:
       - name: Checkout repository

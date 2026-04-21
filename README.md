@@ -42,6 +42,10 @@ powershell -ExecutionPolicy Bypass -File $script -Version v1.1.1
 
 The Windows installer keeps the release bundle intact, adds the bundled DLL directory to the generated launcher, and smoke-tests `dsview-cli --version` plus `devices list --help` after install.
 
+Supported Windows installer targets:
+- Windows x86_64
+- Windows ARM64
+
 ### Build from source
 
 ```bash
@@ -133,9 +137,9 @@ Published release bundles and the one-line installer currently target:
 
 - **Linux**: x86_64, ARM64
 - **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
- - **Windows**: x86_64
+- **Windows**: x86_64, ARM64
 
-Windows release bundles and the PowerShell installer currently target x86_64 only. Windows ARM64 users should build from source.
+Windows ARM64 GitHub-hosted runners currently use the `windows-11-arm` label (public preview in GitHub Actions as of April 2026), so CI coverage for that target may evolve with runner image updates.
 
 ## Build Prerequisites
 
