@@ -6,7 +6,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use dsview_core::{
-    DecodeFailureReport, DecodeReport, OfflineDecodeResult, OfflineDecodeRunError,
+    DecodeFailureReport, DecodeReport, DecodeRunStatus, DecodeRunSummary,
+    OfflineDecodeResult, OfflineDecodeRunError,
     DecoderAnnotationDescriptor, DecoderAnnotationRowDescriptor, DecoderChannelDescriptor,
     DecoderDescriptor, DecoderInputDescriptor, DecoderOptionDescriptor,
     DecoderOutputDescriptor,
@@ -235,6 +236,24 @@ pub fn build_decode_failure_report_response(
     error: &OfflineDecodeRunError,
 ) -> DecodeFailureReport {
     error.to_failure_report(root_decoder_id, stack_depth, sample_count)
+}
+
+pub fn build_decode_contract_failure_report(
+    root_decoder_id: impl Into<String>,
+    stack_depth: usize,
+    sample_count: Option<u64>,
+) -> DecodeFailureReport {
+    DecodeFailureReport {
+        run: DecodeRunSummary {
+            status: DecodeRunStatus::Failure,
+            root_decoder_id: root_decoder_id.into(),
+            stack_depth,
+            sample_count,
+            event_count: None,
+        },
+        partial_events: Vec::new(),
+        diagnostics: None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -522,9 +541,10 @@ fn join_ids(values: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_decode_inspect_response, build_decode_list_response,
-        build_decode_failure_report_response, build_decode_report_response,
-        build_decode_validate_response, render_decode_failure_report_text,
+        build_decode_contract_failure_report, build_decode_inspect_response,
+        build_decode_list_response, build_decode_failure_report_response,
+        build_decode_report_response, build_decode_validate_response,
+        render_decode_failure_report_text,
         render_decode_inspect_text, render_decode_list_text, render_decode_report_text,
         render_decode_validate_text, serialize_decode_report, write_decode_report,
         DecodeReportWriteError,
@@ -906,6 +926,20 @@ mod tests {
         assert!(text.contains("root decoder: 0:i2c"));
         assert!(text.contains("partial event count: 1"));
         assert!(text.contains("sample count: 4"));
+    }
+
+    #[test]
+    fn decode_contract_failure_report_omits_partial_fields_until_available() {
+        let response = build_decode_contract_failure_report("fixture:i2c", 1, None);
+        let value = serde_json::to_value(&response).expect("failure response should serialize");
+
+        assert_eq!(value["run"]["status"], "failure");
+        assert_eq!(value["run"]["root_decoder_id"], "fixture:i2c");
+        assert_eq!(value["run"]["stack_depth"], 1);
+        assert!(value["run"].get("sample_count").is_none());
+        assert!(value["run"].get("event_count").is_none());
+        assert!(value.get("partial_events").is_none());
+        assert!(value.get("diagnostics").is_none());
     }
 
     #[test]

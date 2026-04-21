@@ -7,8 +7,9 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
     DecodeInspectResponse, DecodeListResponse, DecodeValidateResponse,
-    build_decode_failure_report_response, build_decode_inspect_response,
-    build_decode_list_response, build_decode_report_response, build_decode_validate_response,
+    build_decode_contract_failure_report, build_decode_failure_report_response,
+    build_decode_inspect_response, build_decode_list_response,
+    build_decode_report_response, build_decode_validate_response,
     build_device_options_response,
     capture_device_options::{
         resolve_capture_device_option_request, CaptureDeviceOptionParseError,
@@ -422,6 +423,13 @@ struct DecodeRunFailureResponse {
     error: DecodeFailureErrorResponse,
 }
 
+#[derive(Debug, Clone)]
+struct DecodeRunReportContext {
+    root_decoder_id: String,
+    stack_depth: usize,
+    sample_count: Option<u64>,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
@@ -546,10 +554,24 @@ fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
         .decode_list()
         .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
     let validated = load_decode_run_config(&args.config, &registry, args.decode.format)?;
-    let input = load_offline_decode_input(&args.input, args.decode.format)?;
-    let sample_count = input
-        .sample_count()
-        .map_err(|error| command_error(args.decode.format, classify_decode_input_error(&error)))?;
+    let base_context = decode_run_report_context(&validated, None);
+    let input = load_offline_decode_input(&args.input).map_err(|error| {
+        render_decode_run_contract_failure(
+            args.decode.format,
+            &base_context,
+            &error,
+            args.output.as_deref(),
+        )
+    })?;
+    let sample_count = input.sample_count().map_err(|error| {
+        let classified = classify_decode_input_error(&error);
+        render_decode_run_contract_failure(
+            args.decode.format,
+            &base_context,
+            &classified,
+            args.output.as_deref(),
+        )
+    })?;
     let result = match core_run_offline_decode(&validated, &input, discovery.runtime()) {
         Ok(result) => result,
         Err(error) => {
@@ -611,9 +633,23 @@ fn run_decode_run_from_fixture(
                 &validation_decode_fixture_registry(),
                 args.decode.format,
             )?;
-            let input = load_offline_decode_input(&args.input, args.decode.format)?;
+            let base_context = decode_run_report_context(&validated, None);
+            let input = load_offline_decode_input(&args.input).map_err(|error| {
+                render_decode_run_contract_failure(
+                    args.decode.format,
+                    &base_context,
+                    &error,
+                    args.output.as_deref(),
+                )
+            })?;
             let sample_count = input.sample_count().map_err(|error| {
-                command_error(args.decode.format, classify_decode_input_error(&error))
+                let classified = classify_decode_input_error(&error);
+                render_decode_run_contract_failure(
+                    args.decode.format,
+                    &base_context,
+                    &classified,
+                    args.output.as_deref(),
+                )
             })?;
             let runtime = DecodeRunFixtureRuntime::new(mode);
             let result = match core_run_offline_decode(&validated, &input, &runtime) {
@@ -716,12 +752,9 @@ fn load_decode_run_config(
         .map_err(|error| command_error(format, classify_decode_config_validation_error(&error)))
 }
 
-fn load_offline_decode_input(
-    input_path: &PathBuf,
-    format: OutputFormat,
-) -> Result<OfflineDecodeInput, FailedCommand> {
+fn load_offline_decode_input(input_path: &PathBuf) -> Result<OfflineDecodeInput, ErrorResponse> {
     let input_bytes = fs::read(input_path).map_err(|error| {
-        let response = if error.kind() == std::io::ErrorKind::NotFound {
+        if error.kind() == std::io::ErrorKind::NotFound {
             ErrorResponse {
                 code: "decode_input_file_missing",
                 message: format!("decode input file `{}` was not found", input_path.display()),
@@ -748,29 +781,18 @@ fn load_offline_decode_input(
                 terminal_event: None,
                 cleanup: None,
             }
-        };
-        command_error(format, response)
+        }
     })?;
-    let input = serde_json::from_slice::<OfflineDecodeInput>(&input_bytes).map_err(|error| {
-        command_error(
-            format,
-            ErrorResponse {
-                code: "decode_input_parse_failed",
-                message: format!("failed to parse offline decode input JSON: {error}"),
-                detail: Some(
-                    "Provide a JSON artifact matching the offline decode input contract."
-                        .to_string(),
-                ),
-                native_error: None,
-                terminal_event: None,
-                cleanup: None,
-            },
-        )
-    })?;
-    input
-        .validate_basic_shape()
-        .map_err(|error| command_error(format, classify_decode_input_error(&error)))?;
-    Ok(input)
+    serde_json::from_slice::<OfflineDecodeInput>(&input_bytes).map_err(|error| ErrorResponse {
+        code: "decode_input_parse_failed",
+        message: format!("failed to parse offline decode input JSON: {error}"),
+        detail: Some(
+            "Provide a JSON artifact matching the offline decode input contract.".to_string(),
+        ),
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    })
 }
 
 #[cfg(debug_assertions)]
@@ -2870,6 +2892,35 @@ fn build_decode_run_failure_response(
             message: error.message.clone(),
         },
     }
+}
+
+fn decode_run_report_context(
+    validated: &ValidatedDecodeConfig,
+    sample_count: Option<u64>,
+) -> DecodeRunReportContext {
+    DecodeRunReportContext {
+        root_decoder_id: validated.decoder.descriptor.id.clone(),
+        stack_depth: validated.stack.len(),
+        sample_count,
+    }
+}
+
+fn render_decode_run_contract_failure(
+    format: OutputFormat,
+    context: &DecodeRunReportContext,
+    error: &ErrorResponse,
+    output_path: Option<&Path>,
+) -> FailedCommand {
+    let response = build_decode_run_failure_response(
+        build_decode_contract_failure_report(
+            context.root_decoder_id.clone(),
+            context.stack_depth,
+            context.sample_count,
+        ),
+        error,
+    );
+    render_decode_run_failure(format, &response, output_path);
+    rendered_command_failure(format)
 }
 
 fn render_decode_run_failure(
