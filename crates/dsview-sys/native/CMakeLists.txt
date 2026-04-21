@@ -29,33 +29,19 @@ foreach(LIBUSB_INCLUDE_DIR IN LISTS LIBUSB_INCLUDE_DIRS)
 endforeach()
 list(REMOVE_DUPLICATES LIBUSB_NORMALIZED_INCLUDE_DIRS)
 
-find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
-add_library(dsview_runtime SHARED
+set(DSVIEW_RUNTIME_SOURCES
     ${COMMON_ROOT}/log/xlog.c
-    ${COMMON_ROOT}/minizip/ioapi.c
-    ${COMMON_ROOT}/minizip/unzip.c
-    ${COMMON_ROOT}/minizip/zip.c
     ${LIBSIGROK_ROOT}/version.c
     ${LIBSIGROK_ROOT}/strutil.c
     ${LIBSIGROK_ROOT}/std.c
-    ${LIBSIGROK_ROOT}/session_driver.c
     ${LIBSIGROK_ROOT}/session.c
     ${LIBSIGROK_ROOT}/log.c
     ${LIBSIGROK_ROOT}/hwdriver.c
     ${LIBSIGROK_ROOT}/error.c
     ${LIBSIGROK_ROOT}/backend.c
-    ${LIBSIGROK_ROOT}/output/output.c
-    ${LIBSIGROK_ROOT}/input/input.c
-    ${LIBSIGROK_ROOT}/hardware/demo/demo.c
-    ${LIBSIGROK_ROOT}/input/in_binary.c
     ${LIBSIGROK_ROOT}/input/in_vcd.c
-    ${LIBSIGROK_ROOT}/input/in_wav.c
-    ${LIBSIGROK_ROOT}/output/csv.c
-    ${LIBSIGROK_ROOT}/output/gnuplot.c
-    ${LIBSIGROK_ROOT}/output/srzip.c
-    ${LIBSIGROK_ROOT}/output/vcd.c
     ${LIBSIGROK_ROOT}/hardware/DSL/dslogic.c
     ${LIBSIGROK_ROOT}/hardware/common/usb.c
     ${LIBSIGROK_ROOT}/hardware/common/ezusb.c
@@ -66,6 +52,33 @@ add_library(dsview_runtime SHARED
     ${LIBSIGROK_ROOT}/hardware/DSL/dsl.c
     ${LIBSIGROK_ROOT}/lib_main.c
 )
+
+if(MSVC)
+    list(APPEND DSVIEW_RUNTIME_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/windows/input_minimal.c
+        ${CMAKE_CURRENT_LIST_DIR}/windows/output_minimal.c
+        ${CMAKE_CURRENT_LIST_DIR}/windows/session_stubs.c
+    )
+else()
+    find_package(ZLIB REQUIRED)
+    list(APPEND DSVIEW_RUNTIME_SOURCES
+        ${COMMON_ROOT}/minizip/ioapi.c
+        ${COMMON_ROOT}/minizip/unzip.c
+        ${COMMON_ROOT}/minizip/zip.c
+        ${LIBSIGROK_ROOT}/session_driver.c
+        ${LIBSIGROK_ROOT}/output/output.c
+        ${LIBSIGROK_ROOT}/input/input.c
+        ${LIBSIGROK_ROOT}/hardware/demo/demo.c
+        ${LIBSIGROK_ROOT}/input/in_binary.c
+        ${LIBSIGROK_ROOT}/input/in_wav.c
+        ${LIBSIGROK_ROOT}/output/csv.c
+        ${LIBSIGROK_ROOT}/output/gnuplot.c
+        ${LIBSIGROK_ROOT}/output/srzip.c
+        ${LIBSIGROK_ROOT}/output/vcd.c
+    )
+endif()
+
+add_library(dsview_runtime SHARED ${DSVIEW_RUNTIME_SOURCES})
 
 target_include_directories(dsview_runtime PRIVATE
     ${DSVIEW_SYS_COMPAT_ROOT}
@@ -80,12 +93,17 @@ target_include_directories(dsview_runtime PRIVATE
 target_compile_definitions(dsview_runtime PRIVATE
     HAVE_LIBUSB_1_0=1
     HAVE_DSL_DEVICE=1
-    HAVE_LA_DEMO=1
 )
+
+if(NOT MSVC)
+    target_compile_definitions(dsview_runtime PRIVATE HAVE_LA_DEMO=1)
+endif()
 
 if(MSVC)
     target_compile_options(dsview_runtime PRIVATE
         /W3
+        /utf-8
+        /FI${DSVIEW_SYS_COMPAT_ROOT}/msvc_preinclude.h
         /wd4100  # unreferenced formal parameter
         /wd4101  # unreferenced local variable
         /wd4189  # local variable initialized but not referenced
@@ -103,12 +121,15 @@ else()
 endif()
 
 target_link_libraries(dsview_runtime PRIVATE
-    ZLIB::ZLIB
     Threads::Threads
     ${GLIB_LIBRARIES}
     ${LIBUSB_LIBRARIES}
     ${FFTW_LIBRARIES}
 )
+
+if(NOT MSVC)
+    target_link_libraries(dsview_runtime PRIVATE ZLIB::ZLIB)
+endif()
 
 target_link_directories(dsview_runtime PRIVATE
     ${GLIB_LIBRARY_DIRS}
@@ -119,6 +140,10 @@ target_link_directories(dsview_runtime PRIVATE
 # Link math library on Unix-like systems
 if(UNIX)
     target_link_libraries(dsview_runtime PRIVATE m)
+endif()
+
+if(MSVC)
+    target_link_libraries(dsview_runtime PRIVATE ws2_32)
 endif()
 
 set_target_properties(dsview_runtime PROPERTIES

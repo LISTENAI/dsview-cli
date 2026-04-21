@@ -118,6 +118,34 @@ fn main() {
         "cargo:rerun-if-changed={}",
         native_root.join("CMakeLists.txt").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("windows/input_minimal.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("windows/output_minimal.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("windows/session_stubs.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("msvc_preinclude.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("pthread.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("unistd.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("sys/time.h").display()
+    );
 
     if !libsigrok_root.join("libsigrok.h").exists() {
         panic!(

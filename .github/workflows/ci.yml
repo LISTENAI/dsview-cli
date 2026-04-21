@@ -32,8 +32,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             runner: windows-2022
             msvc_arch: x64
-            # The Windows source-backed runtime still fails to build, so CI only builds and tests here.
-            package_bundle: false
+            package_bundle: true
 
     steps:
       - name: Checkout repository
