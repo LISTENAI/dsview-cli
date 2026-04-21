@@ -230,6 +230,11 @@ static void *dsview_bridge_dlopen(const char *path)
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 }
 
+static void *dsview_bridge_dlopen_global(const char *path)
+{
+    return dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+}
+
 static void *dsview_bridge_dlsym(void *library_handle, const char *name)
 {
     return dlsym(library_handle, name);
@@ -834,7 +839,12 @@ int dsview_decode_runtime_load(const char *path)
     dsview_decode_clear_error_state();
 
     dsview_bridge_clear_loader_error();
-    g_decode_runtime_api.library_handle = dsview_bridge_dlopen(path);
+    /*
+     * The decode runtime embeds Python and later imports CPython extension
+     * modules from decoder dependencies. Those extension modules need the
+     * libpython symbols to be globally visible during resolution.
+     */
+    g_decode_runtime_api.library_handle = dsview_bridge_dlopen_global(path);
     if (g_decode_runtime_api.library_handle == NULL) {
         dsview_decode_set_loader_error_from_loader();
         return DSVIEW_BRIDGE_ERR_DLOPEN;
