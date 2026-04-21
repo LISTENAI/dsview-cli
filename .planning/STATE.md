@@ -7,14 +7,14 @@ current_phase_name: Decode Config Model and Validation
 current_plan: -
 status: ready
 stopped_at: Phase 14 completed; awaiting Phase 15 discussion/planning
-last_updated: "2026-04-21T08:02:49.423Z"
-last_activity: 2026-04-21 -- Phase 14 completed and ready to start Phase 15
+last_updated: "2026-04-21T08:30:01.896Z"
+last_activity: 2026-04-21 -- Phase 15 planning complete
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 3
+  total_plans: 6
   completed_plans: 3
-  percent: 25
+  percent: 50
 ---
 
 # Session State
@@ -31,10 +31,10 @@ See: `.planning/PROJECT.md` (updated 2026-04-14)
 Current Phase: 15
 Current Phase Name: `Decode Config Model and Validation`
 Current Plan: -
-Total Plans in Milestone: 3
+Total Plans in Milestone: 6
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Phase 14 complete; ready for Phase 15
-Last activity: 2026-04-21 -- Phase 14 completed and ready to start Phase 15
+Status: Ready to execute
+Last activity: 2026-04-21 -- Phase 15 planning complete
 
 ## Accumulated Context
 
@@ -89,6 +89,6 @@ Resume File: None
 
 ## Immediate Next Steps
 
-- Run `/gsd-discuss-phase 15` to capture the config-model decisions before planning.
-- Or run `/gsd-plan-phase 15` to start Phase 15 planning directly.
-- Preserve the shipped `v1.0`, `v1.1`, and the newly completed Phase 14 discovery baseline while extending decode support.
+- Run `/gsd-execute-phase 15` to begin implementing the decode config schema and strict validation path.
+- Review `.planning/phases/15-decode-config-model-and-validation/*-PLAN.md` if you want to inspect the wave breakdown before execution.
+- Preserve the shipped `v1.0`, `v1.1`, and the completed Phase 14 discovery baseline while extending decode support.
