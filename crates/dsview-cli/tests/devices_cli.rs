@@ -157,3 +157,25 @@ fn decode_inspect_reports_unknown_decoder_cleanly() {
         .stdout(predicate::str::contains("decode list"))
         .stderr(predicate::str::is_empty());
 }
+
+#[test]
+fn decode_list_reports_missing_runtime_cleanly() {
+    fixture_cli_command("missing-runtime")
+        .args(["decode", "list"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"code\": \"decode_runtime_missing\""))
+        .stdout(predicate::str::contains("decoder runtime"))
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn decode_list_reports_missing_decoder_metadata_cleanly() {
+    fixture_cli_command("missing-metadata")
+        .args(["decode", "list"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"code\": \"decoder_metadata_missing\""))
+        .stdout(predicate::str::contains("decoder metadata"))
+        .stderr(predicate::str::is_empty());
+}

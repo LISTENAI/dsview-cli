@@ -40,6 +40,8 @@ const BUILD_VERSION: &str = match option_env!("DSVIEW_BUILD_VERSION") {
 
 #[cfg(debug_assertions)]
 const TEST_DEVICE_OPTIONS_FIXTURE_ENV: &str = "DSVIEW_CLI_TEST_DEVICE_OPTIONS_FIXTURE";
+#[cfg(debug_assertions)]
+const TEST_DECODE_FIXTURE_ENV: &str = "DSVIEW_CLI_TEST_DECODE_FIXTURE";
 
 #[derive(Parser, Debug)]
 #[command(version = BUILD_VERSION)]
@@ -381,6 +383,18 @@ fn main() -> ExitCode {
 }
 
 fn run_decode_list(args: DecodeListArgs) -> Result<(), FailedCommand> {
+    #[cfg(debug_assertions)]
+    let decoders = if let Some(mode) = decode_test_fixture_mode() {
+        decode_list_from_fixture(mode)
+    } else {
+        core_decode_list(
+            args.decode.decode_runtime.as_deref(),
+            args.decode.decoder_dir.as_deref(),
+        )
+    }
+    .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
+
+    #[cfg(not(debug_assertions))]
     let decoders = core_decode_list(
         args.decode.decode_runtime.as_deref(),
         args.decode.decoder_dir.as_deref(),
@@ -392,6 +406,19 @@ fn run_decode_list(args: DecodeListArgs) -> Result<(), FailedCommand> {
 }
 
 fn run_decode_inspect(args: DecodeInspectArgs) -> Result<(), FailedCommand> {
+    #[cfg(debug_assertions)]
+    let decoder = if let Some(mode) = decode_test_fixture_mode() {
+        decode_inspect_from_fixture(mode, &args.decoder_id)
+    } else {
+        core_decode_inspect(
+            args.decode.decode_runtime.as_deref(),
+            args.decode.decoder_dir.as_deref(),
+            &args.decoder_id,
+        )
+    }
+    .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
+
+    #[cfg(not(debug_assertions))]
     let decoder = core_decode_inspect(
         args.decode.decode_runtime.as_deref(),
         args.decode.decoder_dir.as_deref(),
@@ -401,6 +428,122 @@ fn run_decode_inspect(args: DecodeInspectArgs) -> Result<(), FailedCommand> {
     let response = build_decode_inspect_response(&decoder);
     render_decode_inspect_success(args.decode.format, &response);
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecodeTestFixtureMode {
+    Registry,
+    MissingRuntime,
+    MissingMetadata,
+}
+
+#[cfg(debug_assertions)]
+fn decode_test_fixture_mode() -> Option<DecodeTestFixtureMode> {
+    match std::env::var(TEST_DECODE_FIXTURE_ENV).ok().as_deref() {
+        Some("registry") => Some(DecodeTestFixtureMode::Registry),
+        Some("missing-runtime") => Some(DecodeTestFixtureMode::MissingRuntime),
+        Some("missing-metadata") => Some(DecodeTestFixtureMode::MissingMetadata),
+        _ => None,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn decode_list_from_fixture(
+    mode: DecodeTestFixtureMode,
+) -> Result<Vec<dsview_core::DecoderDescriptor>, DecodeBringUpError> {
+    match mode {
+        DecodeTestFixtureMode::Registry => Ok(vec![decode_fixture_descriptor()]),
+        DecodeTestFixtureMode::MissingRuntime => Err(DecodeBringUpError::BundledRuntimeMissing {
+            path: PathBuf::from("bundle/decode-runtime/libdsview_decode_runtime.so"),
+            executable_dir: PathBuf::from("bundle"),
+        }),
+        DecodeTestFixtureMode::MissingMetadata => Err(DecodeBringUpError::DecoderScriptsMissing {
+            path: PathBuf::from("bundle/decoders"),
+        }),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn decode_inspect_from_fixture(
+    mode: DecodeTestFixtureMode,
+    decoder_id: &str,
+) -> Result<dsview_core::DecoderDescriptor, DecodeBringUpError> {
+    match mode {
+        DecodeTestFixtureMode::Registry => {
+            if decoder_id == "0:i2c" {
+                Ok(decode_fixture_descriptor())
+            } else {
+                Err(DecodeBringUpError::UnknownDecoder {
+                    decoder_id: decoder_id.to_string(),
+                })
+            }
+        }
+        DecodeTestFixtureMode::MissingRuntime => Err(DecodeBringUpError::BundledRuntimeMissing {
+            path: PathBuf::from("bundle/decode-runtime/libdsview_decode_runtime.so"),
+            executable_dir: PathBuf::from("bundle"),
+        }),
+        DecodeTestFixtureMode::MissingMetadata => Err(DecodeBringUpError::DecoderScriptsMissing {
+            path: PathBuf::from("bundle/decoders"),
+        }),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn decode_fixture_descriptor() -> dsview_core::DecoderDescriptor {
+    dsview_core::DecoderDescriptor {
+        id: "0:i2c".to_string(),
+        name: "0:I2C".to_string(),
+        longname: "Inter-Integrated Circuit".to_string(),
+        description: "Two-wire serial bus".to_string(),
+        license: "gplv2+".to_string(),
+        inputs: vec![dsview_core::DecoderInputDescriptor {
+            id: "logic".to_string(),
+        }],
+        outputs: vec![
+            dsview_core::DecoderOutputDescriptor {
+                id: "i2c".to_string(),
+            },
+            dsview_core::DecoderOutputDescriptor {
+                id: "i2c-messages".to_string(),
+            },
+        ],
+        tags: vec!["serial".to_string(), "embedded".to_string()],
+        required_channels: vec![dsview_core::DecoderChannelDescriptor {
+            id: "scl".to_string(),
+            name: "SCL".to_string(),
+            description: "Clock".to_string(),
+            order: 0,
+            channel_type: 0,
+            idn: Some("clk".to_string()),
+        }],
+        optional_channels: vec![dsview_core::DecoderChannelDescriptor {
+            id: "sda".to_string(),
+            name: "SDA".to_string(),
+            description: "Data".to_string(),
+            order: 1,
+            channel_type: 0,
+            idn: Some("data".to_string()),
+        }],
+        options: vec![dsview_core::DecoderOptionDescriptor {
+            id: "address_format".to_string(),
+            idn: Some("address_format".to_string()),
+            description: Some("Whether addresses render as 7-bit or 8-bit".to_string()),
+            default_value: Some("7-bit".to_string()),
+            values: vec!["7-bit".to_string(), "8-bit".to_string()],
+        }],
+        annotations: vec![dsview_core::DecoderAnnotationDescriptor {
+            id: "start".to_string(),
+            label: Some("START".to_string()),
+            description: Some("Start condition".to_string()),
+            annotation_type: 0,
+        }],
+        annotation_rows: vec![dsview_core::DecoderAnnotationRowDescriptor {
+            id: "frames".to_string(),
+            description: Some("Frame events".to_string()),
+            annotation_classes: vec![0],
+        }],
+    }
 }
 
 struct FailedCommand {
