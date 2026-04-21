@@ -28,8 +28,10 @@ pub use device_options::{
 pub use dsview_sys::{
     decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
     source_runtime_library_path, AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle,
-    DeviceSummary, DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode,
-    ExportErrorCode, NativeErrorCode, RuntimeError, VcdExportFacts, VcdExportRequest,
+    DeviceSummary, DecodeExecutionLogicFormat, DecodeOptionValueKind, DecodeRuntimeError,
+    DecodeRuntimeErrorCode, DecodeSessionChannelBinding, DecodeSessionInstance,
+    DecodeSessionOption, DecodeSessionOptionValue, ExportErrorCode, NativeErrorCode,
+    RuntimeError, VcdExportFacts, VcdExportRequest,
 };
 pub use dsview_sys::{
     DecodeRuntimeError as DecoderRuntimeError,
@@ -468,6 +470,331 @@ impl OfflineDecodeInput {
 
         Ok(())
     }
+
+    fn byte_alignment(&self) -> Result<usize, OfflineDecodeInputError> {
+        self.validate_basic_shape()?;
+        Ok(match self.format {
+            OfflineDecodeDataFormat::SplitLogic => self.unitsize as usize,
+            OfflineDecodeDataFormat::CrossLogic => {
+                self.channel_count.expect("validated above") as usize * std::mem::size_of::<u64>()
+            }
+        })
+    }
+
+    fn sample_count_for_len(&self, sample_byte_len: usize) -> Result<u64, OfflineDecodeInputError> {
+        let alignment = self.byte_alignment()?;
+        if sample_byte_len == 0 || sample_byte_len % alignment != 0 {
+            return Err(OfflineDecodeInputError::MisalignedSampleBytes);
+        }
+
+        Ok(match self.format {
+            OfflineDecodeDataFormat::SplitLogic => {
+                (sample_byte_len / self.unitsize as usize) as u64
+            }
+            OfflineDecodeDataFormat::CrossLogic => {
+                let channel_count = self.channel_count.expect("validated above") as usize;
+                ((sample_byte_len / (channel_count * std::mem::size_of::<u64>())) * 64) as u64
+            }
+        })
+    }
+}
+
+pub const OFFLINE_DECODE_FIXED_CHUNK_BYTES: usize = 4096;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DecodeCapturedAnnotation {
+    pub decoder_id: String,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub annotation_class: i32,
+    pub annotation_type: i32,
+    pub texts: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OfflineDecodeResult {
+    annotations: Vec<DecodeCapturedAnnotation>,
+    #[serde(skip_serializing)]
+    diagnostics: OfflineDecodeDiagnostics,
+}
+
+impl OfflineDecodeResult {
+    pub fn annotations(&self) -> &[DecodeCapturedAnnotation] {
+        &self.annotations
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct OfflineDecodeDiagnostics {
+    completed_chunks: usize,
+    consumed_samples: u64,
+    partial_annotations: Vec<DecodeCapturedAnnotation>,
+}
+
+#[derive(Debug, Error)]
+pub enum OfflineDecodeRunError {
+    #[error(transparent)]
+    InvalidInput(#[from] OfflineDecodeInputError),
+    #[error("offline decode runtime failed during {operation}: {source}")]
+    Runtime {
+        operation: &'static str,
+        #[source]
+        source: DecodeRuntimeError,
+        diagnostics: OfflineDecodeDiagnostics,
+    },
+}
+
+impl OfflineDecodeRunError {
+    pub fn operation(&self) -> &'static str {
+        match self {
+            Self::InvalidInput(_) => "validate input",
+            Self::Runtime { operation, .. } => operation,
+        }
+    }
+
+    pub fn retained_annotations(&self) -> &[DecodeCapturedAnnotation] {
+        match self {
+            Self::InvalidInput(_) => &[],
+            Self::Runtime { diagnostics, .. } => &diagnostics.partial_annotations,
+        }
+    }
+
+    pub fn completed_chunks(&self) -> usize {
+        match self {
+            Self::InvalidInput(_) => 0,
+            Self::Runtime { diagnostics, .. } => diagnostics.completed_chunks,
+        }
+    }
+}
+
+pub trait OfflineDecodeRuntimeSession {
+    fn set_samplerate_hz(&mut self, samplerate_hz: u64) -> Result<(), DecodeRuntimeError>;
+    fn build_linear_stack(
+        &mut self,
+        root: &DecodeSessionInstance,
+        stack: &[DecodeSessionInstance],
+    ) -> Result<(), DecodeRuntimeError>;
+    fn start(&mut self) -> Result<(), DecodeRuntimeError>;
+    fn send_logic_chunk(
+        &mut self,
+        abs_start_sample: u64,
+        sample_bytes: &[u8],
+        format: DecodeExecutionLogicFormat,
+    ) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError>;
+    fn end(&mut self) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError>;
+}
+
+pub trait OfflineDecodeRuntime {
+    type Session: OfflineDecodeRuntimeSession;
+
+    fn create_session(&self) -> Result<Self::Session, DecodeRuntimeError>;
+}
+
+impl OfflineDecodeRuntime for DecodeRuntimeBridge {
+    type Session = dsview_sys::DecodeExecutionSession;
+
+    fn create_session(&self) -> Result<Self::Session, DecodeRuntimeError> {
+        dsview_sys::DecodeExecutionSession::new()
+    }
+}
+
+impl OfflineDecodeRuntimeSession for dsview_sys::DecodeExecutionSession {
+    fn set_samplerate_hz(&mut self, samplerate_hz: u64) -> Result<(), DecodeRuntimeError> {
+        dsview_sys::DecodeExecutionSession::set_samplerate_hz(self, samplerate_hz)
+    }
+
+    fn build_linear_stack(
+        &mut self,
+        root: &DecodeSessionInstance,
+        stack: &[DecodeSessionInstance],
+    ) -> Result<(), DecodeRuntimeError> {
+        dsview_sys::DecodeExecutionSession::build_linear_stack(self, root, stack)
+    }
+
+    fn start(&mut self) -> Result<(), DecodeRuntimeError> {
+        dsview_sys::DecodeExecutionSession::start(self)
+    }
+
+    fn send_logic_chunk(
+        &mut self,
+        abs_start_sample: u64,
+        sample_bytes: &[u8],
+        format: DecodeExecutionLogicFormat,
+    ) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
+        dsview_sys::session_send_logic_chunk(self, abs_start_sample, sample_bytes, format, None)?;
+        Ok(Vec::new())
+    }
+
+    fn end(&mut self) -> Result<Vec<DecodeCapturedAnnotation>, DecodeRuntimeError> {
+        dsview_sys::DecodeExecutionSession::end(self)?;
+        Ok(Vec::new())
+    }
+}
+
+pub fn run_offline_decode<R: OfflineDecodeRuntime>(
+    config: &ValidatedDecodeConfig,
+    input: &OfflineDecodeInput,
+    runtime: &R,
+) -> Result<OfflineDecodeResult, OfflineDecodeRunError> {
+    input.validate_basic_shape()?;
+
+    let mut session = runtime
+        .create_session()
+        .map_err(|source| OfflineDecodeRunError::Runtime {
+            operation: "create session",
+            source,
+            diagnostics: OfflineDecodeDiagnostics::default(),
+        })?;
+    let mut diagnostics = OfflineDecodeDiagnostics::default();
+
+    session
+        .set_samplerate_hz(input.samplerate_hz)
+        .map_err(|source| OfflineDecodeRunError::Runtime {
+            operation: "set samplerate",
+            source,
+            diagnostics: diagnostics.clone(),
+        })?;
+
+    let root = build_root_decode_session(config);
+    let stack = build_stacked_decode_sessions(config);
+    session
+        .build_linear_stack(&root, &stack)
+        .map_err(|source| OfflineDecodeRunError::Runtime {
+            operation: "build linear stack",
+            source,
+            diagnostics: diagnostics.clone(),
+        })?;
+    session
+        .start()
+        .map_err(|source| OfflineDecodeRunError::Runtime {
+            operation: "start session",
+            source,
+            diagnostics: diagnostics.clone(),
+        })?;
+
+    let mut annotations = Vec::new();
+    let format = offline_decode_logic_format(input);
+    let mut abs_start_sample = 0_u64;
+
+    for chunk in offline_decode_chunk_ranges(input)? {
+        let chunk_annotations = session
+            .send_logic_chunk(abs_start_sample, &input.sample_bytes[chunk.clone()], format)
+            .map_err(|source| OfflineDecodeRunError::Runtime {
+                operation: "send logic chunk",
+                source,
+                diagnostics: diagnostics.clone(),
+            })?;
+        diagnostics.completed_chunks += 1;
+        diagnostics.consumed_samples += input.sample_count_for_len(chunk.len())?;
+        diagnostics.partial_annotations.extend(chunk_annotations.clone());
+        annotations.extend(chunk_annotations);
+        abs_start_sample = diagnostics.consumed_samples;
+    }
+
+    let tail_annotations = session
+        .end()
+        .map_err(|source| OfflineDecodeRunError::Runtime {
+            operation: "end session",
+            source,
+            diagnostics: diagnostics.clone(),
+        })?;
+    diagnostics.partial_annotations.extend(tail_annotations.clone());
+    annotations.extend(tail_annotations);
+
+    Ok(OfflineDecodeResult {
+        annotations,
+        diagnostics,
+    })
+}
+
+fn build_root_decode_session(config: &ValidatedDecodeConfig) -> DecodeSessionInstance {
+    DecodeSessionInstance {
+        decoder_id: config.decoder.descriptor.id.clone(),
+        channel_bindings: config
+            .decoder
+            .channels
+            .iter()
+            .map(|(channel_id, channel_index)| DecodeSessionChannelBinding {
+                channel_id: channel_id.clone(),
+                channel_index: *channel_index,
+            })
+            .collect(),
+        options: decode_session_options(&config.decoder.options),
+    }
+}
+
+fn build_stacked_decode_sessions(config: &ValidatedDecodeConfig) -> Vec<DecodeSessionInstance> {
+    config
+        .stack
+        .iter()
+        .map(|entry| DecodeSessionInstance {
+            decoder_id: entry.descriptor.id.clone(),
+            channel_bindings: Vec::new(),
+            options: decode_session_options(&entry.options),
+        })
+        .collect()
+}
+
+fn decode_session_options(
+    options: &BTreeMap<String, DecodeOptionValue>,
+) -> Vec<DecodeSessionOption> {
+    options
+        .iter()
+        .map(|(option_id, value)| DecodeSessionOption {
+            option_id: option_id.clone(),
+            value: match value {
+                DecodeOptionValue::String(value) => DecodeSessionOptionValue::String(value.clone()),
+                DecodeOptionValue::Integer(value) => DecodeSessionOptionValue::Integer(*value),
+                DecodeOptionValue::Float(value) => DecodeSessionOptionValue::Float(*value),
+            },
+        })
+        .collect()
+}
+
+fn offline_decode_logic_format(input: &OfflineDecodeInput) -> DecodeExecutionLogicFormat {
+    match input.format {
+        OfflineDecodeDataFormat::SplitLogic => {
+            DecodeExecutionLogicFormat::SplitLogic {
+                unitsize: input.unitsize,
+            }
+        }
+        OfflineDecodeDataFormat::CrossLogic => DecodeExecutionLogicFormat::CrossLogic {
+            channel_count: input.channel_count.expect("validated before execution"),
+        },
+    }
+}
+
+fn offline_decode_chunk_ranges(
+    input: &OfflineDecodeInput,
+) -> Result<Vec<std::ops::Range<usize>>, OfflineDecodeInputError> {
+    let alignment = input.byte_alignment()?;
+    if let Some(packet_lengths) = &input.logic_packet_lengths {
+        let mut offset = 0_usize;
+        return Ok(packet_lengths
+            .iter()
+            .map(|packet_len| {
+                let range = offset..offset + packet_len;
+                offset += packet_len;
+                range
+            })
+            .collect());
+    }
+
+    let fixed_chunk_len = OFFLINE_DECODE_FIXED_CHUNK_BYTES
+        .max(alignment)
+        .checked_sub(OFFLINE_DECODE_FIXED_CHUNK_BYTES.max(alignment) % alignment)
+        .filter(|chunk_len| *chunk_len > 0)
+        .unwrap_or(alignment);
+    let mut ranges = Vec::new();
+    let mut offset = 0_usize;
+
+    while offset < input.sample_bytes.len() {
+        let next = (offset + fixed_chunk_len).min(input.sample_bytes.len());
+        ranges.push(offset..next);
+        offset = next;
+    }
+
+    Ok(ranges)
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
