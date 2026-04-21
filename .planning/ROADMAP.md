@@ -86,7 +86,7 @@ Phases execute in numeric order: 14 -> 15 -> 16 -> 17
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 14. Decode Runtime Boundary and Decoder Registry | 2/3 | In Progress|  |
+| 14. Decode Runtime Boundary and Decoder Registry | 3/3 | In Progress | - |
 | 15. Decode Config Model and Validation | 0/3 | Not started | - |
 | 16. Offline Decode Execution | 0/3 | Not started | - |
 | 17. Decode Output and Workflow Reporting | 0/3 | Not started | - |
