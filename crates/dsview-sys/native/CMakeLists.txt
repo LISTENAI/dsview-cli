@@ -9,10 +9,12 @@ if(NOT DEFINED DSVIEW_REPO_ROOT)
     message(FATAL_ERROR "DSVIEW_REPO_ROOT must point at the repository root")
 endif()
 
-set(DSVIEW_ROOT "${DSVIEW_REPO_ROOT}/DSView")
-set(LIBSIGROK_ROOT "${DSVIEW_ROOT}/libsigrok4DSL")
-set(COMMON_ROOT "${DSVIEW_ROOT}/common")
-set(DSVIEW_SYS_COMPAT_ROOT "${DSVIEW_REPO_ROOT}/crates/dsview-sys/compat")
+file(TO_CMAKE_PATH "${DSVIEW_REPO_ROOT}" DSVIEW_REPO_ROOT_NORMALIZED)
+file(TO_CMAKE_PATH "${DSVIEW_REPO_ROOT_NORMALIZED}/DSView" DSVIEW_ROOT)
+file(TO_CMAKE_PATH "${DSVIEW_ROOT}/libsigrok4DSL" LIBSIGROK_ROOT)
+file(TO_CMAKE_PATH "${DSVIEW_ROOT}/common" COMMON_ROOT)
+file(TO_CMAKE_PATH "${DSVIEW_REPO_ROOT_NORMALIZED}/crates/dsview-sys/compat" DSVIEW_SYS_COMPAT_ROOT)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/windows" DSVIEW_NATIVE_WINDOWS_ROOT)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
@@ -55,9 +57,9 @@ set(DSVIEW_RUNTIME_SOURCES
 
 if(MSVC)
     list(APPEND DSVIEW_RUNTIME_SOURCES
-        ${CMAKE_CURRENT_LIST_DIR}/windows/input_minimal.c
-        ${CMAKE_CURRENT_LIST_DIR}/windows/output_minimal.c
-        ${CMAKE_CURRENT_LIST_DIR}/windows/session_stubs.c
+        ${DSVIEW_NATIVE_WINDOWS_ROOT}/input_minimal.c
+        ${DSVIEW_NATIVE_WINDOWS_ROOT}/output_minimal.c
+        ${DSVIEW_NATIVE_WINDOWS_ROOT}/session_stubs.c
     )
 else()
     find_package(ZLIB REQUIRED)
