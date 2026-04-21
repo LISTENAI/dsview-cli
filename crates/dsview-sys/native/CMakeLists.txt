@@ -146,6 +146,9 @@ endif()
 
 if(MSVC)
     target_link_libraries(dsview_runtime PRIVATE ws2_32)
+    set_target_properties(dsview_runtime PROPERTIES
+        LINK_FLAGS "/DEF:${DSVIEW_NATIVE_WINDOWS_ROOT}/dsview_runtime.def"
+    )
 endif()
 
 set_target_properties(dsview_runtime PROPERTIES

@@ -1,0 +1,24 @@
+LIBRARY dsview_runtime
+EXPORTS
+    ds_active_device
+    ds_enable_device_channel_index
+    ds_get_actived_device_config
+    ds_get_actived_device_config_list
+    ds_get_actived_device_init_status
+    ds_get_device_list
+    ds_get_last_error
+    ds_is_collecting
+    ds_lib_exit
+    ds_lib_init
+    ds_release_actived_device
+    ds_set_actived_device_config
+    ds_set_datafeed_callback
+    ds_set_event_callback
+    ds_set_firmware_resource_dir
+    ds_start_collect
+    ds_stop_collect
+    sr_get_lib_version_string
+    sr_output_find
+    sr_output_free
+    sr_output_new
+    sr_output_send
