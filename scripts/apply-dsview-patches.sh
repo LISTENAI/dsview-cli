@@ -27,14 +27,15 @@ fi
 
 for patch in "${patches[@]}"; do
   name="$(basename "${patch}")"
+  apply_args=(--ignore-space-change --ignore-whitespace)
 
-  if git -C "${DSVIEW_DIR}" apply --check "${patch}" >/dev/null 2>&1; then
+  if git -C "${DSVIEW_DIR}" apply "${apply_args[@]}" --check "${patch}" >/dev/null 2>&1; then
     echo "Applying ${name}"
-    git -C "${DSVIEW_DIR}" apply "${patch}"
+    git -C "${DSVIEW_DIR}" apply "${apply_args[@]}" "${patch}"
     continue
   fi
 
-  if git -C "${DSVIEW_DIR}" apply --reverse --check "${patch}" >/dev/null 2>&1; then
+  if git -C "${DSVIEW_DIR}" apply "${apply_args[@]}" --reverse --check "${patch}" >/dev/null 2>&1; then
     echo "Already applied ${name}"
     continue
   fi

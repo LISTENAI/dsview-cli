@@ -3,6 +3,7 @@
 //! This crate is the only allowed home for unsafe FFI when Phase 1 adds
 //! bindings to `DSView/libsigrok4DSL`.
 
+use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::fs;
@@ -1865,6 +1866,7 @@ impl Drop for RuntimeBridge {
 #[derive(Debug)]
 pub struct DecodeRuntimeBridge {
     library_path: PathBuf,
+    initialized: Cell<bool>,
 }
 
 impl DecodeRuntimeBridge {
@@ -1882,6 +1884,7 @@ impl DecodeRuntimeBridge {
         match status {
             0 => Ok(Self {
                 library_path: path.to_path_buf(),
+                initialized: Cell::new(false),
             }),
             DSVIEW_BRIDGE_ERR_ARG | DSVIEW_DECODE_ERR_ARG => Err(DecodeRuntimeError::InvalidArgument(
                 "decode runtime library path must not be empty".to_string(),
@@ -1911,13 +1914,17 @@ impl DecodeRuntimeBridge {
         let c_path = path_to_decode_cstring(decoder_dir.as_ref())?;
         decode_native_call_status("decode runtime init", unsafe {
             dsview_decode_runtime_init(c_path.as_ptr())
-        })
+        })?;
+        self.initialized.set(true);
+        Ok(())
     }
 
     pub fn exit(&self) -> Result<(), DecodeRuntimeError> {
         decode_native_call_status("decode runtime exit", unsafe {
             dsview_decode_runtime_exit()
-        })
+        })?;
+        self.initialized.set(false);
+        Ok(())
     }
 
     pub fn decode_list(&self) -> Result<Vec<DecodeDecoder>, DecodeRuntimeError> {
@@ -1990,9 +1997,11 @@ impl DecodeRuntimeBridge {
 
 impl Drop for DecodeRuntimeBridge {
     fn drop(&mut self) {
-        unsafe {
-            let _ = dsview_decode_runtime_exit();
-        };
+        if self.initialized.get() {
+            unsafe {
+                let _ = dsview_decode_runtime_exit();
+            };
+        }
     }
 }
 
