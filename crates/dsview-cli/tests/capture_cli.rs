@@ -10,6 +10,25 @@ fn cli_command() -> Command {
     Command::cargo_bin("dsview-cli").expect("dsview-cli binary should build for CLI tests")
 }
 
+fn ensure_placeholder_runtime() {
+    let exe = assert_cmd::cargo::cargo_bin("dsview-cli");
+    let runtime_dir = exe
+        .parent()
+        .expect("CLI test binary should live in a directory")
+        .join("runtime");
+    let runtime_name = if cfg!(target_os = "windows") {
+        "dsview_runtime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libdsview_runtime.dylib"
+    } else {
+        "libdsview_runtime.so"
+    };
+
+    fs::create_dir_all(&runtime_dir).expect("runtime directory should be creatable for CLI tests");
+    fs::write(runtime_dir.join(runtime_name), b"placeholder")
+        .expect("placeholder runtime should be writable for CLI tests");
+}
+
 fn fixture_cli_command(fixture: &str) -> Command {
     let mut command = cli_command();
     command.env("DSVIEW_CLI_TEST_DEVICE_OPTIONS_FIXTURE", fixture);
@@ -419,6 +438,8 @@ fn capture_conflicting_artifact_paths_fail_before_runtime_work() {
 
 #[test]
 fn capture_missing_resource_files_reports_bundle_relative_guidance() {
+    ensure_placeholder_runtime();
+
     cli_command()
         .args([
             "capture",
