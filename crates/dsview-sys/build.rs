@@ -166,6 +166,10 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-changed={}",
+        compat_root.join("msvc_decode_preinclude.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
         compat_root.join("pthread.h").display()
     );
     println!(

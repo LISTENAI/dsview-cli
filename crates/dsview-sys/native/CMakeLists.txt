@@ -105,12 +105,12 @@ set(DECODE_RUNTIME_SOURCES
     ${DSVIEW_ROOT}/libsigrokdecode4DSL/version.c
 )
 
-function(configure_runtime_target target_name)
+function(configure_runtime_target target_name preinclude_header)
     if(MSVC)
         target_compile_options(${target_name} PRIVATE
             /W3
             /utf-8
-            /FI${DSVIEW_SYS_COMPAT_ROOT}/msvc_preinclude.h
+            /FI${DSVIEW_SYS_COMPAT_ROOT}/${preinclude_header}
             /wd4100
             /wd4101
             /wd4189
@@ -187,7 +187,7 @@ if(DSVIEW_BUILD_CAPTURE_RUNTIME)
     endif()
 
     set_target_properties(dsview_runtime PROPERTIES OUTPUT_NAME dsview_runtime)
-    configure_runtime_target(dsview_runtime)
+    configure_runtime_target(dsview_runtime msvc_preinclude.h)
 endif()
 
 if(DSVIEW_BUILD_DECODE_RUNTIME)
@@ -216,5 +216,5 @@ if(DSVIEW_BUILD_DECODE_RUNTIME)
     )
 
     set_target_properties(dsview_decode_runtime PROPERTIES OUTPUT_NAME dsview_decode_runtime)
-    configure_runtime_target(dsview_decode_runtime)
+    configure_runtime_target(dsview_decode_runtime msvc_decode_preinclude.h)
 endif()
