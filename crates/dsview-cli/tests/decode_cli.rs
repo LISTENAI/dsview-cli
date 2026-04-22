@@ -416,6 +416,43 @@ fn decode_run_failure_json_report_matches_contract() {
 }
 
 #[test]
+fn decode_run_failure_can_emit_partial_diagnostics() {
+    let config = valid_decode_config("decode-run-partial-diagnostics-config");
+    let input = valid_decode_input("decode-run-partial-diagnostics-input");
+
+    let output = fixture_cli_command("run-partial-failure")
+        .args([
+            "decode",
+            "run",
+            "--config",
+            fixture_config_path(&config),
+            "--input",
+            fixture_config_path(&input),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+
+    let json = parse_json(&output);
+    assert_eq!(json["run"]["status"], "failure");
+    assert_eq!(json["error"]["code"], "decode_session_send_failed");
+    assert_eq!(
+        json["partial_events"][0]["decoder_id"],
+        serde_json::json!("fixture:i2c")
+    );
+    assert_eq!(json["diagnostics"]["partial_event_count"], 1);
+    assert_eq!(json["diagnostics"]["partial_events_available"], true);
+    assert!(
+        !serde_json::to_string(&json)
+            .expect("failure contract should serialize")
+            .contains("partial_success")
+    );
+}
+
+#[test]
 fn decode_run_rejects_misaligned_logic_packet_lengths() {
     let config = write_config(
         "decode-run-invalid-input-config",
