@@ -44,6 +44,16 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply DSView local patches (Unix)
+        if: !contains(matrix.target, 'windows')
+        shell: bash
+        run: ./scripts/apply-dsview-patches.sh
+
+      - name: Apply DSView local patches (Windows)
+        if: contains(matrix.target, 'windows')
+        shell: pwsh
+        run: ./scripts/apply-dsview-patches.ps1
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
