@@ -44,6 +44,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply DSView local patches
+        shell: bash
+        run: ./scripts/apply-dsview-patches.sh
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
