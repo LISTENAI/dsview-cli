@@ -250,22 +250,7 @@ fn pack_cross_logic_blocks(blocks: &[&[u64]]) -> Vec<u8> {
     packed
 }
 
-fn with_decode_execution_session(
-    assertion: impl FnOnce(&mut DecodeExecutionSession),
-) {
-    let _guard = runtime_test_guard().lock().unwrap();
-    let Some(runtime) = load_decode_runtime() else {
-        return;
-    };
-    let decoder_dir = source_decoder_dir();
-    if !decoder_dir.exists() {
-        return;
-    }
-
-    runtime
-        .init(&decoder_dir)
-        .expect("decode runtime should initialize with source decoder dir");
-
+fn started_root_decode_session() -> DecodeExecutionSession {
     let mut session =
         DecodeExecutionSession::new().expect("decode execution session should construct");
     session
@@ -277,11 +262,7 @@ fn with_decode_execution_session(
     session
         .start()
         .expect("decode execution session should start");
-
-    assertion(&mut session);
-
-    drop(session);
-    runtime.exit().expect("decode runtime exit should succeed");
+    session
 }
 
 #[test]
@@ -326,7 +307,7 @@ fn decode_runtime_reports_loader_failures() {
 }
 
 #[test]
-fn decode_runtime_init_shapes_decoder_directory_errors() {
+fn decode_runtime_init_rejects_missing_decoder_dir() {
     let _guard = runtime_test_guard().lock().unwrap();
     let Some(runtime) = load_decode_runtime() else {
         return;
@@ -351,7 +332,7 @@ fn decode_runtime_init_shapes_decoder_directory_errors() {
 }
 
 #[test]
-fn decode_runtime_lists_and_inspects_decoder_metadata() {
+fn decode_runtime_success_lifecycle_contracts_hold() {
     let _guard = runtime_test_guard().lock().unwrap();
     let Some(runtime) = load_decode_runtime() else {
         return;
@@ -361,19 +342,21 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
         return;
     }
 
-    decode_diag("inspect test: init runtime");
+    decode_diag("success test: init runtime");
     runtime
         .init(&decoder_dir)
         .expect("decode runtime should initialize with source decoder dir");
-    decode_diag("inspect test: decode_list");
+
+    decode_diag("success test: decode_list");
     let list = runtime.decode_list().expect("decode_list should succeed");
-    decode_diag(format!("inspect test: decode_list count={}", list.len()));
+    decode_diag(format!("success test: decode_list count={}", list.len()));
+
     let list_entry = list
         .iter()
         .find(|decoder| decoder.id == "0:i2c")
         .expect("expected canonical upstream decoder ids in decode runtime list");
 
-    decode_diag("inspect test: decode_inspect 0:i2c");
+    decode_diag("success test: decode_inspect 0:i2c");
     let decoder = runtime
         .decode_inspect("0:i2c")
         .expect("decode_inspect should return decoder metadata");
@@ -388,7 +371,7 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
     assert!(!decoder.inputs.is_empty());
     assert!(!decoder.outputs.is_empty());
 
-    decode_diag("inspect test: decode_inspect missing-decoder");
+    decode_diag("success test: decode_inspect missing-decoder");
     let unknown = runtime.decode_inspect("missing-decoder").unwrap_err();
     assert!(matches!(
         unknown,
@@ -399,32 +382,6 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
         }
     ));
 
-    decode_diag("inspect test: exit runtime");
-    runtime.exit().expect("decode runtime exit should succeed");
-    decode_diag("inspect test: runtime exited");
-}
-
-#[test]
-fn decode_option_value_kind_follows_upstream_default_type() {
-    let _guard = runtime_test_guard().lock().unwrap();
-    let Some(runtime) = load_decode_runtime() else {
-        return;
-    };
-    let decoder_dir = source_decoder_dir();
-    if !decoder_dir.exists() {
-        return;
-    }
-
-    decode_diag("option-kind test: init runtime");
-    runtime
-        .init(&decoder_dir)
-        .expect("decode runtime should initialize with source decoder dir");
-
-    decode_diag("option-kind test: decode_list");
-    let list = runtime.decode_list().expect("decode_list should succeed");
-    decode_diag(format!("option-kind test: decode_list count={}", list.len()));
-
-    decode_diag("option-kind test: inspect 0:i2c");
     let i2c = runtime
         .decode_inspect("0:i2c")
         .expect("i2c metadata should load");
@@ -439,7 +396,7 @@ fn decode_option_value_kind_follows_upstream_default_type() {
     let integer_decoder_id = list
         .iter()
         .find_map(|decoder| {
-            decode_diag(format!("option-kind test: inspect candidate {}", decoder.id));
+            decode_diag(format!("success test: inspect candidate {}", decoder.id));
             let inspected = runtime.decode_inspect(&decoder.id).ok()?;
             inspected
                 .options
@@ -462,7 +419,7 @@ fn decode_option_value_kind_follows_upstream_default_type() {
     let float_decoder_id = list
         .iter()
         .find_map(|decoder| {
-            decode_diag(format!("option-kind test: inspect float candidate {}", decoder.id));
+            decode_diag(format!("success test: inspect float candidate {}", decoder.id));
             let inspected = runtime.decode_inspect(&decoder.id).ok()?;
             inspected
                 .options
@@ -482,123 +439,64 @@ fn decode_option_value_kind_follows_upstream_default_type() {
     assert_eq!(float_option.id, "sample_point");
     assert_eq!(float_option.value_kind, DecodeOptionValueKind::Float);
 
-    decode_diag("option-kind test: exit runtime");
-    runtime.exit().expect("decode runtime exit should succeed");
-    decode_diag("option-kind test: runtime exited");
-}
+    let mut session = started_root_decode_session();
+    let error = session_send_logic_chunk(
+        &mut session,
+        0,
+        &[],
+        DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        DecodeRuntimeError::InvalidArgument(detail) if detail.contains("sample bytes must not be empty")
+    ));
+    drop(session);
 
-#[test]
-fn safe_decode_decoder_wrapper_preserves_fixture_ids_and_labels() {
-    let decoder = DecodeDecoder {
-        id: "0:i2c".to_string(),
-        name: "i2c".to_string(),
-        longname: "Inter-Integrated Circuit".to_string(),
-        description: "fixture decoder".to_string(),
-        license: "gplv2+".to_string(),
-        inputs: vec![],
-        outputs: vec![],
-        tags: vec!["serial".to_string()],
-        required_channels: vec![],
-        optional_channels: vec![],
-        options: vec![],
-        annotations: vec![],
-        annotation_rows: vec![],
-    };
+    let mut session = started_root_decode_session();
+    let sample_bytes = [0b00, 0b01, 0b10];
+    let packet_lengths = [2_usize, 1_usize];
+    let error = session_send_logic_chunk(
+        &mut session,
+        0,
+        &sample_bytes,
+        DecodeExecutionLogicFormat::SplitLogic { unitsize: 2 },
+        Some(&packet_lengths),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        DecodeRuntimeError::InvalidArgument(detail)
+            if detail.contains("aligned to the requested logic format")
+    ));
+    drop(session);
 
-    assert_eq!(decoder.id, "0:i2c", "preserve upstream id in safe wrapper");
-    assert_eq!(
-        decoder.longname, "Inter-Integrated Circuit",
-        "preserve upstream label in safe wrapper"
-    );
-}
-
-#[test]
-fn offline_decode_rejects_empty_sample_bytes() {
-    with_decode_execution_session(|session| {
-        let error = session_send_logic_chunk(
-            session,
-            0,
-            &[],
-            DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
-            None,
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            DecodeRuntimeError::InvalidArgument(detail) if detail.contains("sample bytes must not be empty")
-        ));
-    });
-}
-
-#[test]
-fn offline_decode_rejects_misaligned_logic_packet_lengths() {
-    with_decode_execution_session(|session| {
-        let sample_bytes = [0b00, 0b01, 0b10];
-        let packet_lengths = [2_usize, 1_usize];
-
-        let error = session_send_logic_chunk(
-            session,
-            0,
-            &sample_bytes,
-            DecodeExecutionLogicFormat::SplitLogic { unitsize: 2 },
-            Some(&packet_lengths),
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            DecodeRuntimeError::InvalidArgument(detail)
-                if detail.contains("aligned to the requested logic format")
-        ));
-    });
-}
-
-#[test]
-fn offline_decode_session_wrappers_require_absolute_sample_progression() {
-    with_decode_execution_session(|session| {
-        let first = [0b00, 0b01];
-        session_send_logic_chunk(
-            session,
-            0,
-            &first,
-            DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
-            None,
-        )
-        .expect("first chunk should establish the absolute cursor");
-
-        let second = [0b10, 0b11];
-        let error = session_send_logic_chunk(
-            session,
-            0,
-            &second,
-            DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
-            None,
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            DecodeRuntimeError::InvalidArgument(detail)
-                if detail.contains("absolute sample progression")
-        ));
-    });
-}
-
-#[test]
-fn stacked_decoder_python_output_flows_linearly() {
-    let _guard = runtime_test_guard().lock().unwrap();
-    let Some(runtime) = load_decode_runtime() else {
-        return;
-    };
-    let decoder_dir = source_decoder_dir();
-    if !decoder_dir.exists() {
-        return;
-    }
-
-    runtime
-        .init(&decoder_dir)
-        .expect("decode runtime should initialize with source decoder dir");
+    let mut session = started_root_decode_session();
+    let first = [0b00, 0b01];
+    session_send_logic_chunk(
+        &mut session,
+        0,
+        &first,
+        DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
+        None,
+    )
+    .expect("first chunk should establish the absolute cursor");
+    let second = [0b10, 0b11];
+    let error = session_send_logic_chunk(
+        &mut session,
+        0,
+        &second,
+        DecodeExecutionLogicFormat::SplitLogic { unitsize: 1 },
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        DecodeRuntimeError::InvalidArgument(detail)
+            if detail.contains("absolute sample progression")
+    ));
+    drop(session);
 
     let mut session =
         DecodeExecutionSession::new().expect("decode execution session should construct");
@@ -641,9 +539,36 @@ fn stacked_decoder_python_output_flows_linearly() {
                 .all(|pair| pair[0].start_sample <= pair[1].start_sample),
         "expected ordered OUTPUT_PYTHON callback traffic while a stacked decoder chain is active"
     );
-
     drop(session);
+
+    decode_diag("success test: exit runtime");
     runtime.exit().expect("decode runtime exit should succeed");
+    decode_diag("success test: runtime exited");
+}
+
+#[test]
+fn safe_decode_decoder_wrapper_preserves_fixture_ids_and_labels() {
+    let decoder = DecodeDecoder {
+        id: "0:i2c".to_string(),
+        name: "i2c".to_string(),
+        longname: "Inter-Integrated Circuit".to_string(),
+        description: "fixture decoder".to_string(),
+        license: "gplv2+".to_string(),
+        inputs: vec![],
+        outputs: vec![],
+        tags: vec!["serial".to_string()],
+        required_channels: vec![],
+        optional_channels: vec![],
+        options: vec![],
+        annotations: vec![],
+        annotation_rows: vec![],
+    };
+
+    assert_eq!(decoder.id, "0:i2c", "preserve upstream id in safe wrapper");
+    assert_eq!(
+        decoder.longname, "Inter-Integrated Circuit",
+        "preserve upstream label in safe wrapper"
+    );
 }
 
 #[test]
