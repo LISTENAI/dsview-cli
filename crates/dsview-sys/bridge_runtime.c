@@ -296,6 +296,16 @@ static void *dsview_bridge_dlopen(const char *path)
     return (void *)LoadLibraryA(path);
 }
 
+static void *dsview_bridge_dlopen_global(const char *path)
+{
+    /*
+     * Win32 does not distinguish local/global symbol visibility at load time
+     * the way dlopen() does on ELF platforms, so both helpers resolve through
+     * LoadLibraryA().
+     */
+    return (void *)LoadLibraryA(path);
+}
+
 static void *dsview_bridge_dlsym(void *library_handle, const char *name)
 {
     return (void *)GetProcAddress((HMODULE)library_handle, name);
