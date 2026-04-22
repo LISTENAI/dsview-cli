@@ -45,12 +45,12 @@ jobs:
           submodules: recursive
 
       - name: Apply DSView local patches (Unix)
-        if: !contains(matrix.target, 'windows')
+        if: ${{ !contains(matrix.target, 'windows') }}
         shell: bash
         run: ./scripts/apply-dsview-patches.sh
 
       - name: Apply DSView local patches (Windows)
-        if: contains(matrix.target, 'windows')
+        if: ${{ contains(matrix.target, 'windows') }}
         shell: pwsh
         run: ./scripts/apply-dsview-patches.ps1
 
