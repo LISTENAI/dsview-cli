@@ -412,7 +412,6 @@ fn build_source_runtime_variant(
             "cmake configure failed for source-backed {runtime_kind} runtime"
         ));
     }
-    }
 
     let mut build = Command::new("cmake");
     build.arg("--build").arg(&build_dir);
@@ -430,7 +429,6 @@ fn build_source_runtime_variant(
         return Err(format!(
             "cmake build failed for source-backed {runtime_kind} runtime"
         ));
-    }
     }
 
     let library_name = match runtime_kind {
