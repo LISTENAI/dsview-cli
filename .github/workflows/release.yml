@@ -65,6 +65,28 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      - name: Prepare Windows vcpkg cache directories
+        if: contains(matrix.target, 'windows')
+        shell: pwsh
+        run: |
+          $BinaryCache = Join-Path $env:GITHUB_WORKSPACE ".cache\vcpkg\binary"
+          $DownloadsCache = Join-Path $env:GITHUB_WORKSPACE ".cache\vcpkg\downloads"
+          New-Item -ItemType Directory -Force -Path $BinaryCache | Out-Null
+          New-Item -ItemType Directory -Force -Path $DownloadsCache | Out-Null
+          "VCPKG_DEFAULT_BINARY_CACHE=$BinaryCache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_DOWNLOADS=$DownloadsCache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Restore Windows vcpkg cache
+        if: contains(matrix.target, 'windows')
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/vcpkg/binary
+            .cache/vcpkg/downloads
+          key: windows-vcpkg-${{ matrix.target }}-${{ hashFiles('.github/actions/setup-native-prereqs/action.yml', 'crates/dsview-sys/native/CMakeLists.txt') }}
+          restore-keys: |
+            windows-vcpkg-${{ matrix.target }}-
+
       - name: Setup native prerequisites
         uses: ./.github/actions/setup-native-prereqs
         with:

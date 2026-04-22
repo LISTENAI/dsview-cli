@@ -52,6 +52,9 @@ runs:
         if ($env:VCPKG_DEFAULT_BINARY_CACHE) {
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
         }
+        if ($env:VCPKG_DOWNLOADS) {
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
+        }
 
         $Triplet = switch ("${{ inputs.target }}") {
           "x86_64-pc-windows-msvc" { "x64-windows" }
