@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: DSView protocol decode CLI foundation
 current_phase: 17
 current_phase_name: Decode Output and Workflow Reporting
-current_plan: 1
-status: executing
-stopped_at: Phase 16 completed; awaiting Phase 17 discussion/planning
-last_updated: "2026-04-21T12:46:38.671Z"
-last_activity: 2026-04-21 -- Phase 17 execution started
+current_plan: -
+status: completed
+stopped_at: Phase 17 completed; awaiting milestone closeout
+last_updated: "2026-04-22T01:22:17Z"
+last_activity: 2026-04-22 -- Phase 17 completed and milestone execution is ready for closeout
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 12
-  completed_plans: 9
-  percent: 75
+  completed_plans: 12
+  percent: 100
 ---
 
 # Session State
@@ -24,19 +24,17 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Phase 17 — Decode Output and Workflow Reporting
+**Current focus:** Final milestone closeout for `v1.2 DSView protocol decode CLI foundation`
 
 ## Current Position
 
-Phase: 17 (Decode Output and Workflow Reporting) — EXECUTING
-Plan: 1 of 3
 Current Phase: 17
 Current Phase Name: Decode Output and Workflow Reporting
-Current Plan: 1
-Total Plans in Milestone: 9
+Current Plan: -
+Total Plans in Milestone: 12
 Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Executing Phase 17
-Last activity: 2026-04-21 -- Phase 17 execution started
+Status: Phase 17 complete; ready for milestone closeout
+Last activity: 2026-04-22 -- Phase 17 completed and milestone execution is ready for closeout
 
 ## Accumulated Context
 
@@ -85,12 +83,12 @@ Last activity: 2026-04-21 -- Phase 17 execution started
 
 Last session: 2026-04-14T07:58:43Z
 
-Stopped At: Phase 16 completed; awaiting Phase 17 discussion/planning
+Stopped At: Phase 17 completed; awaiting milestone closeout
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Run `/gsd-discuss-phase 17` to decide how annotation/report output should look before planning.
-- Or run `/gsd-plan-phase 17` to start Phase 17 planning directly.
-- Preserve the shipped `v1.0`, `v1.1`, and the completed Phases 14-16 decode execution baseline while finalizing reporting.
+- Run `/gsd-complete-milestone` to archive `v1.2` and prepare the next milestone.
+- Review `.planning/phases/17-decode-output-and-workflow-reporting/*` if you want to inspect the final reporting artifacts before closeout.
+- Preserve the shipped `v1.0`, `v1.1`, and the completed `v1.2` decode CLI baseline while preparing the next milestone.

@@ -23,8 +23,8 @@
 
 ### Output and Reporting
 
-- [ ] **DEC-06**: User can receive machine-readable decode annotations that include sample ranges and decoder payload text or numeric values.
-- [ ] **PIPE-01**: User can run decode as a separate workflow from capture and receive stable error reporting for runtime, config, input, execution, and artifact failures.
+- [x] **DEC-06**: User can receive machine-readable decode annotations that include sample ranges and decoder payload text or numeric values.
+- [x] **PIPE-01**: User can run decode as a separate workflow from capture and receive stable error reporting for runtime, config, input, execution, and artifact failures.
 
 ## Future Requirements
 
@@ -56,8 +56,8 @@
 | DEC-04 | Phase 15 | Complete |
 | DEC-05 | Phase 16 | Complete |
 | DEC-07 | Phase 16 | Complete |
-| DEC-06 | Phase 17 | Planned |
-| PIPE-01 | Phase 17 | Planned |
+| DEC-06 | Phase 17 | Complete |
+| PIPE-01 | Phase 17 | Complete |
 
 **Coverage:**
 - v1.2 requirements: 8 total
@@ -66,4 +66,4 @@
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-21 after completing Phase 16*
+*Last updated: 2026-04-22 after completing Phase 17*
