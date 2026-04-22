@@ -1,5 +1,8 @@
 # DSView CLI
 
+[![CI](https://github.com/LISTENAI/dsview-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/LISTENAI/dsview-cli/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/LISTENAI/dsview-cli)](https://github.com/LISTENAI/dsview-cli/releases/latest)
+
 Command-line tool for using DSLogic Plus devices without the DSView GUI. Capture logic analyzer data and export machine-readable waveform files for downstream analysis.
 
 ## Quick Start
