@@ -88,6 +88,19 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --target ${{ matrix.target }}
 
+      - name: Re-run Linux boundary diagnostics
+        if: ${{ failure() && endsWith(matrix.target, '-unknown-linux-gnu') }}
+        shell: bash
+        env:
+          MALLOC_CHECK_: "3"
+          PYTHONMALLOC: debug
+          RUST_BACKTRACE: full
+        run: |
+          cargo test -p dsview-sys \
+            --target ${{ matrix.target }} \
+            --test boundary \
+            -- --nocapture --test-threads=1
+
       - name: Find runtime library (Windows)
         if: matrix.package_bundle && contains(matrix.target, 'windows')
         id: find-runtime-windows
