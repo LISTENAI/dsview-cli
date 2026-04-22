@@ -1,6 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 /// Target descriptor for platform-aware build decisions.
 struct TargetInfo {
@@ -117,6 +117,38 @@ fn main() {
     println!(
         "cargo:rerun-if-changed={}",
         native_root.join("CMakeLists.txt").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("windows/input_minimal.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("windows/output_minimal.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("windows/session_stubs.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        native_root.join("windows/dsview_runtime.def").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("msvc_preinclude.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("pthread.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("unistd.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        compat_root.join("sys/time.h").display()
     );
 
     if !libsigrok_root.join("libsigrok.h").exists() {
@@ -274,10 +306,11 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
         configure.arg(format!("-DVCPKG_TARGET_TRIPLET={triplet}"));
     }
 
-    let configure_status = configure
-        .status()
+    let configure_output = configure
+        .output()
         .map_err(|error| format!("failed to launch cmake configure: {error}"))?;
-    if !configure_status.success() {
+    if !configure_output.status.success() {
+        emit_command_failure_diagnostics("cmake configure", &configure, &configure_output);
         return Err("cmake configure failed for source-backed runtime".to_string());
     }
 
@@ -287,10 +320,11 @@ fn build_source_runtime(repo_root: &Path, native_root: &Path, target: &TargetInf
         build.arg("--config").arg(cmake_build_config());
     }
 
-    let build_status = build
-        .status()
+    let build_output = build
+        .output()
         .map_err(|error| format!("failed to launch cmake build: {error}"))?;
-    if !build_status.success() {
+    if !build_output.status.success() {
+        emit_command_failure_diagnostics("cmake build", &build, &build_output);
         return Err("cmake build failed for source-backed runtime".to_string());
     }
 
@@ -554,4 +588,38 @@ fn normalized_libusb_include_flag(flag: &str) -> Option<String> {
     }
 
     Some(format!("-I{}", include_path.parent()?.display()))
+}
+
+fn emit_command_failure_diagnostics(label: &str, command: &Command, output: &Output) {
+    println!(
+        "cargo:warning={} failed with status {} while building source-backed runtime.",
+        label,
+        output.status
+    );
+    println!("cargo:warning={} command: {}", label, command_debug_string(command));
+    emit_command_stream(label, "stdout", &output.stdout);
+    emit_command_stream(label, "stderr", &output.stderr);
+}
+
+fn emit_command_stream(label: &str, stream_name: &str, bytes: &[u8]) {
+    let text = String::from_utf8_lossy(bytes);
+    if text.trim().is_empty() {
+        println!("cargo:warning={} {}: <empty>", label, stream_name);
+        return;
+    }
+
+    for line in text.lines() {
+        println!("cargo:warning={} {}: {}", label, stream_name, line);
+    }
+}
+
+fn command_debug_string(command: &Command) -> String {
+    let mut rendered = Vec::new();
+    rendered.push(command.get_program().to_string_lossy().into_owned());
+    rendered.extend(
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned()),
+    );
+    rendered.join(" ")
 }

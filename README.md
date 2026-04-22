@@ -24,6 +24,28 @@ Supported installer targets:
 - Linux x86_64, ARM64
 - macOS x86_64 (Intel), ARM64 (Apple Silicon)
 
+### One-line install (Windows)
+
+Install the latest published release bundle into `%LOCALAPPDATA%\Programs\dsview-cli` and add a launcher in `%LOCALAPPDATA%\Programs\dsview-cli\bin`:
+
+```powershell
+irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.ps1 | iex
+```
+
+Install a specific version instead:
+
+```powershell
+$script = Join-Path $env:TEMP "dsview-cli-install.ps1"
+irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.ps1 -OutFile $script
+powershell -ExecutionPolicy Bypass -File $script -Version v1.1.1
+```
+
+The Windows installer keeps the release bundle intact, adds the bundled DLL directory to the generated launcher, and smoke-tests `dsview-cli --version` plus `devices list --help` after install.
+
+Supported Windows installer targets:
+- Windows x86_64
+- Windows ARM64
+
 ### Build from source
 
 ```bash
@@ -115,8 +137,9 @@ Published release bundles and the one-line installer currently target:
 
 - **Linux**: x86_64, ARM64
 - **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
+- **Windows**: x86_64, ARM64
 
-Windows users should currently build from source.
+Windows ARM64 GitHub-hosted runners currently use the `windows-11-arm` label (public preview in GitHub Actions as of April 2026), so CI coverage for that target may evolve with runner image updates.
 
 ## Build Prerequisites
 

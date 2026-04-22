@@ -32,6 +32,16 @@ def runtime_library_name(target: str) -> str:
     return "libdsview_runtime.so"
 
 
+def expected_windows_runtime_dependencies() -> list[str]:
+    return [
+        "glib-2.0-0.dll",
+        "libusb-1.0.dll",
+        "iconv-2.dll",
+        "intl-8.dll",
+        "pcre2-8.dll",
+    ]
+
+
 def require_exists(path: Path, label: str) -> None:
     if not path.exists():
         raise FileNotFoundError(f"{label} not found: {path}")
@@ -68,6 +78,9 @@ def main() -> int:
         exe_name = "dsview-cli.exe" if "windows" in args.target else "dsview-cli"
         exe_path = bundle_root / exe_name
         require_exists(exe_path, "Executable")
+        if "windows" in args.target:
+            for dependency in expected_windows_runtime_dependencies():
+                require_exists(bundle_root / dependency, "Windows runtime dependency")
 
         runtime_dir = bundle_root / "runtime"
         if not runtime_dir.is_dir():
