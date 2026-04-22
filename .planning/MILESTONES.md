@@ -1,5 +1,20 @@
 # Milestones
 
+## v1.2 DSView protocol decode CLI foundation (Shipped: 2026-04-22)
+
+**Phases completed:** 4 phases, 12 plans, 22 tasks
+
+**Key accomplishments:**
+
+- Added a separate `libsigrokdecode4DSL`-backed decode runtime with canonical decoder discovery and inspection from the CLI.
+- Introduced a JSON-first decode config model with typed option metadata, strict metadata-driven validation, and the `decode validate --config` command.
+- Implemented offline decode execution over raw logic artifacts with absolute sample numbering and strict linear stacked decoder execution.
+- Shipped `decode run` for validated configs and raw offline input artifacts without coupling decode into `capture`.
+- Finalized a machine-readable `run + flat events` reporting schema, stable failure taxonomy, and optional `--output` artifact writing.
+- Locked the full decode workflow with end-to-end CLI and core regression coverage across success and failure paths.
+
+---
+
 ## v1.1 DSLogic Plus device options (Shipped: 2026-04-13)
 
 **Phases completed:** 4 phases, 12 plans, 24 tasks

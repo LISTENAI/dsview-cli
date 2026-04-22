@@ -1,14 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: DSView protocol decode CLI foundation
-current_phase: 17
-current_phase_name: Decode Output and Workflow Reporting
+milestone: -
+milestone_name: -
+current_phase: -
+current_phase_name: Awaiting next milestone definition
 current_plan: -
-status: completed
-stopped_at: Phase 17 completed; awaiting milestone closeout
-last_updated: "2026-04-22T01:22:17Z"
-last_activity: 2026-04-22 -- Phase 17 completed and milestone execution is ready for closeout
+status: milestone_completed
+stopped_at: Milestone v1.2 archived; awaiting next milestone definition
+last_updated: "2026-04-22T02:52:33Z"
+last_activity: 2026-04-22 -- Milestone v1.2 archived; awaiting next milestone definition
 progress:
   total_phases: 4
   completed_phases: 4
@@ -21,20 +21,20 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-14)
+See: `.planning/PROJECT.md` (updated 2026-04-22)
 
 **Core value:** Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and produce waveform output files that are easy for automation and AI agents to analyze.
-**Current focus:** Final milestone closeout for `v1.2 DSView protocol decode CLI foundation`
+**Current focus:** Awaiting next milestone definition
 
 ## Current Position
 
-Current Phase: 17
-Current Phase Name: Decode Output and Workflow Reporting
+Current Phase: -
+Current Phase Name: Awaiting next milestone definition
 Current Plan: -
 Total Plans in Milestone: 12
-Milestone: `v1.2 DSView protocol decode CLI foundation`
-Status: Phase 17 complete; ready for milestone closeout
-Last activity: 2026-04-22 -- Phase 17 completed and milestone execution is ready for closeout
+Milestone: `v1.2 DSView protocol decode CLI foundation` archived; no active milestone
+Status: Awaiting next milestone definition
+Last activity: 2026-04-22 -- Archived milestone `v1.2` and reset planning state
 
 ## Accumulated Context
 
@@ -83,12 +83,12 @@ Last activity: 2026-04-22 -- Phase 17 completed and milestone execution is ready
 
 Last session: 2026-04-14T07:58:43Z
 
-Stopped At: Phase 17 completed; awaiting milestone closeout
+Stopped At: Milestone `v1.2` archived; awaiting next milestone definition
 
 Resume File: None
 
 ## Immediate Next Steps
 
-- Run `/gsd-complete-milestone` to archive `v1.2` and prepare the next milestone.
-- Review `.planning/phases/17-decode-output-and-workflow-reporting/*` if you want to inspect the final reporting artifacts before closeout.
-- Preserve the shipped `v1.0`, `v1.1`, and the completed `v1.2` decode CLI baseline while preparing the next milestone.
+- Run `/gsd-new-milestone` to define the next milestone and recreate live requirements.
+- Use `.planning/milestones/v1.2-ROADMAP.md` and `.planning/milestones/v1.2-REQUIREMENTS.md` as the shipped reference for the decode foundation baseline.
+- Preserve the shipped `v1.0`, `v1.1`, and `v1.2` baselines while choosing the next smallest intentional increment.

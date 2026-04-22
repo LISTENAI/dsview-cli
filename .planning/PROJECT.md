@@ -2,7 +2,7 @@
 
 ## What This Is
 
-DSView CLI is a Rust-based command-line tool for using `DSLogic Plus` logic analyzers without the DSView GUI. Shipped milestones now cover device discovery, bounded capture/export, DSView-backed device-option discovery, pre-acquisition validation, option-aware runtime apply, and requested/effective reporting for automation-friendly capture workflows.
+DSView CLI is a Rust-based command-line tool for using `DSLogic Plus` logic analyzers without the DSView GUI. Shipped milestones now cover device discovery, bounded capture/export, DSView-backed device-option discovery, pre-acquisition validation, option-aware runtime apply, requested/effective reporting, protocol decoder discovery, decode configuration/validation, offline decode execution, and final decode reporting for automation-friendly workflows.
 
 ## Core Value
 
@@ -22,13 +22,10 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 - [x] User can validate DSLogic Plus option combinations before capture so unsupported requests fail before acquisition begins. - `v1.1`
 - [x] User can apply the selected DSView-compatible device options before acquisition begins. - `v1.1`
 - [x] User can report requested and effective option values in CLI output and metadata. - `v1.1`
-
-### Active
-
-- [ ] User can inspect the DSView protocol decoder registry from the CLI, including decoder ids, channels, options, and stack metadata. - `v1.2`
-- [ ] User can define protocol decode stacks in a config-driven workflow that does not bloat the existing `capture` command surface. - `v1.2`
-- [ ] User can run DSView protocol decoders on captured logic data from the CLI and receive machine-readable annotation output. - `v1.2`
-- [ ] User can reuse saved capture artifacts as decode inputs while keeping future capture+decode pipeline support open. - `v1.2`
+- [x] User can inspect the DSView protocol decoder registry from the CLI, including decoder ids, channels, options, and stack metadata. - `v1.2`
+- [x] User can define protocol decode stacks in a config-driven workflow that does not bloat the existing `capture` command surface. - `v1.2`
+- [x] User can run DSView protocol decoders on captured logic data from the CLI and receive machine-readable annotation output. - `v1.2`
+- [x] User can reuse saved capture artifacts as decode inputs while keeping future capture+decode pipeline support open. - `v1.2`
 
 ### Out of Scope
 
@@ -43,28 +40,18 @@ Users can reliably capture logic-analyzer data from `DSLogic Plus` via CLI and p
 
 The workspace keeps the upstream `DSView/` project as a read-only native dependency while the Rust workspace owns the CLI, orchestration, validation, and reporting layers. `v1.0` proved that this split could deliver a stable non-interactive capture/export workflow for `DSLogic Plus`, and `v1.1` extended that same baseline with truthful DSView-backed device-option discovery and execution rather than inventing a parallel configuration model.
 
-## Current Milestone: v1.2 DSView protocol decode CLI foundation
-
-**Goal:** Add a headless DSView protocol decode foundation that stays separate from `capture` flag growth and fits the existing Rust/native boundary architecture.
-
-**Target features:**
-- Expose DSView protocol decoder discovery and inspection from the CLI
-- Define a config-driven decoder stack model for channels and options
-- Run offline decode against captured logic artifacts and emit machine-readable annotations
-- Establish a clean handoff boundary for future capture+decode pipelines without coupling decode options to `capture`
-
 ## Current State
 
-- `v1.1 DSLogic Plus device options` shipped on `2026-04-13` and is archived at `.planning/milestones/v1.1-ROADMAP.md`.
-- The CLI now exposes `devices list`, `devices options`, and option-aware `capture` flows for `DSLogic Plus`.
-- Real-hardware verification passed for discovery on `2026-04-10` and for option-aware capture/reporting on `2026-04-13`.
-- `v1.2 DSView protocol decode CLI foundation` is now the active planning target.
+- `v1.2 DSView protocol decode CLI foundation` shipped on `2026-04-22` and is archived at `.planning/milestones/v1.2-ROADMAP.md`.
+- The CLI now exposes `devices list`, `devices options`, `decode list`, `decode inspect`, `decode validate`, and `decode run` flows for the `DSLogic Plus` automation workflow.
+- Milestone `v1.2` completed protocol decode discovery, config validation, offline execution, and final output/reporting contracts on top of the shipped `v1.0` and `v1.1` baseline.
+- No next milestone is defined yet; live requirements will be recreated when `/gsd-new-milestone` starts the next planning cycle.
 
 ## Next Milestone Goals
 
-- Reuse `libsigrokdecode4DSL` directly instead of porting DSView Qt decode classes.
-- Keep decode config outside the `capture` command to avoid parameter-surface sprawl.
-- Deliver a smallest-useful decode foundation: discovery, inspect, config validation, offline decode execution, and stable artifact/error reporting.
+- Choose the next smallest shipped increment on top of the completed decode foundation.
+- Candidate directions now include pipeline orchestration, capture/decode presets, live decode, and broader hardware support.
+- Preserve the shipped `v1.0`, `v1.1`, and `v1.2` baseline while extending intentionally rather than chasing full DSView parity.
 
 ## Constraints
 
@@ -105,4 +92,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-14 after starting milestone `v1.2`*
+*Last updated: 2026-04-22 after completing milestone `v1.2`*

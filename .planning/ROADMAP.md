@@ -2,111 +2,74 @@
 
 ## Overview
 
-This roadmap defines milestone `v1.2 DSView protocol decode CLI foundation`. It builds directly on the shipped `v1.0` and `v1.1` baseline and adds a headless, config-driven protocol-decode workflow without expanding the existing `capture` command into a decoder-option surface.
+This roadmap now tracks shipped milestones and the next planning checkpoint for the Rust-based `DSLogic Plus` CLI.
 
-## Milestone
+## Milestones
 
-**Milestone:** `v1.2 DSView protocol decode CLI foundation`
-**Goal:** Bring DSView protocol decoder discovery, config-driven offline decode execution, and machine-readable decode output into the CLI while keeping capture and decode as separate composable workflows.
-**Baseline:** `v1.1 DSLogic Plus device options` shipped on 2026-04-13 and is archived at `.planning/milestones/v1.1-ROADMAP.md`.
+- ✅ **v1.2 DSView protocol decode CLI foundation** - Phases 14-17 (shipped 2026-04-22, archive: `.planning/milestones/v1.2-ROADMAP.md`)
+- ✅ **v1.1 DSLogic Plus device options** - Phases 10-13 (shipped 2026-04-13, archive: `.planning/milestones/v1.1-ROADMAP.md`)
+- ✅ **v1.0 MVP** - Phases 1-9 (shipped 2026-04-09, archive: `.planning/milestones/v1.0-ROADMAP.md`)
 
-## Phases
+## Current Status
 
-- [x] **Phase 14: Decode Runtime Boundary and Decoder Registry** - Add the native/runtime seam for `libsigrokdecode4DSL` and expose decoder discovery/inspection metadata to Rust and CLI. (completed 2026-04-21)
-- [x] **Phase 15: Decode Config Model and Validation** - Define the config-driven decoder stack model and validate channel bindings/options before decode starts. (completed 2026-04-21)
-- [x] **Phase 16: Offline Decode Execution** - Execute offline protocol decode against saved logic artifacts, including stacked decoder runs. (completed 2026-04-21)
-- [x] **Phase 17: Decode Output and Workflow Reporting** - Publish stable machine-readable decode results and error/artifact reporting for a separate decode workflow. (completed 2026-04-21)
+- No active milestone is currently defined.
+- Latest shipped scope: protocol decoder discovery, config validation, offline decode execution, and final decode reporting for the `DSLogic Plus` CLI workflow.
+- Next recommended workflow: `/gsd-new-milestone`
 
-## Phase Details
+## Shipped Milestones
 
-### Phase 14: Decode Runtime Boundary and Decoder Registry
-**Goal**: Expose `libsigrokdecode4DSL` through the Rust/native boundary and make decoder metadata inspectable from the CLI.
-**Depends on**: Phase 13 from milestone `v1.1`
-**Requirements**: DEC-01, DEC-02
-**Success Criteria** (what must be TRUE):
-  1. The native/runtime layer can initialize the DSView decode engine, load decoder scripts, and enumerate available decoders without touching Qt UI classes.
-  2. Rust-side types expose decoder ids, channels, options, annotations, and stack-relevant metadata in owned structures.
-  3. The CLI can list and inspect decoder metadata in stable JSON and text forms.
-**Plans**: 3 plans
+<details>
+<summary>✅ v1.2 DSView protocol decode CLI foundation (Phases 14-17) - SHIPPED 2026-04-22</summary>
 
-Plans:
-- [ ] `14-01-PLAN.md` - Map the `libsigrokdecode4DSL` API and packaging requirements into a minimal native decode runtime boundary.
-- [ ] `14-02-PLAN.md` - Implement Rust-owned decoder registry and inspect structures over the new runtime seam.
-- [ ] `14-03-PLAN.md` - Add `decode list` / `decode inspect` CLI commands with automated contract coverage.
+- [x] Phase 14: Decode Runtime Boundary and Decoder Registry (3/3 plans) - completed 2026-04-21
+- [x] Phase 15: Decode Config Model and Validation (3/3 plans) - completed 2026-04-21
+- [x] Phase 16: Offline Decode Execution (3/3 plans) - completed 2026-04-21
+- [x] Phase 17: Decode Output and Workflow Reporting (3/3 plans) - completed 2026-04-22
+- Archive: `.planning/milestones/v1.2-ROADMAP.md`
 
-### Phase 15: Decode Config Model and Validation
-**Goal**: Create a config-driven decoder stack model that stays aligned with DSView concepts and validates before runtime execution.
-**Depends on**: Phase 14
-**Requirements**: DEC-03, DEC-04
-**Success Criteria** (what must be TRUE):
-  1. Users can express root decoder, stacked decoders, channel bindings, and options in a typed decode config file.
-  2. Validation catches missing required channels, unknown options, invalid option values, and invalid stack composition before decode starts.
-  3. The design keeps decoder-specific configuration out of the main `capture` command surface.
-**Plans**: 3 plans
+</details>
 
-Plans:
-- [ ] `15-01-PLAN.md` - Define the decode config schema and DSView-compatible decoder-stack model in Rust.
-- [ ] `15-02-PLAN.md` - Implement metadata-driven config validation and stable validation errors.
-- [ ] `15-03-PLAN.md` - Add CLI config loading/diagnostics coverage for valid and invalid decode configs.
+<details>
+<summary>✅ v1.1 DSLogic Plus device options (Phases 10-13) - SHIPPED 2026-04-13</summary>
 
-### Phase 16: Offline Decode Execution
-**Goal**: Run DSView protocol decoders against saved logic artifacts from the CLI, including stacked decoder flows.
-**Depends on**: Phase 15
-**Requirements**: DEC-05, DEC-07
-**Success Criteria** (what must be TRUE):
-  1. CLI can execute a decode run against a saved logic-data artifact without requiring GUI components.
-  2. Runtime execution correctly feeds sample data and absolute sample ranges into the decode engine.
-  3. Decoder stacks work when upstream decoder output is required by downstream decoders.
-**Plans**: 3 plans
+- [x] Phase 10: Device Option Bridge and Discovery (3/3 plans) - completed 2026-04-10
+- [x] Phase 11: Device Option Validation Model (3/3 plans) - completed 2026-04-13
+- [x] Phase 12: CLI Device Option Surface (3/3 plans) - completed 2026-04-13
+- [x] Phase 13: Option-Aware Capture Reporting (3/3 plans) - completed 2026-04-13
+- Archive: `.planning/milestones/v1.1-ROADMAP.md`
 
-Plans:
-- [ ] `16-01-PLAN.md` - Define the saved-artifact input contract and native sample-feeding path for offline decode.
-- [ ] `16-02-PLAN.md` - Implement decode-session execution and stacked decoder orchestration through Rust/core/native layers.
-- [ ] `16-03-PLAN.md` - Add regression coverage for offline decode success and representative execution failures.
+</details>
 
-### Phase 17: Decode Output and Workflow Reporting
-**Goal**: Finalize decode output contracts, artifact reporting, and stable failure taxonomy for a separate decode workflow.
-**Depends on**: Phase 16
-**Requirements**: DEC-06, PIPE-01
-**Success Criteria** (what must be TRUE):
-  1. Successful decode runs emit machine-readable annotation output with sample ranges, decoder identity, and payload text/numeric fields.
-  2. Decode failures are reported with stable categories covering runtime prerequisites, config issues, input issues, decode execution failures, and artifact write failures.
-  3. The decode workflow is explicitly separate from `capture` while leaving a clean future handoff point for pipeline orchestration.
-**Plans**: 3 plans
+<details>
+<summary>✅ v1.0 MVP (Phases 1-9) - SHIPPED 2026-04-09</summary>
 
-Plans:
-- [ ] `17-01-PLAN.md` - Define the stable decode output schema and annotation event model.
-- [ ] `17-02-PLAN.md` - Implement output/artifact writing plus stable workflow/reporting errors.
-- [ ] `17-03-PLAN.md` - Lock CLI output contracts and end-to-end decode reporting coverage.
+- [x] Phase 1: Native Integration Foundation (3/3 plans) - completed 2026-04-03
+- [x] Phase 2: Device Discovery and Session Bring-Up (3/3 plans) - completed 2026-04-03
+- [x] Phase 3: Capture Configuration Surface (3/3 plans) - completed 2026-04-03
+- [x] Phase 4: Acquisition Execution (3/3 plans) - completed 2026-04-07
+- [x] Phase 5: Export Artifacts (3/3 plans) - completed 2026-04-08
+- [x] Phase 6: CLI Productization (3/3 plans) - completed 2026-04-08
+- [x] Phase 7: Verification Backfill for Bring-Up and Configuration (2/2 plans) - completed 2026-04-08
+- [x] Phase 8: Verification Backfill for Acquisition and Export (2/2 plans) - completed 2026-04-08
+- [x] Phase 9: Audit Closeout Reconciliation (2/2 plans) - completed 2026-04-08
+- Archive: `.planning/milestones/v1.0-ROADMAP.md`
 
-## Progress
-
-**Execution Order:**
-Phases execute in numeric order: 14 -> 15 -> 16 -> 17
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 14. Decode Runtime Boundary and Decoder Registry | 3/3 | Complete    | 2026-04-21 |
-| 15. Decode Config Model and Validation | 3/3 | Complete    | 2026-04-21 |
-| 16. Offline Decode Execution | 3/3 | Complete   | 2026-04-21 |
-| 17. Decode Output and Workflow Reporting | 3/3 | Complete    | 2026-04-22 |
+</details>
 
 ## Archived Milestones
 
-- `v1.1 DSLogic Plus device options`: `.planning/milestones/v1.1-ROADMAP.md`
-- `v1.0 MVP`: `.planning/milestones/v1.0-ROADMAP.md`
 - Milestone index: `.planning/MILESTONES.md`
-- Archived audit: `.planning/milestones/v1.0-MILESTONE-AUDIT.md`
+- Archived roadmap copies: `.planning/milestones/`
+- Archived audit currently available for `v1.0` at `.planning/milestones/v1.0-MILESTONE-AUDIT.md`
 
 ## Planning Notes
 
-- Preserve the validated `v1.0` capture/export path and the shipped `v1.1` option workflow as the stable baseline.
-- Keep `DSView/` read-only and continue isolating upstream integration behind Rust-owned boundaries.
-- Favor config-driven decode over command-line option flattening.
-- Keep full capture+decode pipelines, live decode, and broader device support for later milestones unless later phases prove they fit naturally.
+- Preserve the shipped `v1.2` decode baseline for separate decoder discovery, config validation, offline execution, and reporting.
+- Keep `DSView/` read-only and continue isolating upstream integration behind the Rust boundary.
+- Candidate future directions remain pipeline orchestration, capture/decode presets, live decode, and broader device support.
 
 ## Status
 
-- Active milestone: `v1.2 DSView protocol decode CLI foundation`
-- Requirements file: `.planning/REQUIREMENTS.md`
-- Next action: `/gsd-discuss-phase 14` or `/gsd-plan-phase 14`
+- Latest milestone completed: `v1.2 DSView protocol decode CLI foundation`
+- Requirements archive: `.planning/milestones/v1.2-REQUIREMENTS.md`
+- Next action: define the next milestone before recreating `.planning/REQUIREMENTS.md`
