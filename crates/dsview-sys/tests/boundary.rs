@@ -17,6 +17,16 @@ fn runtime_test_guard() -> &'static Mutex<()> {
     GUARD.get_or_init(|| Mutex::new(()))
 }
 
+fn decode_diag_enabled() -> bool {
+    std::env::var_os("DSVIEW_DECODE_DEBUG").is_some()
+}
+
+fn decode_diag(message: impl AsRef<str>) {
+    if decode_diag_enabled() {
+        eprintln!("[decode-diag] {}", message.as_ref());
+    }
+}
+
 fn load_runtime() -> Option<RuntimeBridge> {
     let path = source_runtime_library_path()?;
     RuntimeBridge::load(path).ok()
@@ -351,15 +361,19 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
         return;
     }
 
+    decode_diag("inspect test: init runtime");
     runtime
         .init(&decoder_dir)
         .expect("decode runtime should initialize with source decoder dir");
+    decode_diag("inspect test: decode_list");
     let list = runtime.decode_list().expect("decode_list should succeed");
+    decode_diag(format!("inspect test: decode_list count={}", list.len()));
     let list_entry = list
         .iter()
         .find(|decoder| decoder.id == "0:i2c")
         .expect("expected canonical upstream decoder ids in decode runtime list");
 
+    decode_diag("inspect test: decode_inspect 0:i2c");
     let decoder = runtime
         .decode_inspect("0:i2c")
         .expect("decode_inspect should return decoder metadata");
@@ -374,6 +388,7 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
     assert!(!decoder.inputs.is_empty());
     assert!(!decoder.outputs.is_empty());
 
+    decode_diag("inspect test: decode_inspect missing-decoder");
     let unknown = runtime.decode_inspect("missing-decoder").unwrap_err();
     assert!(matches!(
         unknown,
@@ -384,7 +399,9 @@ fn decode_runtime_lists_and_inspects_decoder_metadata() {
         }
     ));
 
+    decode_diag("inspect test: exit runtime");
     runtime.exit().expect("decode runtime exit should succeed");
+    decode_diag("inspect test: runtime exited");
 }
 
 #[test]
@@ -398,12 +415,16 @@ fn decode_option_value_kind_follows_upstream_default_type() {
         return;
     }
 
+    decode_diag("option-kind test: init runtime");
     runtime
         .init(&decoder_dir)
         .expect("decode runtime should initialize with source decoder dir");
 
+    decode_diag("option-kind test: decode_list");
     let list = runtime.decode_list().expect("decode_list should succeed");
+    decode_diag(format!("option-kind test: decode_list count={}", list.len()));
 
+    decode_diag("option-kind test: inspect 0:i2c");
     let i2c = runtime
         .decode_inspect("0:i2c")
         .expect("i2c metadata should load");
@@ -418,6 +439,7 @@ fn decode_option_value_kind_follows_upstream_default_type() {
     let integer_decoder_id = list
         .iter()
         .find_map(|decoder| {
+            decode_diag(format!("option-kind test: inspect candidate {}", decoder.id));
             let inspected = runtime.decode_inspect(&decoder.id).ok()?;
             inspected
                 .options
@@ -440,6 +462,7 @@ fn decode_option_value_kind_follows_upstream_default_type() {
     let float_decoder_id = list
         .iter()
         .find_map(|decoder| {
+            decode_diag(format!("option-kind test: inspect float candidate {}", decoder.id));
             let inspected = runtime.decode_inspect(&decoder.id).ok()?;
             inspected
                 .options
@@ -459,7 +482,9 @@ fn decode_option_value_kind_follows_upstream_default_type() {
     assert_eq!(float_option.id, "sample_point");
     assert_eq!(float_option.value_kind, DecodeOptionValueKind::Float);
 
+    decode_diag("option-kind test: exit runtime");
     runtime.exit().expect("decode runtime exit should succeed");
+    decode_diag("option-kind test: runtime exited");
 }
 
 #[test]

@@ -93,6 +93,7 @@ jobs:
         shell: bash
         env:
           MALLOC_CHECK_: "3"
+          DSVIEW_DECODE_DEBUG: "1"
           PYTHONMALLOC: debug
           RUST_BACKTRACE: full
         run: |
