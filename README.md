@@ -292,8 +292,10 @@ Release bundles are created using `tools/package-bundle.py` and validated with `
 
 ## License
 
-[Your license here]
+The original DSView CLI Rust code in this repository is licensed under Apache License, Version 2.0. See `LICENSE`.
+
+The upstream `DSView/` submodule and other bundled third-party components keep their own licenses. In particular, the vendored DSView/libsigrok sources ship their existing `COPYING` files and are not relicensed by this repository.
 
 ## Contributing
 
-[Your contribution guidelines here]
+Contributions are welcome via issues and pull requests. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this repository is licensed under Apache License, Version 2.0.
