@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/mast
 Install a specific version instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.1.1
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.2.0
 ```
 
 The installer keeps the release bundle intact so the executable can still find its sibling `runtime/` and `resources/` directories.
@@ -29,7 +29,7 @@ Supported installer targets:
 
 ### One-line install (Windows)
 
-Install the latest published release bundle into `%LOCALAPPDATA%\Programs\dsview-cli` and add a launcher in `%LOCALAPPDATA%\Programs\dsview-cli\bin`:
+Install the latest published release bundle into `%LOCALAPPDATA%\Programs\dsview-cli`, add a launcher in `%LOCALAPPDATA%\Programs\dsview-cli\bin`, and append that launcher directory to your user `PATH`:
 
 ```powershell
 irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.ps1 | iex
@@ -40,10 +40,10 @@ Install a specific version instead:
 ```powershell
 $script = Join-Path $env:TEMP "dsview-cli-install.ps1"
 irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.ps1 -OutFile $script
-powershell -ExecutionPolicy Bypass -File $script -Version v1.1.1
+powershell -ExecutionPolicy Bypass -File $script -Version v1.2.0
 ```
 
-The Windows installer keeps the release bundle intact, adds the bundled DLL directory to the generated launcher, and smoke-tests `dsview-cli --version` plus `devices list --help` after install.
+The Windows installer keeps the release bundle intact, adds the bundled DLL directory to the generated launcher, appends the launcher directory to your user `PATH`, and smoke-tests `dsview-cli --version` plus `devices list --help` after install. Restart your shell after installation so the updated `PATH` is visible.
 
 Supported Windows installer targets:
 - Windows x86_64

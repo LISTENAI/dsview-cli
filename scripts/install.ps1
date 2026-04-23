@@ -105,6 +105,36 @@ function Verify-Checksum([string]$ArchivePath, [string]$ChecksumPath, [string]$A
     }
 }
 
+function Normalize-PathEntry([string]$PathEntry) {
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return ""
+    }
+
+    return $PathEntry.Trim().Trim('"').TrimEnd('\', '/')
+}
+
+function Ensure-UserPathContains([string]$PathEntry) {
+    $normalizedTarget = Normalize-PathEntry $PathEntry
+    if ([string]::IsNullOrWhiteSpace($normalizedTarget)) {
+        return $false
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $entries = @()
+    if (-not [string]::IsNullOrWhiteSpace($userPath)) {
+        $entries = $userPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    }
+
+    foreach ($entry in $entries) {
+        if ((Normalize-PathEntry $entry) -ieq $normalizedTarget) {
+            return $false
+        }
+    }
+
+    [Environment]::SetEnvironmentVariable("Path", (($entries + $PathEntry) -join ';'), "User")
+    return $true
+}
+
 function Write-Launcher([string]$LauncherPath, [string]$InstallDir) {
     $content = @"
 @echo off
@@ -208,12 +238,12 @@ try {
 
     Write-Log "Installed DSView CLI $Version for $target"
     Write-Log "Run: $launcherPath --help"
-
-    $pathEntries = $env:PATH -split ';'
-    if ($pathEntries -notcontains $BinDir) {
-        Write-Warn "$BinDir is not on PATH"
-        Write-Warn "Add it to your user PATH to launch dsview-cli.cmd without a full path."
+    if (Ensure-UserPathContains -PathEntry $BinDir) {
+        Write-Log "Added $BinDir to your user PATH"
+    } else {
+        Write-Log "$BinDir is already present in your user PATH"
     }
+    Write-Warn "Restart your shell to reload PATH changes before invoking dsview-cli.cmd without a full path."
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
