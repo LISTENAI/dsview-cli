@@ -235,6 +235,10 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Fail "smoke check failed: dsview-cli devices list --help"
     }
+    & $launcherPath decode list --format json | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Fail "smoke check failed: dsview-cli decode list --format json"
+    }
 
     Write-Log "Installed DSView CLI $Version for $target"
     Write-Log "Run: $launcherPath --help"

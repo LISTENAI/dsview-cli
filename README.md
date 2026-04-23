@@ -288,7 +288,7 @@ The native integration is intentionally isolated behind Rust layers to keep unsa
 
 ### Packaging
 
-Release bundles are created using `tools/package-bundle.py` and validated with `tools/validate-bundle.py`. CI uses these Python helpers to ensure consistent bundle structure across all platforms without relying on unstable Cargo script support.
+Release bundles are created using `tools/package-bundle.py` and validated with `tools/validate-bundle.py`. CI uses these Python helpers to ensure consistent bundle structure across all platforms, including the bundled capture runtime, decode runtime, firmware resources, and decoder scripts, without relying on unstable Cargo script support.
 
 ## License
 

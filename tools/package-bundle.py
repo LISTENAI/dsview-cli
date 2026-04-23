@@ -20,7 +20,19 @@ def parse_args() -> argparse.Namespace:
         "--runtime", required=True, type=Path, help="Path to built runtime library"
     )
     parser.add_argument(
+        "--decode-runtime",
+        required=True,
+        type=Path,
+        help="Path to built decode runtime library",
+    )
+    parser.add_argument(
         "--resources", required=True, type=Path, help="Path to DSView resource directory"
+    )
+    parser.add_argument(
+        "--decoder-dir",
+        required=True,
+        type=Path,
+        help="Path to the DSView decoder scripts directory",
     )
     parser.add_argument(
         "--output", required=True, type=Path, help="Path to output archive (.tar.gz)"
@@ -49,6 +61,18 @@ def ensure_directory(path: Path, label: str) -> None:
 
 def add_file(archive: tarfile.TarFile, source: Path, destination: str) -> None:
     archive.add(source, arcname=destination, recursive=False)
+
+
+def should_skip_decoder_path(path: Path) -> bool:
+    return any(part == "__pycache__" for part in path.parts) or path.suffix in {".pyc", ".pyo"}
+
+
+def add_directory(archive: tarfile.TarFile, source: Path, destination: str) -> None:
+    archive.add(source, arcname=destination, recursive=False)
+    for child in sorted(source.rglob("*")):
+        if should_skip_decoder_path(child.relative_to(source)):
+            continue
+        archive.add(child, arcname=f"{destination}/{child.relative_to(source)}", recursive=False)
 
 
 def vcpkg_triplet_for_target(target: str) -> str:
@@ -93,7 +117,9 @@ def main() -> int:
 
     ensure_file(args.exe, "Executable")
     ensure_file(args.runtime, "Runtime library")
+    ensure_file(args.decode_runtime, "Decode runtime library")
     ensure_directory(args.resources, "Resources directory")
+    ensure_directory(args.decoder_dir, "Decoder scripts directory")
 
     archive_root = f"dsview-cli-{args.version}-{args.target}"
     exe_name = "dsview-cli.exe" if "windows" in args.target else "dsview-cli"
@@ -109,6 +135,12 @@ def main() -> int:
     with tarfile.open(args.output, "w:gz") as archive:
         add_file(archive, args.exe, f"{archive_root}/{exe_name}")
         add_file(archive, args.runtime, f"{archive_root}/runtime/{args.runtime.name}")
+        add_file(
+            archive,
+            args.decode_runtime,
+            f"{archive_root}/decode-runtime/{args.decode_runtime.name}",
+        )
+        add_directory(archive, args.decoder_dir, f"{archive_root}/decoders")
         if "windows" in args.target:
             for dependency in windows_dependency_dlls(args.target, args.runtime.name):
                 add_file(

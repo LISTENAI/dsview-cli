@@ -13,6 +13,12 @@ inputs:
   runtime-path:
     description: 'Path to built runtime library'
     required: true
+  decode-runtime-path:
+    description: 'Path to built decode runtime library'
+    required: true
+  decoder-dir:
+    description: 'Path to the decoder scripts directory'
+    required: true
 runs:
   using: 'composite'
   steps:
@@ -26,7 +32,9 @@ runs:
         "$PYTHON_BIN" tools/package-bundle.py \
           --exe "${{ inputs.exe-path }}" \
           --runtime "${{ inputs.runtime-path }}" \
+          --decode-runtime "${{ inputs.decode-runtime-path }}" \
           --resources DSView/DSView/res \
+          --decoder-dir "${{ inputs.decoder-dir }}" \
           --output "dsview-cli-${{ inputs.version }}-${{ inputs.target }}.tar.gz" \
           --version "${{ inputs.version }}" \
           --target "${{ inputs.target }}"

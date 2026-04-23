@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,14 @@ def runtime_library_name(target: str) -> str:
     return "libdsview_runtime.so"
 
 
+def decode_runtime_library_name(target: str) -> str:
+    if "windows" in target:
+        return "dsview_decode_runtime.dll"
+    if "darwin" in target or "macos" in target:
+        return "libdsview_decode_runtime.dylib"
+    return "libdsview_decode_runtime.so"
+
+
 def expected_windows_runtime_dependencies() -> list[str]:
     return [
         "glib-2.0-0.dll",
@@ -47,13 +56,25 @@ def require_exists(path: Path, label: str) -> None:
         raise FileNotFoundError(f"{label} not found: {path}")
 
 
-def run_smoke_test(exe_path: Path, args: list[str], description: str) -> None:
-    result = subprocess.run([str(exe_path), *args], check=False)
+def run_smoke_test(
+    exe_path: Path, args: list[str], description: str
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        [str(exe_path), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
     if result.returncode != 0:
+        if result.stdout:
+            print(result.stdout, file=sys.stderr, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
         raise RuntimeError(
             f"{description} failed with exit code: {result.returncode}"
         )
     print(f"OK {description}")
+    return result
 
 
 def main() -> int:
@@ -87,12 +108,34 @@ def main() -> int:
             raise FileNotFoundError("runtime/ directory not found")
         require_exists(runtime_dir / runtime_library_name(args.target), "Runtime library")
 
+        decode_runtime_dir = bundle_root / "decode-runtime"
+        if not decode_runtime_dir.is_dir():
+            raise FileNotFoundError("decode-runtime/ directory not found")
+        require_exists(
+            decode_runtime_dir / decode_runtime_library_name(args.target),
+            "Decode runtime library",
+        )
+
+        decoders_dir = bundle_root / "decoders"
+        if not decoders_dir.is_dir():
+            raise FileNotFoundError("decoders/ directory not found")
+        if not any(decoders_dir.iterdir()):
+            raise FileNotFoundError("decoders/ directory is empty")
+
         resources_dir = bundle_root / "resources"
         if not resources_dir.is_dir():
             raise FileNotFoundError("resources/ directory not found")
 
         run_smoke_test(exe_path, ["--help"], "dsview-cli --help")
         run_smoke_test(exe_path, ["devices", "list", "--help"], "dsview-cli devices list --help")
+        decode_list = run_smoke_test(
+            exe_path,
+            ["decode", "list", "--format", "json"],
+            "dsview-cli decode list --format json",
+        )
+        decode_payload = json.loads(decode_list.stdout)
+        if not isinstance(decode_payload, dict) or not decode_payload.get("decoders"):
+            raise RuntimeError("decode list returned an empty decoder registry")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

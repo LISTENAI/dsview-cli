@@ -288,6 +288,7 @@ write_wrapper "$WRAPPER_PATH" "$RUNTIME_TARGET"
 log "Running smoke checks"
 "$WRAPPER_PATH" --version >/dev/null
 "$WRAPPER_PATH" devices list --help >/dev/null
+"$WRAPPER_PATH" decode list --format json >/dev/null
 
 log "Installed DSView CLI $VERSION for $TARGET"
 log "Run: $WRAPPER_PATH --help"

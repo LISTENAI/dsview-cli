@@ -119,6 +119,19 @@ jobs:
           }
           "runtime-lib=$runtime" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Find decode runtime library (Windows)
+        if: matrix.package_bundle && contains(matrix.target, 'windows')
+        id: find-decode-runtime-windows
+        shell: pwsh
+        run: |
+          $runtime = Get-ChildItem "target/${{ matrix.target }}/release/build" -Recurse -Filter "dsview_decode_runtime.dll" -ErrorAction Stop |
+            Sort-Object FullName |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $runtime) {
+            throw "Windows decode runtime library was not found under target/${{ matrix.target }}/release/build"
+          }
+          "runtime-lib=$runtime" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: Find runtime library (Unix)
         if: matrix.package_bundle && !contains(matrix.target, 'windows')
         id: find-runtime-unix
@@ -131,6 +144,22 @@ jobs:
           fi
           if [[ -z "$RUNTIME_LIB" ]]; then
             echo "runtime library was not found for ${{ matrix.target }}" >&2
+            exit 1
+          fi
+          echo "runtime-lib=$RUNTIME_LIB" >> "$GITHUB_OUTPUT"
+
+      - name: Find decode runtime library (Unix)
+        if: matrix.package_bundle && !contains(matrix.target, 'windows')
+        id: find-decode-runtime-unix
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == *"darwin"* ]] || [[ "${{ matrix.target }}" == *"macos"* ]]; then
+            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-decode-runtime-build -name "libdsview_decode_runtime.dylib" -print -quit)
+          else
+            RUNTIME_LIB=$(find target/${{ matrix.target }}/release/build/dsview-sys-*/out/source-decode-runtime-build -name "libdsview_decode_runtime.so" -print -quit)
+          fi
+          if [[ -z "$RUNTIME_LIB" ]]; then
+            echo "decode runtime library was not found for ${{ matrix.target }}" >&2
             exit 1
           fi
           echo "runtime-lib=$RUNTIME_LIB" >> "$GITHUB_OUTPUT"
@@ -154,6 +183,8 @@ jobs:
           version: ${{ steps.version.outputs.version }}
           exe-path: ${{ steps.exe-path.outputs.exe }}
           runtime-path: ${{ contains(matrix.target, 'windows') && steps.find-runtime-windows.outputs.runtime-lib || steps.find-runtime-unix.outputs.runtime-lib }}
+          decode-runtime-path: ${{ contains(matrix.target, 'windows') && steps.find-decode-runtime-windows.outputs.runtime-lib || steps.find-decode-runtime-unix.outputs.runtime-lib }}
+          decoder-dir: DSView/libsigrokdecode4DSL/decoders
   publish-release:
     name: publish-release
     needs: build-release
@@ -201,6 +232,8 @@ jobs:
             Each bundle contains:
             - platform-appropriate `dsview-cli` executable
             - `runtime/` directory with the platform-specific runtime library
+            - `decode-runtime/` directory with the platform-specific decode runtime library
+            - `decoders/` directory with bundled DSView decoder scripts
             - `resources/` directory with DSLogic Plus firmware and bitstreams
 
             ### Installation
@@ -212,7 +245,7 @@ jobs:
 
             ### Usage
 
-            The CLI automatically discovers bundled runtime and resources relative to the executable location. Use `--resource-dir` to override the resource directory if needed.
+            The CLI automatically discovers bundled runtime, decode runtime, resources, and decoder scripts relative to the executable location. Use explicit path flags if you need to override them.
 
             See the [README](https://github.com/${{ github.repository }}/blob/${{ steps.version.outputs.version }}/README.md) for detailed usage instructions.
 
