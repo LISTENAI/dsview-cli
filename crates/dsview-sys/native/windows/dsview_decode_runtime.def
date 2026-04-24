@@ -1,0 +1,20 @@
+LIBRARY dsview_decode_runtime
+EXPORTS
+    srd_init
+    srd_exit
+    srd_decoder_list
+    srd_decoder_get_by_id
+    srd_decoder_load_all
+    srd_searchpaths_get
+    srd_strerror
+    srd_strerror_name
+    srd_session_new
+    srd_session_metadata_set
+    srd_session_start
+    srd_session_send
+    srd_session_end
+    srd_session_destroy
+    srd_pd_output_callback_add
+    srd_inst_new
+    srd_inst_channel_set_all
+    srd_inst_stack

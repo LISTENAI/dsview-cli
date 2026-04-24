@@ -3,8 +3,9 @@
 //! This crate is the only allowed home for unsafe FFI when Phase 1 adds
 //! bindings to `DSView/libsigrok4DSL`.
 
-use std::cell::Cell;
-use std::ffi::{CStr, CString};
+use std::cell::{Cell, RefCell};
+use std::env;
+use std::ffi::{CStr, CString, OsString};
 use std::fmt;
 use std::fs;
 use std::os::raw::{c_char, c_int};
@@ -1867,6 +1868,7 @@ impl Drop for RuntimeBridge {
 pub struct DecodeRuntimeBridge {
     library_path: PathBuf,
     initialized: Cell<bool>,
+    python_home_guard: RefCell<Option<PythonHomeGuard>>,
 }
 
 impl DecodeRuntimeBridge {
@@ -1885,6 +1887,7 @@ impl DecodeRuntimeBridge {
             0 => Ok(Self {
                 library_path: path.to_path_buf(),
                 initialized: Cell::new(false),
+                python_home_guard: RefCell::new(None),
             }),
             DSVIEW_BRIDGE_ERR_ARG | DSVIEW_DECODE_ERR_ARG => Err(DecodeRuntimeError::InvalidArgument(
                 "decode runtime library path must not be empty".to_string(),
@@ -1911,10 +1914,24 @@ impl DecodeRuntimeBridge {
     }
 
     pub fn init(&self, decoder_dir: impl AsRef<Path>) -> Result<(), DecodeRuntimeError> {
+        self.init_with_python_home(decoder_dir, None::<&Path>)
+    }
+
+    pub fn init_with_python_home(
+        &self,
+        decoder_dir: impl AsRef<Path>,
+        python_home: Option<impl AsRef<Path>>,
+    ) -> Result<(), DecodeRuntimeError> {
+        let guard = if let Some(path) = python_home {
+            Some(PythonHomeGuard::activate(path.as_ref())?)
+        } else {
+            None
+        };
         let c_path = path_to_decode_cstring(decoder_dir.as_ref())?;
         decode_native_call_status("decode runtime init", unsafe {
             dsview_decode_runtime_init(c_path.as_ptr())
         })?;
+        *self.python_home_guard.borrow_mut() = guard;
         self.initialized.set(true);
         Ok(())
     }
@@ -1924,6 +1941,7 @@ impl DecodeRuntimeBridge {
             dsview_decode_runtime_exit()
         })?;
         self.initialized.set(false);
+        self.python_home_guard.borrow_mut().take();
         Ok(())
     }
 
@@ -2001,6 +2019,41 @@ impl Drop for DecodeRuntimeBridge {
             unsafe {
                 let _ = dsview_decode_runtime_exit();
             };
+        }
+        self.python_home_guard.get_mut().take();
+    }
+}
+
+#[derive(Debug)]
+struct PythonHomeGuard {
+    previous_home: Option<OsString>,
+}
+
+impl PythonHomeGuard {
+    fn activate(path: &Path) -> Result<Self, DecodeRuntimeError> {
+        if !path.is_dir() {
+            return Err(DecodeRuntimeError::InvalidArgument(format!(
+                "python home path does not exist: {}",
+                path.display()
+            )));
+        }
+
+        let previous_home = env::var_os("PYTHONHOME");
+        unsafe {
+            env::set_var("PYTHONHOME", path);
+        }
+        Ok(Self { previous_home })
+    }
+}
+
+impl Drop for PythonHomeGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(previous_home) = &self.previous_home {
+                env::set_var("PYTHONHOME", previous_home);
+            } else {
+                env::remove_var("PYTHONHOME");
+            }
         }
     }
 }
