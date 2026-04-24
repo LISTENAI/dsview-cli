@@ -162,6 +162,10 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-changed={}",
+        native_root.join("windows/dsview_decode_runtime.def").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
         compat_root.join("msvc_preinclude.h").display()
     );
     println!(

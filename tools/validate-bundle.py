@@ -102,6 +102,15 @@ def main() -> int:
         if "windows" in args.target:
             for dependency in expected_windows_runtime_dependencies():
                 require_exists(bundle_root / dependency, "Windows runtime dependency")
+            if not any(bundle_root.glob("python*.dll")):
+                raise FileNotFoundError("Bundled Windows Python runtime DLLs were not found")
+            python_home = bundle_root / "python"
+            if not python_home.is_dir():
+                raise FileNotFoundError("python/ directory not found")
+            if not (python_home / "Lib").is_dir() and not any(python_home.glob("python*.zip")):
+                raise FileNotFoundError(
+                    "Bundled Windows Python runtime is missing both Lib/ and pythonXY.zip"
+                )
 
         runtime_dir = bundle_root / "runtime"
         if not runtime_dir.is_dir():

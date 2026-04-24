@@ -59,6 +59,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Set up Python
+        if: contains(matrix.target, 'windows')
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          architecture: ${{ matrix.msvc_arch }}
+
       - name: Initialize MSVC developer command prompt
         if: contains(matrix.target, 'windows')
         uses: ilammy/msvc-dev-cmd@v1

@@ -211,9 +211,22 @@ if(DSVIEW_BUILD_DECODE_RUNTIME)
         Python3::Python
     )
 
+    if(WIN32 AND DEFINED Python3_LIBRARY_RELEASE)
+        get_filename_component(PYTHON3_LIBRARY_DIR "${Python3_LIBRARY_RELEASE}" DIRECTORY)
+        target_link_directories(dsview_decode_runtime PRIVATE
+            "${PYTHON3_LIBRARY_DIR}"
+        )
+    endif()
+
     target_link_directories(dsview_decode_runtime PRIVATE
         ${GLIB_LIBRARY_DIRS}
     )
+
+    if(MSVC)
+        set_target_properties(dsview_decode_runtime PROPERTIES
+            LINK_FLAGS "/DEF:${DSVIEW_NATIVE_WINDOWS_ROOT}/dsview_decode_runtime.def"
+        )
+    endif()
 
     set_target_properties(dsview_decode_runtime PROPERTIES OUTPUT_NAME dsview_decode_runtime)
     configure_runtime_target(dsview_decode_runtime msvc_decode_preinclude.h)

@@ -67,10 +67,31 @@ def should_skip_decoder_path(path: Path) -> bool:
     return any(part == "__pycache__" for part in path.parts) or path.suffix in {".pyc", ".pyo"}
 
 
+def should_skip_python_path(path: Path) -> bool:
+    return (
+        any(part == "__pycache__" for part in path.parts)
+        or path.suffix in {".pyc", ".pyo"}
+        or path.parts[:1] == ("Lib",) and len(path.parts) > 1 and path.parts[1] == "site-packages"
+    )
+
+
 def add_directory(archive: tarfile.TarFile, source: Path, destination: str) -> None:
     archive.add(source, arcname=destination, recursive=False)
     for child in sorted(source.rglob("*")):
         if should_skip_decoder_path(child.relative_to(source)):
+            continue
+        archive.add(child, arcname=f"{destination}/{child.relative_to(source)}", recursive=False)
+
+
+def add_directory_filtered(
+    archive: tarfile.TarFile,
+    source: Path,
+    destination: str,
+    skip_predicate,
+) -> None:
+    archive.add(source, arcname=destination, recursive=False)
+    for child in sorted(source.rglob("*")):
+        if skip_predicate(child.relative_to(source)):
             continue
         archive.add(child, arcname=f"{destination}/{child.relative_to(source)}", recursive=False)
 
@@ -112,6 +133,44 @@ def windows_dependency_dlls(target: str, runtime_name: str) -> list[Path]:
     return dlls
 
 
+def windows_python_runtime_root() -> Path:
+    root = Path(sys.base_exec_prefix)
+    ensure_directory(root, "Windows Python runtime root")
+    return root
+
+
+def windows_python_runtime_dlls() -> list[Path]:
+    root = windows_python_runtime_root()
+    dlls = sorted(
+        {
+            *root.glob("python*.dll"),
+            *root.glob("vcruntime*.dll"),
+        }
+    )
+    if not dlls:
+        raise FileNotFoundError(f"No Python runtime DLLs were found under {root}")
+    return dlls
+
+
+def add_windows_python_runtime(archive: tarfile.TarFile, archive_root: str) -> None:
+    python_root = windows_python_runtime_root()
+
+    for dll in windows_python_runtime_dlls():
+        add_file(archive, dll, f"{archive_root}/{dll.name}")
+
+    lib_dir = python_root / "Lib"
+    ensure_directory(lib_dir, "Windows Python Lib directory")
+    add_directory_filtered(archive, lib_dir, f"{archive_root}/python/Lib", should_skip_python_path)
+
+    dll_dir = python_root / "DLLs"
+    if dll_dir.is_dir():
+        add_directory_filtered(archive, dll_dir, f"{archive_root}/python/DLLs", should_skip_python_path)
+
+    stdlib_zip = python_root / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+    if stdlib_zip.is_file():
+        add_file(archive, stdlib_zip, f"{archive_root}/python/{stdlib_zip.name}")
+
+
 def main() -> int:
     args = parse_args()
 
@@ -148,6 +207,7 @@ def main() -> int:
                     dependency,
                     f"{archive_root}/{dependency.name}",
                 )
+            add_windows_python_runtime(archive, archive_root)
 
         for resource_name in required_resources:
             resource_path = args.resources / resource_name

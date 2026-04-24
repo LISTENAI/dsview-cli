@@ -59,6 +59,7 @@ const BUNDLED_RUNTIME_DIR: &str = "runtime";
 const BUNDLED_RESOURCE_DIR: &str = "resources";
 const BUNDLED_DECODE_RUNTIME_DIR: &str = "decode-runtime";
 const BUNDLED_DECODER_DIR: &str = "decoders";
+const BUNDLED_PYTHON_DIR: &str = "python";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionHandle(NonZeroU64);
@@ -1221,6 +1222,7 @@ pub struct RuntimeDiscoveryPaths {
 pub struct DecodeDiscoveryPaths {
     pub runtime_library: PathBuf,
     pub decoder_dir: PathBuf,
+    pub python_home: Option<PathBuf>,
 }
 
 impl RuntimeDiscoveryPaths {
@@ -1305,6 +1307,7 @@ impl DecodeDiscoveryPaths {
             .join(BUNDLED_DECODE_RUNTIME_DIR)
             .join(decode_runtime_library_name());
         let bundled_decoder_dir = executable_dir.join(BUNDLED_DECODER_DIR);
+        let bundled_python_home = executable_dir.join(BUNDLED_PYTHON_DIR);
 
         let runtime_library = if let Some(path) = runtime_override {
             path
@@ -1329,11 +1332,21 @@ impl DecodeDiscoveryPaths {
             developer_decoder_dir()
         };
 
+        let python_home = if cfg!(windows)
+            && runtime_library == bundled_runtime
+            && bundled_python_home.is_dir()
+        {
+            Some(bundled_python_home)
+        } else {
+            None
+        };
+
         ensure_decoder_script_dir(&decoder_dir)?;
 
         Ok(Self {
             runtime_library,
             decoder_dir,
+            python_home,
         })
     }
 }
@@ -1779,17 +1792,29 @@ impl DecodeDiscovery {
         library_path: impl AsRef<Path>,
         decoder_dir: impl AsRef<Path>,
     ) -> Result<Self, DecodeBringUpError> {
+        Self::connect_with_python_home(library_path, decoder_dir, None::<&Path>)
+    }
+
+    pub fn connect_with_python_home(
+        library_path: impl AsRef<Path>,
+        decoder_dir: impl AsRef<Path>,
+        python_home: Option<impl AsRef<Path>>,
+    ) -> Result<Self, DecodeBringUpError> {
         let library_path = library_path.as_ref().to_path_buf();
         let decoder_dir = decoder_dir.as_ref().to_path_buf();
+        let python_home = python_home.map(|path| path.as_ref().to_path_buf());
         ensure_decoder_script_dir(&decoder_dir)?;
         let runtime =
             DecodeRuntimeBridge::load(&library_path).map_err(DecodeBringUpError::Runtime)?;
-        runtime.init(&decoder_dir).map_err(DecodeBringUpError::Runtime)?;
+        runtime
+            .init_with_python_home(&decoder_dir, python_home.as_deref())
+            .map_err(DecodeBringUpError::Runtime)?;
         Ok(Self {
             runtime,
             paths: DecodeDiscoveryPaths {
                 runtime_library: library_path,
                 decoder_dir,
+                python_home,
             },
         })
     }
@@ -1799,7 +1824,11 @@ impl DecodeDiscovery {
         decoder_dir_override: Option<impl AsRef<Path>>,
     ) -> Result<Self, DecodeBringUpError> {
         let paths = DecodeDiscoveryPaths::discover(runtime_override, decoder_dir_override)?;
-        Self::connect(&paths.runtime_library, &paths.decoder_dir)
+        Self::connect_with_python_home(
+            &paths.runtime_library,
+            &paths.decoder_dir,
+            paths.python_home.as_deref(),
+        )
     }
 
     pub fn discovery_paths(

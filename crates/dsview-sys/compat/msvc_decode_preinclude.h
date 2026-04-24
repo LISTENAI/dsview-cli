@@ -10,6 +10,15 @@
 #define NOMINMAX 1
 #endif
 
+/*
+ * libsigrokdecode4DSL still carries GCC-style attributes in a few source
+ * files. MSVC rejects these declarations unless they are normalized away
+ * before the upstream sources are compiled.
+ */
+#ifndef __attribute__
+#define __attribute__(x)
+#endif
+
 #include <BaseTsd.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
