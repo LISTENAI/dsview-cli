@@ -49,6 +49,8 @@ runs:
       if: endsWith(inputs.target, '-pc-windows-msvc')
       shell: pwsh
       run: |
+        $ErrorActionPreference = 'Stop'
+
         if ($env:VCPKG_DEFAULT_BINARY_CACHE) {
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
         }
@@ -62,10 +64,27 @@ runs:
           default { throw "unsupported Windows target: ${{ inputs.target }}" }
         }
 
-        # vcpkg is pre-installed on GitHub-hosted Windows runners.
-        vcpkg install glib:$Triplet libusb:$Triplet fftw3:$Triplet pkgconf:$Triplet
+        $BundledVcpkg = 'C:\vcpkg\vcpkg.exe'
+        $ResolvedVcpkg = Get-Command vcpkg -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        $VcpkgExe = if (Test-Path $BundledVcpkg) {
+          $BundledVcpkg
+        } elseif ($ResolvedVcpkg) {
+          $ResolvedVcpkg.Source
+        } else {
+          throw 'vcpkg executable was not found'
+        }
 
-        $VcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } elseif ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { throw "vcpkg root environment variable is not set" }
+        $VcpkgRoot = Split-Path -Parent $VcpkgExe
+        $env:VCPKG_ROOT = $VcpkgRoot
+        $env:VCPKG_INSTALLATION_ROOT = $VcpkgRoot
+        Write-Host "Using vcpkg at $VcpkgExe"
+
+        $Packages = @("glib:$Triplet", "libusb:$Triplet", "fftw3:$Triplet", "pkgconf:$Triplet")
+        & $VcpkgExe install $Packages
+        if ($LASTEXITCODE -ne 0) {
+          throw "vcpkg install failed with exit code $LASTEXITCODE"
+        }
+
         $PkgConfigExe = "$VcpkgRoot/installed/$Triplet/tools/pkgconf/pkgconf.exe"
         $PkgConfigPath = "$VcpkgRoot/installed/$Triplet/lib/pkgconfig;$VcpkgRoot/installed/$Triplet/share/pkgconfig"
         $PkgConfigBin = "$VcpkgRoot/installed/$Triplet/tools/pkgconf"
@@ -73,6 +92,7 @@ runs:
         $DebugRuntimeBin = "$VcpkgRoot/installed/$Triplet/debug/bin"
 
         "VCPKG_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "VCPKG_INSTALLATION_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "DSVIEW_VCPKG_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "DSVIEW_VCPKG_TRIPLET=$Triplet" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "CMAKE_TOOLCHAIN_FILE=$VcpkgRoot/scripts/buildsystems/vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
