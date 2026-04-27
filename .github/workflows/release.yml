@@ -225,7 +225,7 @@ jobs:
           cat dsview-cli-${{ steps.version.outputs.version }}-SHA256SUMS.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release-bundles/*/*.tar.gz
