@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
 import sysconfig
 import tarfile
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,10 +84,26 @@ def should_skip_decoder_path(path: Path) -> bool:
 
 
 def should_skip_python_path(path: Path) -> bool:
-    skipped_directory_names = {"__pycache__", "site-packages", "dist-packages"}
+    skipped_directory_names = {
+        "__pycache__",
+        "site-packages",
+        "dist-packages",
+        "test",
+        "tests",
+        "ensurepip",
+        "idlelib",
+        "tkinter",
+        "turtledemo",
+    }
     return (
-        any(part in skipped_directory_names for part in path.parts)
-        or path.suffix in {".pyc", ".pyo"}
+        any(
+            part in skipped_directory_names or part.startswith("config-")
+            for part in path.parts
+        )
+        or path.suffix in {".a", ".pyc", ".pyo"}
+        or path.name.startswith("_test")
+        or path.name.startswith("_tkinter.")
+        or path.name.startswith("_ctypes_test.")
     )
 
 
@@ -109,6 +126,35 @@ def add_directory_filtered(
         if skip_predicate(child.relative_to(source)):
             continue
         archive.add(child, arcname=f"{destination}/{child.relative_to(source)}", recursive=False)
+
+
+def copy_directory_filtered(
+    source: Path,
+    destination: Path,
+    skip_predicate,
+) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for child in sorted(source.rglob("*")):
+        relative_path = child.relative_to(source)
+        if skip_predicate(relative_path):
+            continue
+
+        copied_path = destination / relative_path
+        if child.is_symlink():
+            resolved = child.resolve()
+            if not resolved.is_file():
+                continue
+            copied_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(resolved, copied_path)
+        elif child.is_dir():
+            copied_path.mkdir(parents=True, exist_ok=True)
+        elif child.is_file():
+            copied_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(child, copied_path)
+
+
+def should_never_skip(_: Path) -> bool:
+    return False
 
 
 def vcpkg_triplet_for_target(target: str) -> str:
@@ -218,6 +264,26 @@ def command_stdout(command: list[str]) -> str:
     return result.stdout
 
 
+def checked_command_stdout(command: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"required command not found: {command[0]}") from error
+    return result.stdout
+
+
+def require_tool(name: str) -> str:
+    tool = shutil.which(name)
+    if not tool:
+        raise FileNotFoundError(f"{name} is required for macOS Python runtime bundling")
+    return tool
+
+
 def linux_linked_python_dependencies(library: Path) -> list[tuple[str, str]]:
     dependencies: list[tuple[str, str]] = []
     output = command_stdout(["readelf", "-d", str(library)])
@@ -240,6 +306,15 @@ def macos_linked_python_dependencies(library: Path) -> list[tuple[str, str]]:
     return dependencies
 
 
+def macos_linked_libraries(library: Path) -> list[str]:
+    output = checked_command_stdout(["otool", "-L", str(library)])
+    return [
+        line.strip().split(" ", 1)[0]
+        for line in output.splitlines()[1:]
+        if line.strip()
+    ]
+
+
 def linked_python_dependencies(target: str, library: Path) -> list[tuple[str, str]]:
     if is_darwin_target(target):
         return macos_linked_python_dependencies(library)
@@ -256,11 +331,25 @@ def macos_python_archive_path(dependency_or_source: str, fallback_name: str) -> 
     return f"lib/{fallback_name}"
 
 
-def macos_framework_root(path: Path) -> Path | None:
+def macos_framework_version_root(path: Path) -> Path | None:
     for index, part in enumerate(path.parts):
-        if part.endswith(".framework"):
-            return Path(*path.parts[: index + 1])
+        if not part.endswith(".framework"):
+            continue
+
+        framework_root = Path(*path.parts[: index + 1])
+        if index + 2 < len(path.parts) and path.parts[index + 1] == "Versions":
+            return Path(*path.parts[: index + 3])
+
+        framework_version = sysconfig.get_config_var("VERSION") or python_version_dir().removeprefix("python")
+        version_root = framework_root / "Versions" / framework_version
+        return version_root if version_root.is_dir() else None
+
     return None
+
+
+def macos_framework_archive_version_root(version_root: Path) -> PurePosixPath:
+    framework_root = version_root.parent.parent
+    return PurePosixPath(framework_root.name) / "Versions" / version_root.name
 
 
 def python_archive_path(target: str, dependency_or_source: str, fallback_name: str) -> str:
@@ -348,6 +437,212 @@ def python_shared_library_candidates(
     return sorted((source, archive_path) for archive_path, source in entries.items())
 
 
+def copy_file_to_staging(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source.resolve(), destination)
+
+
+def macos_loader_path_reference(from_archive_path: PurePosixPath, to_archive_path: PurePosixPath) -> str:
+    relative_path = posixpath.relpath(
+        to_archive_path.as_posix(),
+        from_archive_path.parent.as_posix(),
+    )
+    return f"@loader_path/{relative_path}"
+
+
+def macos_framework_dependency_replacement(
+    dependency: str,
+    from_archive_path: PurePosixPath,
+    framework_version_root: Path,
+    framework_archive_version_root: PurePosixPath,
+) -> str | None:
+    dependency_path = Path(dependency)
+    if not dependency_path.is_absolute():
+        return None
+
+    relative_dependency: PurePosixPath | None = None
+    try:
+        relative_dependency = PurePosixPath(
+            dependency_path.relative_to(framework_version_root).as_posix()
+        )
+    except ValueError:
+        framework_name = framework_version_root.parent.parent.name
+        parts = dependency_path.parts
+        for index, part in enumerate(parts):
+            if (
+                part == framework_name
+                and index + 2 < len(parts)
+                and parts[index + 1] == "Versions"
+                and parts[index + 2] == framework_version_root.name
+            ):
+                relative_dependency = PurePosixPath(*parts[index + 3 :])
+                break
+
+    if relative_dependency is None:
+        return None
+
+    bundled_dependency = (
+        PurePosixPath("python")
+        / framework_archive_version_root
+        / relative_dependency
+    )
+    return macos_loader_path_reference(from_archive_path, bundled_dependency)
+
+
+def rewrite_macos_framework_references(
+    file: Path,
+    archive_path: PurePosixPath,
+    framework_version_root: Path,
+    framework_archive_version_root: PurePosixPath,
+) -> None:
+    install_name_tool = require_tool("install_name_tool")
+
+    if file.name == "Python" or file.suffix == ".dylib":
+        install_name = macos_loader_path_reference(archive_path, archive_path)
+        subprocess.run([install_name_tool, "-id", install_name, str(file)], check=True)
+
+    for dependency in macos_linked_libraries(file):
+        replacement = macos_framework_dependency_replacement(
+            dependency,
+            archive_path,
+            framework_version_root,
+            framework_archive_version_root,
+        )
+        if not replacement or dependency == replacement:
+            continue
+
+        subprocess.run(
+            [install_name_tool, "-change", dependency, replacement, str(file)],
+            check=True,
+        )
+
+
+def macos_framework_support_libraries(version_root: Path) -> list[Path]:
+    lib_dir = version_root / "lib"
+    if not lib_dir.is_dir():
+        return []
+    return sorted(path for path in lib_dir.glob("*.dylib") if path.is_file() and not path.is_symlink())
+
+
+def add_macos_framework_runtime_to_staging(
+    staging_root: Path,
+    version_root: Path,
+) -> PurePosixPath:
+    framework_archive_version_root = macos_framework_archive_version_root(version_root)
+    framework_binary = version_root / "Python"
+    ensure_file(framework_binary, "macOS Python framework binary")
+
+    framework_binary_archive_path = (
+        PurePosixPath("python") / framework_archive_version_root / "Python"
+    )
+    staged_framework_binary = staging_root / framework_binary_archive_path
+    copy_file_to_staging(framework_binary, staged_framework_binary)
+    rewrite_macos_framework_references(
+        staged_framework_binary,
+        framework_binary_archive_path,
+        version_root,
+        framework_archive_version_root,
+    )
+
+    for library in macos_framework_support_libraries(version_root):
+        relative_library = library.relative_to(version_root)
+        library_archive_path = (
+            PurePosixPath("python")
+            / framework_archive_version_root
+            / PurePosixPath(relative_library.as_posix())
+        )
+        staged_library = staging_root / library_archive_path
+        copy_file_to_staging(library, staged_library)
+        rewrite_macos_framework_references(
+            staged_library,
+            library_archive_path,
+            version_root,
+            framework_archive_version_root,
+        )
+
+    return framework_archive_version_root
+
+
+def rewrite_macos_stdlib_extension_references(
+    staging_root: Path,
+    stdlib_destination: Path,
+    framework_version_root: Path,
+    framework_archive_version_root: PurePosixPath,
+) -> None:
+    lib_dynload = stdlib_destination / "lib-dynload"
+    if not lib_dynload.is_dir():
+        return
+
+    for extension in sorted(lib_dynload.glob("*.so")):
+        extension_archive_path = PurePosixPath(
+            (PurePosixPath("python") / extension.relative_to(staging_root / "python")).as_posix()
+        )
+        rewrite_macos_framework_references(
+            extension,
+            extension_archive_path,
+            framework_version_root,
+            framework_archive_version_root,
+        )
+
+
+def add_macos_python_runtime(
+    archive: tarfile.TarFile,
+    archive_root: str,
+    shared_libraries: list[tuple[Path, str]],
+) -> None:
+    framework_versions: dict[Path, PurePosixPath] = {}
+
+    with tempfile.TemporaryDirectory(prefix="dsview-macos-python-") as staging:
+        staging_root = Path(staging)
+        staged_python_root = staging_root / "python"
+
+        for library, archive_path in shared_libraries:
+            version_root = macos_framework_version_root(library)
+            if version_root is not None and version_root.is_dir():
+                if version_root not in framework_versions:
+                    framework_versions[version_root] = add_macos_framework_runtime_to_staging(
+                        staging_root,
+                        version_root,
+                    )
+                continue
+
+            copied_library = staged_python_root / PurePosixPath(archive_path)
+            copy_file_to_staging(library, copied_library)
+
+        stdlib_dir = Path(sysconfig.get_path("stdlib"))
+        ensure_directory(stdlib_dir, "Python stdlib directory")
+        stdlib_destination = staged_python_root / "lib" / python_version_dir()
+        copy_directory_filtered(stdlib_dir, stdlib_destination, should_skip_python_path)
+
+        platstdlib_value = sysconfig.get_path("platstdlib")
+        if platstdlib_value:
+            platstdlib_dir = Path(platstdlib_value)
+            if (
+                platstdlib_dir.is_dir()
+                and platstdlib_dir.resolve() != stdlib_dir.resolve()
+            ):
+                copy_directory_filtered(
+                    platstdlib_dir,
+                    stdlib_destination,
+                    should_skip_python_path,
+                )
+
+        for version_root, framework_archive_version_root in framework_versions.items():
+            rewrite_macos_stdlib_extension_references(
+                staging_root,
+                stdlib_destination,
+                version_root,
+                framework_archive_version_root,
+            )
+
+        add_directory_filtered(
+            archive,
+            staged_python_root,
+            f"{archive_root}/python",
+            should_never_skip,
+        )
+
+
 def add_unix_python_runtime(
     archive: tarfile.TarFile,
     archive_root: str,
@@ -372,26 +667,17 @@ def add_unix_python_runtime(
             + ", ".join(missing_library_paths)
         )
 
-    bundled_by_framework: set[str] = set()
+    required_shared_libraries = [
+        (library, archive_path)
+        for library, archive_path in shared_libraries
+        if archive_path in required_library_paths
+    ]
+
     if is_darwin_target(target):
-        framework_roots: dict[str, Path] = {}
-        for library, archive_path in shared_libraries:
-            framework_root = macos_framework_root(library)
-            if framework_root is not None and framework_root.is_dir():
-                framework_roots[framework_root.name] = framework_root
-                bundled_by_framework.add(archive_path)
+        add_macos_python_runtime(archive, archive_root, required_shared_libraries)
+        return
 
-        for framework_name, framework_root in sorted(framework_roots.items()):
-            add_directory_filtered(
-                archive,
-                framework_root,
-                f"{archive_root}/python/{framework_name}",
-                should_skip_python_path,
-            )
-
-    for library, archive_path in shared_libraries:
-        if archive_path in bundled_by_framework:
-            continue
+    for library, archive_path in required_shared_libraries:
         add_regular_file(archive, library, f"{archive_root}/python/{archive_path}")
 
     stdlib_dir = Path(sysconfig.get_path("stdlib"))

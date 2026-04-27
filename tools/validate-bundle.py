@@ -146,6 +146,7 @@ def validate_unix_python_runtime(
         raise FileNotFoundError(
             "Bundled Python stdlib is missing encodings/ under python/lib/pythonX.Y"
         )
+    validate_python_stdlib_is_slim(stdlib_dirs)
 
     if is_darwin_target(target):
         framework_binaries = list(
@@ -154,10 +155,22 @@ def validate_unix_python_runtime(
         if not framework_binaries and not any(python_lib.glob("libpython*.dylib*")):
             raise FileNotFoundError("Bundled macOS Python dynamic library was not found")
         validate_macos_python_links(bundle_root, decode_runtime)
+        validate_macos_python_runtime_is_slim(python_home)
+        validate_macos_python_extension_links(python_home)
     else:
         if not any(python_lib.glob("libpython*.so*")):
             raise FileNotFoundError("Bundled Linux libpython shared library was not found")
         validate_linux_python_links(bundle_root, decode_runtime)
+
+
+def validate_python_stdlib_is_slim(stdlib_dirs: list[Path]) -> None:
+    excluded_directories = ("test", "ensurepip", "idlelib", "tkinter", "turtledemo")
+    for stdlib_dir in stdlib_dirs:
+        for directory_name in excluded_directories:
+            if (stdlib_dir / directory_name).exists():
+                raise RuntimeError(
+                    f"Bundled Python stdlib includes unnecessary {directory_name}/ directory"
+                )
 
 
 def validate_linux_python_links(bundle_root: Path, decode_runtime: Path) -> None:
@@ -210,6 +223,43 @@ def validate_macos_python_links(bundle_root: Path, decode_runtime: Path) -> None
         raise RuntimeError(
             f"macOS Python dependency is not bundle-relative: {dependency}"
         )
+
+
+def validate_macos_python_runtime_is_slim(python_home: Path) -> None:
+    for framework in python_home.glob("*.framework"):
+        versions_dir = framework / "Versions"
+        require_exists(versions_dir, "Bundled macOS Python framework Versions directory")
+        version_dirs = [
+            path
+            for path in versions_dir.iterdir()
+            if path.is_dir() and path.name != "Current"
+        ]
+        if len(version_dirs) != 1:
+            raise RuntimeError(
+                f"Bundled macOS Python framework must include exactly one version, found {len(version_dirs)}"
+            )
+
+        version_dir = version_dirs[0]
+        if (version_dir / "Resources" / "English.lproj" / "Documentation").exists():
+            raise RuntimeError("Bundled macOS Python framework includes documentation")
+        if any((version_dir / "lib").glob("python*")):
+            raise RuntimeError(
+                "Bundled macOS Python framework duplicates the stdlib under Versions/*/lib"
+            )
+
+
+def validate_macos_python_extension_links(python_home: Path) -> None:
+    libraries = [
+        *python_home.glob("lib/python*/lib-dynload/*.so"),
+        *python_home.glob("*.framework/Versions/*/lib/*.dylib"),
+        *python_home.glob("*.framework/Versions/*/Python"),
+    ]
+    for library in libraries:
+        for dependency in macos_linked_libraries(library):
+            if dependency.startswith("/Library/Frameworks/Python.framework/"):
+                raise RuntimeError(
+                    f"Bundled macOS Python library has non-relocatable dependency: {library.name} -> {dependency}"
+                )
 
 
 def run_smoke_test(
