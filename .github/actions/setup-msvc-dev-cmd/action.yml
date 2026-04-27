@@ -1,0 +1,71 @@
+name: Setup MSVC Developer Command Prompt
+description: Export MSVC developer environment variables for subsequent Windows build steps.
+inputs:
+  arch:
+    description: Target architecture passed to vcvarsall.bat, for example x64 or arm64.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Export MSVC environment
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $arch = '${{ inputs.arch }}'
+        $validArchitectures = @('x86', 'x64', 'arm', 'arm64')
+        if ($arch -notin $validArchitectures) {
+          throw "Unsupported MSVC architecture: $arch"
+        }
+
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (-not (Test-Path $vswhere)) {
+          throw "vswhere was not found: $vswhere"
+        }
+
+        $installationPath = & $vswhere -latest -products '*' -property installationPath
+        if (-not $installationPath) {
+          throw 'Visual Studio installation was not found'
+        }
+
+        $vcvarsall = Join-Path $installationPath 'VC\Auxiliary\Build\vcvarsall.bat'
+        if (-not (Test-Path $vcvarsall)) {
+          throw "vcvarsall.bat was not found: $vcvarsall"
+        }
+
+        $before = @{}
+        Get-ChildItem Env: | ForEach-Object {
+          $before[$_.Name] = $_.Value
+        }
+
+        $vcvarsCommand = "`"$vcvarsall`" $arch >nul && set"
+        $environment = & cmd.exe /s /c $vcvarsCommand
+        if ($LASTEXITCODE -ne 0) {
+          throw "vcvarsall.bat failed for architecture: $arch"
+        }
+
+        foreach ($line in $environment) {
+          if ($line -notmatch '^([^=]+)=(.*)$') {
+            continue
+          }
+
+          $name = $Matches[1]
+          $value = $Matches[2]
+          if ($before.ContainsKey($name) -and $before[$name] -ceq $value) {
+            continue
+          }
+
+          if ($name -ieq 'Path') {
+            $value.Split(';') |
+              Where-Object { $_ } |
+              ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8 }
+            continue
+          }
+
+          $delimiter = "MSVC_ENV_$([guid]::NewGuid().ToString('N'))"
+          "$name<<$delimiter" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $value | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $delimiter | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        }
+
+        "MSVC developer environment initialized for $arch"
