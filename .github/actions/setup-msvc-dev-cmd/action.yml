@@ -55,6 +55,16 @@ runs:
             continue
           }
 
+          $preserveVariables = @(
+            'VCPKG_ROOT',
+            'VCPKG_INSTALLATION_ROOT',
+            'VCPKG_DEFAULT_BINARY_CACHE',
+            'VCPKG_DOWNLOADS'
+          )
+          if ($name -in $preserveVariables) {
+            continue
+          }
+
           if ($name -ieq 'Path') {
             $value.Split(';') |
               Where-Object { $_ } |
