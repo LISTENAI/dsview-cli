@@ -72,6 +72,11 @@ struct SourceRuntimeArtifacts {
     decode_library_path: PathBuf,
 }
 
+struct PythonDiscovery {
+    executable: PathBuf,
+    root: PathBuf,
+}
+
 fn main() {
     let target = TargetInfo::from_cargo_env();
     let manifest_dir =
@@ -334,9 +339,8 @@ fn build_source_runtimes(
         }
     }
 
-    if !command_available("python3") {
-        return Err("python3 is not available".to_string());
-    }
+    let python =
+        discover_python().ok_or_else(|| "python3 or python is not available".to_string())?;
 
     let capture_library_path = build_source_runtime_variant(
         repo_root,
@@ -344,6 +348,7 @@ fn build_source_runtimes(
         target,
         "source-runtime-build",
         "capture",
+        None,
     )?;
     let decode_library_path = build_source_runtime_variant(
         repo_root,
@@ -351,6 +356,7 @@ fn build_source_runtimes(
         target,
         "source-decode-runtime-build",
         "decode",
+        Some(&python),
     )?;
 
     Ok(SourceRuntimeArtifacts {
@@ -365,6 +371,7 @@ fn build_source_runtime_variant(
     target: &TargetInfo,
     build_dir_name: &str,
     runtime_kind: &str,
+    python: Option<&PythonDiscovery>,
 ) -> Result<PathBuf, String> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let build_dir = out_dir.join(build_dir_name);
@@ -392,6 +399,11 @@ fn build_source_runtime_variant(
             configure
                 .arg("-DDSVIEW_BUILD_CAPTURE_RUNTIME=OFF")
                 .arg("-DDSVIEW_BUILD_DECODE_RUNTIME=ON");
+            if let Some(python) = python {
+                configure
+                    .arg(format!("-DPython3_EXECUTABLE={}", python.executable.display()))
+                    .arg(format!("-DPython3_ROOT_DIR={}", python.root.display()));
+            }
         }
         _ => return Err(format!("unknown source runtime kind `{runtime_kind}`")),
     }
@@ -625,6 +637,45 @@ fn command_available(command: &str) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn discover_python() -> Option<PythonDiscovery> {
+    let mut candidates = Vec::new();
+    if let Ok(explicit) = env::var("PYTHON") {
+        candidates.push(explicit);
+    }
+    candidates.extend(["python3".to_string(), "python".to_string()]);
+
+    for candidate in candidates {
+        if !command_available(&candidate) {
+            continue;
+        }
+
+        let Ok(output) = Command::new(&candidate)
+            .arg("-c")
+            .arg("import sys; print(sys.executable); print(sys.base_exec_prefix)")
+            .output()
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+
+        let Ok(stdout) = String::from_utf8(output.stdout) else {
+            continue;
+        };
+        let mut lines = stdout.lines();
+        let Some(executable) = lines.next().map(PathBuf::from) else {
+            continue;
+        };
+        let Some(root) = lines.next().map(PathBuf::from) else {
+            continue;
+        };
+        return Some(PythonDiscovery { executable, root });
+    }
+
+    None
 }
 
 fn pkg_config_has(package: &str) -> bool {

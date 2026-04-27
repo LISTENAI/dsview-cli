@@ -59,7 +59,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Set up Python
+      - name: Set up Python (Unix)
+        if: ${{ !contains(matrix.target, 'windows') }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Set up Python (Windows)
         if: contains(matrix.target, 'windows')
         uses: actions/setup-python@v6
         with:
@@ -241,6 +247,7 @@ jobs:
             - `runtime/` directory with the platform-specific runtime library
             - `decode-runtime/` directory with the platform-specific decode runtime library
             - `decoders/` directory with bundled DSView decoder scripts
+            - `python/` directory with the bundled Python runtime used by protocol decoding
             - `resources/` directory with DSLogic Plus firmware and bitstreams
 
             ### Installation

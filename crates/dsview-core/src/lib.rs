@@ -1332,10 +1332,7 @@ impl DecodeDiscoveryPaths {
             developer_decoder_dir()
         };
 
-        let python_home = if cfg!(windows)
-            && runtime_library == bundled_runtime
-            && bundled_python_home.is_dir()
-        {
+        let python_home = if runtime_library == bundled_runtime && bundled_python_home.is_dir() {
             Some(bundled_python_home)
         } else {
             None

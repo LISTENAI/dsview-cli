@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
+import sysconfig
 import tarfile
+import tempfile
 from pathlib import Path
 
 
@@ -68,10 +72,10 @@ def should_skip_decoder_path(path: Path) -> bool:
 
 
 def should_skip_python_path(path: Path) -> bool:
+    skipped_directory_names = {"__pycache__", "site-packages", "dist-packages"}
     return (
-        any(part == "__pycache__" for part in path.parts)
+        any(part in skipped_directory_names for part in path.parts)
         or path.suffix in {".pyc", ".pyo"}
-        or path.parts[:1] == ("Lib",) and len(path.parts) > 1 and path.parts[1] == "site-packages"
     )
 
 
@@ -104,6 +108,18 @@ def vcpkg_triplet_for_target(target: str) -> str:
     if target.startswith("aarch64-"):
         return "arm64-windows"
     raise ValueError(f"unsupported Windows target: {target}")
+
+
+def is_windows_target(target: str) -> bool:
+    return "windows" in target
+
+
+def is_darwin_target(target: str) -> bool:
+    return "darwin" in target or "macos" in target
+
+
+def python_version_dir() -> str:
+    return f"python{sys.version_info.major}.{sys.version_info.minor}"
 
 
 def windows_runtime_dependency_dir(target: str) -> Path:
@@ -171,6 +187,203 @@ def add_windows_python_runtime(archive: tarfile.TarFile, archive_root: str) -> N
         add_file(archive, stdlib_zip, f"{archive_root}/python/{stdlib_zip.name}")
 
 
+def is_python_dependency(path_or_name: str) -> bool:
+    name = Path(path_or_name).name.lower()
+    return name == "python" or name.startswith("libpython")
+
+
+def command_stdout(command: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
+def linux_linked_python_dependencies(library: Path) -> list[tuple[str, str]]:
+    dependencies: list[tuple[str, str]] = []
+    output = command_stdout(["readelf", "-d", str(library)])
+    for line in output.splitlines():
+        if "Shared library:" not in line or "[" not in line or "]" not in line:
+            continue
+        dependency = line.split("[", 1)[1].split("]", 1)[0]
+        if is_python_dependency(dependency):
+            dependencies.append((dependency, Path(dependency).name))
+    return dependencies
+
+
+def macos_linked_python_dependencies(library: Path) -> list[tuple[str, str]]:
+    dependencies: list[tuple[str, str]] = []
+    output = command_stdout(["otool", "-L", str(library)])
+    for line in output.splitlines()[1:]:
+        dependency = line.strip().split(" ", 1)[0]
+        if is_python_dependency(dependency):
+            dependencies.append((dependency, Path(dependency).name))
+    return dependencies
+
+
+def linked_python_dependencies(target: str, library: Path) -> list[tuple[str, str]]:
+    if is_darwin_target(target):
+        return macos_linked_python_dependencies(library)
+    if is_windows_target(target):
+        return []
+    return linux_linked_python_dependencies(library)
+
+
+def python_library_search_dirs() -> list[Path]:
+    candidates: list[Path] = []
+
+    def add(path: Path | None) -> None:
+        if path and path.is_dir() and path not in candidates:
+            candidates.append(path)
+
+    for variable in ("LIBDIR", "LIBPL"):
+        value = sysconfig.get_config_var(variable)
+        if value:
+            add(Path(value))
+
+    base_exec_prefix = Path(sys.base_exec_prefix)
+    add(base_exec_prefix / "lib")
+
+    framework = sysconfig.get_config_var("PYTHONFRAMEWORK")
+    framework_prefix = sysconfig.get_config_var("PYTHONFRAMEWORKPREFIX")
+    framework_version = sysconfig.get_config_var("VERSION") or (
+        f"{sys.version_info.major}.{sys.version_info.minor}"
+    )
+    if framework and framework_prefix:
+        framework_root = Path(framework_prefix) / f"{framework}.framework" / "Versions" / framework_version
+        add(framework_root)
+        add(framework_root / "lib")
+
+    return candidates
+
+
+def python_shared_library_candidates(
+    target: str, decode_runtime: Path
+) -> list[tuple[Path, str]]:
+    entries: dict[str, Path] = {}
+
+    def add_candidate(path: Path, archive_name: str | None = None) -> None:
+        if not path.is_file():
+            return
+        destination_name = archive_name or path.name
+        if destination_name.endswith(".a"):
+            return
+        # Store the real library bytes for each soname/install-name alias the
+        # loader may request. This avoids absolute or broken symlinks in tarballs.
+        entries[destination_name] = path.resolve()
+
+    linked_dependencies = linked_python_dependencies(target, decode_runtime)
+    for dependency, dependency_name in linked_dependencies:
+        dependency_path = Path(dependency)
+        if dependency_path.is_absolute():
+            add_candidate(dependency_path, dependency_name)
+
+    expected_names = {
+        value
+        for value in (
+            sysconfig.get_config_var("INSTSONAME"),
+            sysconfig.get_config_var("LDLIBRARY"),
+        )
+        if value
+    }
+    expected_names.update(name for _, name in linked_dependencies)
+
+    for directory in python_library_search_dirs():
+        for name in sorted(expected_names):
+            add_candidate(directory / name, name)
+
+        for pattern in (
+            f"libpython{sys.version_info.major}.{sys.version_info.minor}*.so*",
+            f"libpython{sys.version_info.major}.{sys.version_info.minor}*.dylib*",
+            "Python",
+        ):
+            for path in sorted(directory.glob(pattern)):
+                if is_python_dependency(path.name):
+                    add_candidate(path)
+
+    return sorted((source, name) for name, source in entries.items())
+
+
+def add_unix_python_runtime(
+    archive: tarfile.TarFile,
+    archive_root: str,
+    target: str,
+    decode_runtime: Path,
+) -> None:
+    shared_libraries = python_shared_library_candidates(target, decode_runtime)
+    if not shared_libraries:
+        raise FileNotFoundError(
+            "No Unix Python shared runtime library was found to bundle"
+        )
+
+    required_library_names = {
+        name for _, name in linked_python_dependencies(target, decode_runtime)
+    }
+    bundled_library_names = {archive_name for _, archive_name in shared_libraries}
+    missing_library_names = sorted(required_library_names - bundled_library_names)
+    if missing_library_names:
+        raise FileNotFoundError(
+            "Bundled Python runtime is missing linked libraries: "
+            + ", ".join(missing_library_names)
+        )
+
+    for library, archive_name in shared_libraries:
+        add_file(archive, library, f"{archive_root}/python/lib/{archive_name}")
+
+    stdlib_dir = Path(sysconfig.get_path("stdlib"))
+    ensure_directory(stdlib_dir, "Python stdlib directory")
+    stdlib_destination = f"{archive_root}/python/lib/{python_version_dir()}"
+    add_directory_filtered(archive, stdlib_dir, stdlib_destination, should_skip_python_path)
+
+    platstdlib_value = sysconfig.get_path("platstdlib")
+    if platstdlib_value:
+        platstdlib_dir = Path(platstdlib_value)
+        if (
+            platstdlib_dir.is_dir()
+            and platstdlib_dir.resolve() != stdlib_dir.resolve()
+        ):
+            add_directory_filtered(
+                archive,
+                platstdlib_dir,
+                stdlib_destination,
+                should_skip_python_path,
+            )
+
+
+def prepare_macos_decode_runtime(source: Path, staging_dir: Path) -> Path:
+    staged_runtime = staging_dir / source.name
+    shutil.copy2(source, staged_runtime)
+
+    python_dependencies = macos_linked_python_dependencies(source)
+    if not python_dependencies:
+        return staged_runtime
+
+    install_name_tool = shutil.which("install_name_tool")
+    if not install_name_tool:
+        raise FileNotFoundError(
+            "install_name_tool is required to make macOS Python runtime links bundle-relative"
+        )
+
+    for dependency, dependency_name in python_dependencies:
+        replacement = f"@loader_path/../python/lib/{dependency_name}"
+        if dependency == replacement:
+            continue
+        subprocess.run(
+            [install_name_tool, "-change", dependency, replacement, str(staged_runtime)],
+            check=True,
+        )
+
+    return staged_runtime
+
+
 def main() -> int:
     args = parse_args()
 
@@ -181,7 +394,7 @@ def main() -> int:
     ensure_directory(args.decoder_dir, "Decoder scripts directory")
 
     archive_root = f"dsview-cli-{args.version}-{args.target}"
-    exe_name = "dsview-cli.exe" if "windows" in args.target else "dsview-cli"
+    exe_name = "dsview-cli.exe" if is_windows_target(args.target) else "dsview-cli"
 
     required_resources = [
         "DSLogicPlus.fw",
@@ -191,28 +404,43 @@ def main() -> int:
     ]
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(args.output, "w:gz") as archive:
-        add_file(archive, args.exe, f"{archive_root}/{exe_name}")
-        add_file(archive, args.runtime, f"{archive_root}/runtime/{args.runtime.name}")
-        add_file(
-            archive,
-            args.decode_runtime,
-            f"{archive_root}/decode-runtime/{args.decode_runtime.name}",
-        )
-        add_directory(archive, args.decoder_dir, f"{archive_root}/decoders")
-        if "windows" in args.target:
-            for dependency in windows_dependency_dlls(args.target, args.runtime.name):
-                add_file(
-                    archive,
-                    dependency,
-                    f"{archive_root}/{dependency.name}",
-                )
-            add_windows_python_runtime(archive, archive_root)
+    with tempfile.TemporaryDirectory(prefix="dsview-package-") as staging:
+        decode_runtime = args.decode_runtime
+        if is_darwin_target(args.target):
+            decode_runtime = prepare_macos_decode_runtime(
+                args.decode_runtime,
+                Path(staging),
+            )
 
-        for resource_name in required_resources:
-            resource_path = args.resources / resource_name
-            if resource_path.exists():
-                add_file(archive, resource_path, f"{archive_root}/resources/{resource_name}")
+        with tarfile.open(args.output, "w:gz") as archive:
+            add_file(archive, args.exe, f"{archive_root}/{exe_name}")
+            add_file(archive, args.runtime, f"{archive_root}/runtime/{args.runtime.name}")
+            add_file(
+                archive,
+                decode_runtime,
+                f"{archive_root}/decode-runtime/{args.decode_runtime.name}",
+            )
+            add_directory(archive, args.decoder_dir, f"{archive_root}/decoders")
+            if is_windows_target(args.target):
+                for dependency in windows_dependency_dlls(args.target, args.runtime.name):
+                    add_file(
+                        archive,
+                        dependency,
+                        f"{archive_root}/{dependency.name}",
+                    )
+                add_windows_python_runtime(archive, archive_root)
+            else:
+                add_unix_python_runtime(
+                    archive,
+                    archive_root,
+                    args.target,
+                    args.decode_runtime,
+                )
+
+            for resource_name in required_resources:
+                resource_path = args.resources / resource_name
+                if resource_path.exists():
+                    add_file(archive, resource_path, f"{archive_root}/resources/{resource_name}")
 
     print(f"Bundle created: {args.output}")
     return 0
