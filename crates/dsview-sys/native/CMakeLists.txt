@@ -228,8 +228,8 @@ if(DSVIEW_BUILD_DECODE_RUNTIME)
         )
     elseif(APPLE)
         set_target_properties(dsview_decode_runtime PROPERTIES
-            BUILD_RPATH "@loader_path/../python/lib"
-            INSTALL_RPATH "@loader_path/../python/lib"
+            BUILD_RPATH "@loader_path/../python;@loader_path/../python/lib"
+            INSTALL_RPATH "@loader_path/../python;@loader_path/../python/lib"
         )
     else()
         set_target_properties(dsview_decode_runtime PROPERTIES

@@ -67,6 +67,17 @@ def add_file(archive: tarfile.TarFile, source: Path, destination: str) -> None:
     archive.add(source, arcname=destination, recursive=False)
 
 
+def add_regular_file(archive: tarfile.TarFile, source: Path, destination: str) -> None:
+    resolved = source.resolve()
+    stat = resolved.stat()
+    info = tarfile.TarInfo(destination)
+    info.size = stat.st_size
+    info.mode = stat.st_mode & 0o777
+    info.mtime = stat.st_mtime
+    with resolved.open("rb") as file:
+        archive.addfile(info, file)
+
+
 def should_skip_decoder_path(path: Path) -> bool:
     return any(part == "__pycache__" for part in path.parts) or path.suffix in {".pyc", ".pyo"}
 
@@ -237,6 +248,20 @@ def linked_python_dependencies(target: str, library: Path) -> list[tuple[str, st
     return linux_linked_python_dependencies(library)
 
 
+def macos_python_archive_path(dependency_or_source: str, fallback_name: str) -> str:
+    parts = Path(dependency_or_source).parts
+    for index, part in enumerate(parts):
+        if part.endswith(".framework"):
+            return Path(*parts[index:]).as_posix()
+    return f"lib/{fallback_name}"
+
+
+def python_archive_path(target: str, dependency_or_source: str, fallback_name: str) -> str:
+    if is_darwin_target(target):
+        return macos_python_archive_path(dependency_or_source, fallback_name)
+    return f"lib/{fallback_name}"
+
+
 def python_library_search_dirs() -> list[Path]:
     candidates: list[Path] = []
 
@@ -270,21 +295,24 @@ def python_shared_library_candidates(
 ) -> list[tuple[Path, str]]:
     entries: dict[str, Path] = {}
 
-    def add_candidate(path: Path, archive_name: str | None = None) -> None:
+    def add_candidate(path: Path, archive_path: str | None = None) -> None:
         if not path.is_file():
             return
-        destination_name = archive_name or path.name
-        if destination_name.endswith(".a"):
+        destination_path = archive_path or python_archive_path(target, str(path), path.name)
+        if destination_path.endswith(".a"):
             return
         # Store the real library bytes for each soname/install-name alias the
         # loader may request. This avoids absolute or broken symlinks in tarballs.
-        entries[destination_name] = path.resolve()
+        entries[destination_path] = path.resolve()
 
     linked_dependencies = linked_python_dependencies(target, decode_runtime)
     for dependency, dependency_name in linked_dependencies:
         dependency_path = Path(dependency)
         if dependency_path.is_absolute():
-            add_candidate(dependency_path, dependency_name)
+            add_candidate(
+                dependency_path,
+                python_archive_path(target, dependency, dependency_name),
+            )
 
     expected_names = {
         value
@@ -298,7 +326,10 @@ def python_shared_library_candidates(
 
     for directory in python_library_search_dirs():
         for name in sorted(expected_names):
-            add_candidate(directory / name, name)
+            add_candidate(
+                directory / name,
+                python_archive_path(target, str(directory / name), name),
+            )
 
         for pattern in (
             f"libpython{sys.version_info.major}.{sys.version_info.minor}*.so*",
@@ -309,7 +340,7 @@ def python_shared_library_candidates(
                 if is_python_dependency(path.name):
                     add_candidate(path)
 
-    return sorted((source, name) for name, source in entries.items())
+    return sorted((source, archive_path) for archive_path, source in entries.items())
 
 
 def add_unix_python_runtime(
@@ -324,19 +355,20 @@ def add_unix_python_runtime(
             "No Unix Python shared runtime library was found to bundle"
         )
 
-    required_library_names = {
-        name for _, name in linked_python_dependencies(target, decode_runtime)
+    required_library_paths = {
+        python_archive_path(target, dependency, name)
+        for dependency, name in linked_python_dependencies(target, decode_runtime)
     }
-    bundled_library_names = {archive_name for _, archive_name in shared_libraries}
-    missing_library_names = sorted(required_library_names - bundled_library_names)
-    if missing_library_names:
+    bundled_library_paths = {archive_path for _, archive_path in shared_libraries}
+    missing_library_paths = sorted(required_library_paths - bundled_library_paths)
+    if missing_library_paths:
         raise FileNotFoundError(
             "Bundled Python runtime is missing linked libraries: "
-            + ", ".join(missing_library_names)
+            + ", ".join(missing_library_paths)
         )
 
-    for library, archive_name in shared_libraries:
-        add_file(archive, library, f"{archive_root}/python/lib/{archive_name}")
+    for library, archive_path in shared_libraries:
+        add_regular_file(archive, library, f"{archive_root}/python/{archive_path}")
 
     stdlib_dir = Path(sysconfig.get_path("stdlib"))
     ensure_directory(stdlib_dir, "Python stdlib directory")
@@ -373,7 +405,8 @@ def prepare_macos_decode_runtime(source: Path, staging_dir: Path) -> Path:
         )
 
     for dependency, dependency_name in python_dependencies:
-        replacement = f"@loader_path/../python/lib/{dependency_name}"
+        archive_path = macos_python_archive_path(dependency, dependency_name)
+        replacement = f"@loader_path/../python/{archive_path}"
         if dependency == replacement:
             continue
         subprocess.run(

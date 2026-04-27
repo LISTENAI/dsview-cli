@@ -65,6 +65,14 @@ def is_python_dependency(path_or_name: str) -> bool:
     return name == "python" or name.startswith("libpython")
 
 
+def macos_python_archive_path(dependency: str) -> str:
+    dependency_path = Path(dependency)
+    for index, part in enumerate(dependency_path.parts):
+        if part.endswith(".framework"):
+            return Path(*dependency_path.parts[index:]).as_posix()
+    return f"lib/{dependency_path.name}"
+
+
 def require_exists(path: Path, label: str) -> None:
     if not path.exists():
         raise FileNotFoundError(f"{label} not found: {path}")
@@ -140,9 +148,10 @@ def validate_unix_python_runtime(
         )
 
     if is_darwin_target(target):
-        if not (python_lib / "Python").is_file() and not any(
-            python_lib.glob("libpython*.dylib*")
-        ):
+        framework_binaries = list(
+            python_home.glob("*.framework/Versions/*/Python")
+        )
+        if not framework_binaries and not any(python_lib.glob("libpython*.dylib*")):
             raise FileNotFoundError("Bundled macOS Python dynamic library was not found")
         validate_macos_python_links(bundle_root, decode_runtime)
     else:
@@ -185,16 +194,16 @@ def validate_macos_python_links(bundle_root: Path, decode_runtime: Path) -> None
         raise RuntimeError("Decode runtime does not declare a Python dynamic library dependency")
 
     rpaths = macos_rpaths(decode_runtime)
-    if "@loader_path/../python/lib" not in rpaths:
+    if "@loader_path/../python" not in rpaths and "@loader_path/../python/lib" not in rpaths:
         raise RuntimeError(
-            "macOS decode runtime LC_RPATH must include @loader_path/../python/lib"
+            "macOS decode runtime LC_RPATH must include a bundled Python path"
         )
 
-    python_lib = bundle_root / "python" / "lib"
+    python_home = bundle_root / "python"
     for dependency in python_dependencies:
-        dependency_name = Path(dependency).name
-        require_exists(python_lib / dependency_name, "Bundled macOS Python dependency")
-        if dependency.startswith("@loader_path/../python/lib/"):
+        archive_path = macos_python_archive_path(dependency)
+        require_exists(python_home / archive_path, "Bundled macOS Python dependency")
+        if dependency == f"@loader_path/../python/{archive_path}":
             continue
         if dependency.startswith("@rpath/"):
             continue
