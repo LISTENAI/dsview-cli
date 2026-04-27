@@ -226,6 +226,16 @@ if(DSVIEW_BUILD_DECODE_RUNTIME)
         set_target_properties(dsview_decode_runtime PROPERTIES
             LINK_FLAGS "/DEF:${DSVIEW_NATIVE_WINDOWS_ROOT}/dsview_decode_runtime.def"
         )
+    elseif(APPLE)
+        set_target_properties(dsview_decode_runtime PROPERTIES
+            BUILD_RPATH "@loader_path/../python;@loader_path/../python/lib"
+            INSTALL_RPATH "@loader_path/../python;@loader_path/../python/lib"
+        )
+    else()
+        set_target_properties(dsview_decode_runtime PROPERTIES
+            BUILD_RPATH "$ORIGIN/../python/lib"
+            INSTALL_RPATH "$ORIGIN/../python/lib"
+        )
     endif()
 
     set_target_properties(dsview_decode_runtime PROPERTIES OUTPUT_NAME dsview_decode_runtime)

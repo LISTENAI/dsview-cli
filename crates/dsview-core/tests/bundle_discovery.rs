@@ -2,8 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dsview_core::RuntimeDiscoveryPaths;
-use dsview_sys::{runtime_library_name, source_runtime_library_path};
+use dsview_core::{DecodeDiscoveryPaths, RuntimeDiscoveryPaths};
+use dsview_sys::{
+    decode_runtime_library_name, runtime_library_name, source_runtime_library_path,
+};
 
 fn temp_dir(name: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -20,6 +22,11 @@ fn write_valid_resources(dir: &std::path::Path) {
     fs::write(dir.join("DSLogicPlus.fw"), b"fw").unwrap();
     fs::write(dir.join("DSLogicPlus.bin"), b"bin").unwrap();
     fs::write(dir.join("DSLogicPlus-pgl12.bin"), b"bin").unwrap();
+}
+
+fn write_valid_decoder_dir(dir: &std::path::Path) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(dir.join("spi.py"), b"# decoder placeholder").unwrap();
 }
 
 #[test]
@@ -175,6 +182,36 @@ fn bundle_layout_matches_packaging_contract() {
     assert!(resource_dir.join("DSLogicPlus.fw").is_file());
     assert!(resource_dir.join("DSLogicPlus.bin").is_file());
     assert!(resource_dir.join("DSLogicPlus-pgl12.bin").is_file());
+}
+
+#[test]
+fn decode_bundle_discovery_uses_bundled_python_home_on_all_platforms() {
+    let exe_dir = temp_dir("decode-python-home");
+    let decode_runtime_dir = exe_dir.join("decode-runtime");
+    let decoder_dir = exe_dir.join("decoders");
+    let python_home = exe_dir.join("python");
+    fs::create_dir_all(&decode_runtime_dir).unwrap();
+    fs::create_dir_all(&python_home).unwrap();
+    fs::write(
+        decode_runtime_dir.join(decode_runtime_library_name()),
+        b"decode runtime",
+    )
+    .unwrap();
+    write_valid_decoder_dir(&decoder_dir);
+
+    let paths = DecodeDiscoveryPaths::from_executable_dir(
+        &exe_dir,
+        None::<&std::path::Path>,
+        None::<&std::path::Path>,
+    )
+    .expect("decode bundle-relative discovery should succeed");
+
+    assert_eq!(
+        paths.runtime_library,
+        decode_runtime_dir.join(decode_runtime_library_name())
+    );
+    assert_eq!(paths.decoder_dir, decoder_dir);
+    assert_eq!(paths.python_home, Some(python_home));
 }
 
 #[test]

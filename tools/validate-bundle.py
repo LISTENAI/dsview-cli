@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -51,19 +52,228 @@ def expected_windows_runtime_dependencies() -> list[str]:
     ]
 
 
+def is_windows_target(target: str) -> bool:
+    return "windows" in target
+
+
+def is_darwin_target(target: str) -> bool:
+    return "darwin" in target or "macos" in target
+
+
+def is_python_dependency(path_or_name: str) -> bool:
+    name = Path(path_or_name).name.lower()
+    return name == "python" or name.startswith("libpython")
+
+
+def macos_python_archive_path(dependency: str) -> str:
+    dependency_path = Path(dependency)
+    for index, part in enumerate(dependency_path.parts):
+        if part.endswith(".framework"):
+            return Path(*dependency_path.parts[index:]).as_posix()
+    return f"lib/{dependency_path.name}"
+
+
 def require_exists(path: Path, label: str) -> None:
     if not path.exists():
         raise FileNotFoundError(f"{label} not found: {path}")
 
 
+def command_stdout(command: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(f"required validation command not found: {command[0]}") from error
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"validation command failed with exit code {result.returncode}: {' '.join(command)}"
+        )
+    return result.stdout
+
+
+def linux_dynamic_values(library: Path) -> dict[str, list[str]]:
+    values = {"NEEDED": [], "RPATH": [], "RUNPATH": []}
+    output = command_stdout(["readelf", "-d", str(library)])
+    for line in output.splitlines():
+        for tag in values:
+            if f"({tag})" in line and "[" in line and "]" in line:
+                values[tag].append(line.split("[", 1)[1].split("]", 1)[0])
+    return values
+
+
+def macos_linked_libraries(library: Path) -> list[str]:
+    output = command_stdout(["otool", "-L", str(library)])
+    return [
+        line.strip().split(" ", 1)[0]
+        for line in output.splitlines()[1:]
+        if line.strip()
+    ]
+
+
+def macos_rpaths(library: Path) -> list[str]:
+    output = command_stdout(["otool", "-l", str(library)])
+    rpaths: list[str] = []
+    in_rpath_command = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped == "cmd LC_RPATH":
+            in_rpath_command = True
+            continue
+        if in_rpath_command and stripped.startswith("path "):
+            rpaths.append(stripped.split(" ", 2)[1])
+            in_rpath_command = False
+    return rpaths
+
+
+def validate_unix_python_runtime(
+    bundle_root: Path,
+    target: str,
+    decode_runtime: Path,
+) -> None:
+    python_home = bundle_root / "python"
+    python_lib = python_home / "lib"
+    require_exists(python_home, "Bundled Python runtime directory")
+    require_exists(python_lib, "Bundled Python lib directory")
+
+    stdlib_dirs = [
+        path for path in python_lib.glob("python*") if path.is_dir()
+    ]
+    if not any((path / "encodings").is_dir() for path in stdlib_dirs):
+        raise FileNotFoundError(
+            "Bundled Python stdlib is missing encodings/ under python/lib/pythonX.Y"
+        )
+    validate_python_stdlib_is_slim(stdlib_dirs)
+
+    if is_darwin_target(target):
+        framework_binaries = list(
+            python_home.glob("*.framework/Versions/*/Python")
+        )
+        if not framework_binaries and not any(python_lib.glob("libpython*.dylib*")):
+            raise FileNotFoundError("Bundled macOS Python dynamic library was not found")
+        validate_macos_python_links(bundle_root, decode_runtime)
+        validate_macos_python_runtime_is_slim(python_home)
+        validate_macos_python_extension_links(python_home)
+    else:
+        if not any(python_lib.glob("libpython*.so*")):
+            raise FileNotFoundError("Bundled Linux libpython shared library was not found")
+        validate_linux_python_links(bundle_root, decode_runtime)
+
+
+def validate_python_stdlib_is_slim(stdlib_dirs: list[Path]) -> None:
+    excluded_directories = ("test", "ensurepip", "idlelib", "tkinter", "turtledemo")
+    for stdlib_dir in stdlib_dirs:
+        for directory_name in excluded_directories:
+            if (stdlib_dir / directory_name).exists():
+                raise RuntimeError(
+                    f"Bundled Python stdlib includes unnecessary {directory_name}/ directory"
+                )
+
+
+def validate_linux_python_links(bundle_root: Path, decode_runtime: Path) -> None:
+    dynamic_values = linux_dynamic_values(decode_runtime)
+    python_dependencies = [
+        dependency
+        for dependency in dynamic_values["NEEDED"]
+        if is_python_dependency(dependency)
+    ]
+    if not python_dependencies:
+        raise RuntimeError("Decode runtime does not declare a libpython dependency")
+
+    python_lib = bundle_root / "python" / "lib"
+    for dependency in python_dependencies:
+        require_exists(
+            python_lib / Path(dependency).name,
+            "Bundled Linux libpython dependency",
+        )
+
+    runpath = ":".join(dynamic_values["RPATH"] + dynamic_values["RUNPATH"])
+    if "$ORIGIN/../python/lib" not in runpath:
+        raise RuntimeError(
+            "Linux decode runtime RUNPATH must include $ORIGIN/../python/lib"
+        )
+
+
+def validate_macos_python_links(bundle_root: Path, decode_runtime: Path) -> None:
+    python_dependencies = [
+        dependency
+        for dependency in macos_linked_libraries(decode_runtime)
+        if is_python_dependency(dependency)
+    ]
+    if not python_dependencies:
+        raise RuntimeError("Decode runtime does not declare a Python dynamic library dependency")
+
+    rpaths = macos_rpaths(decode_runtime)
+    if "@loader_path/../python" not in rpaths and "@loader_path/../python/lib" not in rpaths:
+        raise RuntimeError(
+            "macOS decode runtime LC_RPATH must include a bundled Python path"
+        )
+
+    python_home = bundle_root / "python"
+    for dependency in python_dependencies:
+        archive_path = macos_python_archive_path(dependency)
+        require_exists(python_home / archive_path, "Bundled macOS Python dependency")
+        if dependency == f"@loader_path/../python/{archive_path}":
+            continue
+        if dependency.startswith("@rpath/"):
+            continue
+        raise RuntimeError(
+            f"macOS Python dependency is not bundle-relative: {dependency}"
+        )
+
+
+def validate_macos_python_runtime_is_slim(python_home: Path) -> None:
+    for framework in python_home.glob("*.framework"):
+        versions_dir = framework / "Versions"
+        require_exists(versions_dir, "Bundled macOS Python framework Versions directory")
+        version_dirs = [
+            path
+            for path in versions_dir.iterdir()
+            if path.is_dir() and path.name != "Current"
+        ]
+        if len(version_dirs) != 1:
+            raise RuntimeError(
+                f"Bundled macOS Python framework must include exactly one version, found {len(version_dirs)}"
+            )
+
+        version_dir = version_dirs[0]
+        if (version_dir / "Resources" / "English.lproj" / "Documentation").exists():
+            raise RuntimeError("Bundled macOS Python framework includes documentation")
+        if any((version_dir / "lib").glob("python*")):
+            raise RuntimeError(
+                "Bundled macOS Python framework duplicates the stdlib under Versions/*/lib"
+            )
+
+
+def validate_macos_python_extension_links(python_home: Path) -> None:
+    libraries = [
+        *python_home.glob("lib/python*/lib-dynload/*.so"),
+        *python_home.glob("*.framework/Versions/*/lib/*.dylib"),
+        *python_home.glob("*.framework/Versions/*/Python"),
+    ]
+    for library in libraries:
+        for dependency in macos_linked_libraries(library):
+            if dependency.startswith("/Library/Frameworks/Python.framework/"):
+                raise RuntimeError(
+                    f"Bundled macOS Python library has non-relocatable dependency: {library.name} -> {dependency}"
+                )
+
+
 def run_smoke_test(
     exe_path: Path, args: list[str], description: str
 ) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
     result = subprocess.run(
         [str(exe_path), *args],
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         if result.stdout:
@@ -96,10 +306,10 @@ def main() -> int:
         if not bundle_root.is_dir():
             raise RuntimeError("Archive root is not a directory")
 
-        exe_name = "dsview-cli.exe" if "windows" in args.target else "dsview-cli"
+        exe_name = "dsview-cli.exe" if is_windows_target(args.target) else "dsview-cli"
         exe_path = bundle_root / exe_name
         require_exists(exe_path, "Executable")
-        if "windows" in args.target:
+        if is_windows_target(args.target):
             for dependency in expected_windows_runtime_dependencies():
                 require_exists(bundle_root / dependency, "Windows runtime dependency")
             if not any(bundle_root.glob("python*.dll")):
@@ -124,6 +334,12 @@ def main() -> int:
             decode_runtime_dir / decode_runtime_library_name(args.target),
             "Decode runtime library",
         )
+        if not is_windows_target(args.target):
+            validate_unix_python_runtime(
+                bundle_root,
+                args.target,
+                decode_runtime_dir / decode_runtime_library_name(args.target),
+            )
 
         decoders_dir = bundle_root / "decoders"
         if not decoders_dir.is_dir():

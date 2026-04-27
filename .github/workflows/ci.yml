@@ -59,7 +59,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Set up Python
+      - name: Set up Python (Unix)
+        if: ${{ !contains(matrix.target, 'windows') }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Set up Python (Windows)
         if: contains(matrix.target, 'windows')
         uses: actions/setup-python@v6
         with:
