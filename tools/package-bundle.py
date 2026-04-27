@@ -284,6 +284,11 @@ def require_tool(name: str) -> str:
     return tool
 
 
+def codesign_macos_file(path: Path) -> None:
+    codesign = require_tool("codesign")
+    subprocess.run([codesign, "--force", "--sign", "-", str(path)], check=True)
+
+
 def linux_linked_python_dependencies(library: Path) -> list[tuple[str, str]]:
     dependencies: list[tuple[str, str]] = []
     output = command_stdout(["readelf", "-d", str(library)])
@@ -496,12 +501,19 @@ def rewrite_macos_framework_references(
     framework_archive_version_root: PurePosixPath,
 ) -> None:
     install_name_tool = require_tool("install_name_tool")
+    changed = False
 
     if file.name == "Python" or file.suffix == ".dylib":
         install_name = macos_loader_path_reference(archive_path, archive_path)
         subprocess.run([install_name_tool, "-id", install_name, str(file)], check=True)
+        changed = True
 
+    seen_dependencies: set[str] = set()
     for dependency in macos_linked_libraries(file):
+        if dependency in seen_dependencies:
+            continue
+        seen_dependencies.add(dependency)
+
         replacement = macos_framework_dependency_replacement(
             dependency,
             archive_path,
@@ -515,6 +527,10 @@ def rewrite_macos_framework_references(
             [install_name_tool, "-change", dependency, replacement, str(file)],
             check=True,
         )
+        changed = True
+
+    if changed:
+        codesign_macos_file(file)
 
 
 def macos_framework_support_libraries(version_root: Path) -> list[Path]:
@@ -708,13 +724,15 @@ def prepare_macos_decode_runtime(source: Path, staging_dir: Path) -> Path:
     if not python_dependencies:
         return staged_runtime
 
-    install_name_tool = shutil.which("install_name_tool")
-    if not install_name_tool:
-        raise FileNotFoundError(
-            "install_name_tool is required to make macOS Python runtime links bundle-relative"
-        )
+    install_name_tool = require_tool("install_name_tool")
 
+    changed = False
+    seen_dependencies: set[str] = set()
     for dependency, dependency_name in python_dependencies:
+        if dependency in seen_dependencies:
+            continue
+        seen_dependencies.add(dependency)
+
         archive_path = macos_python_archive_path(dependency, dependency_name)
         replacement = f"@loader_path/../python/{archive_path}"
         if dependency == replacement:
@@ -723,6 +741,10 @@ def prepare_macos_decode_runtime(source: Path, staging_dir: Path) -> Path:
             [install_name_tool, "-change", dependency, replacement, str(staged_runtime)],
             check=True,
         )
+        changed = True
+
+    if changed:
+        codesign_macos_file(staged_runtime)
 
     return staged_runtime
 
