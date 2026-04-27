@@ -1,41 +1,78 @@
-# DSView CLI
+<h1 align="center">DSView CLI</h1>
 
-[![CI](https://github.com/LISTENAI/dsview-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/LISTENAI/dsview-cli/actions/workflows/ci.yml)
-[![Latest Release](https://img.shields.io/github/v/release/LISTENAI/dsview-cli)](https://github.com/LISTENAI/dsview-cli/releases/latest)
+<p align="center">Scriptable DSLogic Plus capture and protocol decoding without the DSView GUI.</p>
 
-Command-line tool for using DSLogic Plus devices without the DSView GUI. Capture logic analyzer data and export machine-readable waveform files for downstream analysis.
+<p align="center">
+  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-## Quick Start
+<p align="center">
+  <a href="https://github.com/LISTENAI/dsview-cli/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/LISTENAI/dsview-cli/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/LISTENAI/dsview-cli/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/LISTENAI/dsview-cli"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/LISTENAI/dsview-cli"></a>
+</p>
 
-### One-line install (macOS/Linux)
+DSView CLI is a command-line tool for DSLogic Plus devices. It brings the DSView/libsigrok device stack into a scriptable workflow for automated capture, VCD export, and protocol decoder inspection or offline decoding.
 
-Install the latest published release bundle into `~/.local/opt/dsview-cli` and add a launcher in `~/.local/bin`:
+## Features
+
+- Capture finite logic analyzer sessions from DSLogic Plus devices.
+- Export VCD waveform files plus JSON metadata for downstream tooling.
+- Inspect DSView protocol decoders from the command line.
+- Run offline protocol decoding from JSON logic sample input.
+- Ship as self-contained release bundles with native runtimes, firmware resources, decoder scripts, and a bundled Python runtime.
+- Support JSON output by default for automation, with text output for interactive shell use.
+
+## Platform Support
+
+| Platform | Architectures | Release bundle | One-line installer |
+| --- | --- | --- | --- |
+| Linux | x86_64, ARM64 | Yes | Yes |
+| macOS | Intel, Apple Silicon | Yes | Yes |
+| Windows | x86_64, ARM64 | Yes | Yes |
+
+Current device support is focused on **DSLogic Plus**.
+
+## Installation
+
+### macOS and Linux
+
+Install the latest published release bundle into `~/.local/opt/dsview-cli` and create a launcher in `~/.local/bin`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh
 ```
 
-Install a specific version instead:
+Install a specific release tag:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.2.1
 ```
 
-The installer keeps the release bundle intact so the executable can still find its sibling `runtime/` and `resources/` directories.
+Useful installer options:
 
-Supported installer targets:
-- Linux x86_64, ARM64
-- macOS x86_64 (Intel), ARM64 (Apple Silicon)
+```bash
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --prefix ~/.local/opt/dsview-cli --bin-dir ~/.local/bin --version v1.2.1
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --dry-run
+```
 
-### One-line install (Windows)
+The installer keeps the release bundle intact and smoke-tests:
 
-Install the latest published release bundle into `%LOCALAPPDATA%\Programs\dsview-cli`, add a launcher in `%LOCALAPPDATA%\Programs\dsview-cli\bin`, and append that launcher directory to your user `PATH`:
+```bash
+dsview-cli --version
+dsview-cli devices list --help
+dsview-cli decode list --format json
+```
+
+### Windows
+
+Install the latest published release bundle into `%LOCALAPPDATA%\Programs\dsview-cli`, create a launcher, and add the launcher directory to your user `PATH`:
 
 ```powershell
 irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.ps1 | iex
 ```
 
-Install a specific version instead:
+Install a specific release tag:
 
 ```powershell
 $script = Join-Path $env:TEMP "dsview-cli-install.ps1"
@@ -43,40 +80,51 @@ irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scri
 powershell -ExecutionPolicy Bypass -File $script -Version v1.2.1
 ```
 
-The Windows installer keeps the release bundle intact, adds the bundled DLL directory to the generated launcher, appends the launcher directory to your user `PATH`, and smoke-tests `dsview-cli --version` plus `devices list --help` after install. Restart your shell after installation so the updated `PATH` is visible.
+Restart your shell after installation so the updated `PATH` is visible.
 
-Supported Windows installer targets:
-- Windows x86_64
-- Windows ARM64
+### Manual Download
 
-### Build from source
+Download the `.tar.gz` bundle for your target from GitHub Releases, verify it with the release checksum file, and extract it:
 
 ```bash
-# Clone with submodules
-git clone --recursive https://github.com/LISTENAI/dsview-cli.git
-cd dsview-cli
-
-# Build release binary
-cargo build --release
-
-# The CLI and bundled runtime are now in target/release/
+VERSION=v1.2.1
+TARGET=x86_64-unknown-linux-gnu
+curl -LO "https://github.com/LISTENAI/dsview-cli/releases/download/$VERSION/dsview-cli-$VERSION-$TARGET.tar.gz"
+curl -LO "https://github.com/LISTENAI/dsview-cli/releases/download/$VERSION/dsview-cli-$VERSION-SHA256SUMS.txt"
+sha256sum --check --ignore-missing "dsview-cli-$VERSION-SHA256SUMS.txt"
+tar -xzf "dsview-cli-$VERSION-$TARGET.tar.gz"
 ```
 
-### List connected devices
+If `sha256sum` is not available, use `shasum -a 256` and compare the archive hash with the matching checksum entry.
+
+Run `dsview-cli` from the extracted bundle root or put a wrapper script on your `PATH`. Keep the extracted directory together. Do not copy only the executable into another directory; the CLI discovers runtimes, decoder scripts, Python, and firmware resources relative to the executable.
+
+## Quick Start
+
+### List Devices
 
 ```bash
 dsview-cli devices list --format text
 ```
 
 Example output:
-```
+
+```text
 Device 1 (handle: 1)
   Model: DSLogic Plus
   ID: dslogic-plus
   Native: DSLogic Plus [0]
 ```
 
-### Capture waveform data
+### Inspect Capture Options
+
+```bash
+dsview-cli devices options --handle 1 --format text
+```
+
+Use this before capture to discover valid tokens for operation mode, stop option, channel mode, threshold, and filters.
+
+### Capture a Waveform
 
 ```bash
 dsview-cli capture \
@@ -87,69 +135,217 @@ dsview-cli capture \
   --output capture.vcd
 ```
 
-This captures 2048 samples at 100 MHz from channels 0-3 and exports to `capture.vcd` (Value Change Dump format) with a JSON metadata sidecar at `capture.json`.
+This captures 2048 samples at 100 MHz from channels 0-3 and writes:
 
-## How It Works
+- `capture.vcd` - waveform data in Value Change Dump format.
+- `capture.json` - metadata sidecar with capture settings, completion state, and artifact paths.
 
-### Bundled Runtime and Resources
-
-The CLI uses a **repository-built runtime** model:
-
-- **During development**: `cargo run` automatically uses the runtime built from the `DSView/` submodule
-- **In release bundles**: The CLI, runtime library, and DSLogic Plus resources are packaged together
-- **Resource discovery**: The CLI finds bundled resources relative to the executable location
-
-Release bundle structure:
-```
-dsview-cli-v1.2.1-x86_64-unknown-linux-gnu/
-├── dsview-cli                    # CLI executable
-├── runtime/
-│   └── libdsview_runtime.so      # Platform-specific runtime (.so/.dylib/.dll)
-└── resources/
-    ├── DSLogicPlus.fw            # Firmware
-    ├── DSLogic.fw                # Firmware fallback
-    ├── DSLogicPlus.bin           # Bitstream
-    └── DSLogicPlus-pgl12.bin     # Bitstream
-```
-
-### Resource Override
-
-Use `--resource-dir` to point to a different resource directory:
+Optional capture overrides use the same tokens reported by `devices options`:
 
 ```bash
-dsview-cli devices list --resource-dir /path/to/custom/resources
+dsview-cli capture \
+  --handle 1 \
+  --operation-mode buffer \
+  --sample-rate-hz 100000000 \
+  --sample-limit 2048 \
+  --channels 0,1 \
+  --output capture.vcd
 ```
 
-This is the only resource-related flag. The CLI no longer exposes runtime library selection.
-
-## Supported Devices
-
-**Current support**: DSLogic Plus only
-
-The v1.0 milestone validates the capture-and-export workflow for DSLogic Plus. Future releases may add support for other DSLogic family devices.
-
-## Platform Support
-
-Source builds are supported for:
-
-- **Linux**: x86_64, ARM64
-- **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
-- **Windows**: x86_64, ARM64
-
-Published release bundles and the one-line installer currently target:
-
-- **Linux**: x86_64, ARM64
-- **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
-- **Windows**: x86_64, ARM64
-
-Windows ARM64 GitHub-hosted runners currently use the `windows-11-arm` label (public preview in GitHub Actions as of April 2026), so CI coverage for that target may evolve with runner image updates.
-
-## Build Prerequisites
-
-### Linux (Ubuntu/Debian)
+### List Protocol Decoders
 
 ```bash
-sudo apt-get install \
+dsview-cli decode list --format text
+```
+
+Inspect one decoder to see its channels, options, annotations, and stack compatibility:
+
+```bash
+dsview-cli decode inspect i2c --format json
+```
+
+### Validate and Run Offline Decoding
+
+Create a decoder config:
+
+```json
+{
+  "version": 1,
+  "decoder": {
+    "id": "i2c",
+    "channels": {
+      "scl": 0,
+      "sda": 1
+    },
+    "options": {}
+  },
+  "stack": []
+}
+```
+
+Validate it against the bundled decoder registry:
+
+```bash
+dsview-cli decode validate --config decode.json --format text
+```
+
+Create a logic sample input. This is the low-level decode input format, not the VCD file or capture metadata sidecar:
+
+```json
+{
+  "samplerate_hz": 100000000,
+  "format": "split_logic",
+  "sample_bytes": [3, 1, 3, 2, 3],
+  "unitsize": 1
+}
+```
+
+Run offline decoding from the config and sample input:
+
+```bash
+dsview-cli decode run \
+  --config decode.json \
+  --input logic-input.json \
+  --output decode-report.json \
+  --format json
+```
+
+The offline decode input uses `samplerate_hz`, `format`, `sample_bytes`, `unitsize`, and optional `logic_packet_lengths`. `sample_bytes` is a JSON byte array where each byte is one packed logic sample for `split_logic` inputs. Use `decode inspect` to confirm the channel IDs and option names expected by a decoder.
+
+## Command Reference
+
+### `devices list`
+
+List connected DSLogic Plus devices.
+
+```bash
+dsview-cli devices list [--format json|text] [--resource-dir PATH]
+```
+
+### `devices open`
+
+Open a device by handle and verify initialization.
+
+```bash
+dsview-cli devices open --handle HANDLE [--format json|text] [--resource-dir PATH]
+```
+
+### `devices options`
+
+Read capture option capabilities from a device.
+
+```bash
+dsview-cli devices options --handle HANDLE [--format json|text] [--resource-dir PATH]
+```
+
+### `capture`
+
+Run a bounded capture and export a VCD file.
+
+```bash
+dsview-cli capture \
+  --handle HANDLE \
+  --sample-rate-hz HZ \
+  --sample-limit SAMPLES \
+  --channels IDX[,IDX...] \
+  --output PATH.vcd \
+  [--metadata-output PATH.json] \
+  [--operation-mode TOKEN] \
+  [--stop-option TOKEN] \
+  [--channel-mode TOKEN] \
+  [--threshold-volts VOLTS] \
+  [--filter TOKEN] \
+  [--wait-timeout-ms MS] \
+  [--poll-interval-ms MS] \
+  [--format json|text] \
+  [--resource-dir PATH]
+```
+
+### `decode list`
+
+List bundled protocol decoders.
+
+```bash
+dsview-cli decode list [--format json|text] [--decode-runtime PATH] [--decoder-dir PATH]
+```
+
+### `decode inspect`
+
+Inspect one decoder descriptor.
+
+```bash
+dsview-cli decode inspect DECODER_ID [--format json|text] [--decode-runtime PATH] [--decoder-dir PATH]
+```
+
+### `decode validate`
+
+Validate a JSON decode config without running a decode session.
+
+```bash
+dsview-cli decode validate --config PATH [--format json|text] [--decode-runtime PATH] [--decoder-dir PATH]
+```
+
+### `decode run`
+
+Run an offline decode session and optionally write the canonical report to a file.
+
+```bash
+dsview-cli decode run \
+  --config PATH \
+  --input PATH \
+  [--output PATH] \
+  [--format json|text] \
+  [--decode-runtime PATH] \
+  [--decoder-dir PATH]
+```
+
+## Release Bundle Layout
+
+Release archives are relocatable as long as the extracted directory remains intact:
+
+```text
+dsview-cli-<version>-<target>/
+|-- dsview-cli[.exe]
+|-- runtime/
+|   `-- libdsview_runtime.so | libdsview_runtime.dylib | dsview_runtime.dll
+|-- decode-runtime/
+|   `-- libdsview_decode_runtime.so | libdsview_decode_runtime.dylib | dsview_decode_runtime.dll
+|-- decoders/
+|   `-- DSView protocol decoder scripts
+|-- python/
+|   `-- bundled Python runtime and standard library used by protocol decoding
+|-- resources/
+|   |-- DSLogicPlus.fw
+|   |-- DSLogic.fw
+|   |-- DSLogicPlus.bin
+|   `-- DSLogicPlus-pgl12.bin
+`-- *.dll, python*.dll, vcruntime*.dll on Windows when needed
+```
+
+The bundled Python runtime is intentionally slimmed for redistribution. Test packages, `ensurepip`, GUI modules such as `tkinter`, and other unnecessary files are omitted.
+
+Platform notes:
+
+- Linux bundles include the linked `libpython*.so*` under `python/lib` and set the decode runtime search path to use it.
+- macOS bundles include the required Python framework or dylib content under `python/`, rewrite Python links to bundle-relative paths, and ad-hoc sign modified runtime files.
+- Windows bundles include Python DLLs at the bundle root and Python library content under `python/`.
+
+## Build From Source
+
+Clone with submodules:
+
+```bash
+git clone --recursive https://github.com/LISTENAI/dsview-cli.git
+cd dsview-cli
+```
+
+Install native prerequisites.
+
+Linux (Ubuntu/Debian):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
   build-essential \
   cmake \
   pkg-config \
@@ -158,144 +354,85 @@ sudo apt-get install \
   libfftw3-dev
 ```
 
-If `devices list` cannot see your hardware as a non-root user, install the bundled udev rule and replug the device:
-
-```bash
-sudo cp DSView/DSView/DreamSourceLab.rules /etc/udev/rules.d/99-dsview-cli.rules
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-### macOS
+macOS:
 
 ```bash
 brew install cmake pkg-config glib libusb fftw
 ```
 
-### Windows
-
-Install dependencies via vcpkg:
+Windows with vcpkg:
 
 ```powershell
 vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows pkgconf:x64-windows
 ```
 
-## Testing
+For Windows ARM64 source builds, use the `arm64-windows` triplet instead.
 
-Run the full test suite:
+Build and test:
 
 ```bash
+cargo build --release
 cargo test --workspace
 ```
 
-Run specific test suites:
-
-```bash
-# Bundle discovery tests
-cargo test -p dsview-core --test bundle_discovery
-
-# CLI contract tests
-cargo test -p dsview-cli --test capture_cli
-cargo test -p dsview-cli --test devices_cli
-```
-
-## Commands
-
-### `devices list`
-
-List all connected DSLogic Plus devices.
-
-**Options:**
-- `--format <json|text>`: Output format (default: json)
-- `--resource-dir <PATH>`: Override bundled resource directory
-
-### `devices open`
-
-Open a device by handle and verify initialization.
-
-**Options:**
-- `--handle <HANDLE>`: Device handle from `devices list`
-- `--format <json|text>`: Output format (default: json)
-- `--resource-dir <PATH>`: Override bundled resource directory
-
-### `capture`
-
-Run a bounded capture and export waveform data.
-
-**Required options:**
-- `--handle <HANDLE>`: Device handle from `devices list`
-- `--sample-rate-hz <HZ>`: Sample rate in Hz (e.g., 100000000 for 100 MHz)
-- `--sample-limit <SAMPLES>`: Number of samples to capture
-- `--channels <IDX,IDX,...>`: Comma-separated channel indices (e.g., 0,1,2,3)
-- `--output <PATH>`: Output VCD file path (must end with .vcd)
-
-**Optional:**
-- `--metadata-output <PATH>`: JSON metadata path (defaults to .vcd path with .json extension)
-- `--wait-timeout-ms <MS>`: Capture timeout in milliseconds (default: 10000)
-- `--poll-interval-ms <MS>`: Status polling interval (default: 50)
-- `--format <json|text>`: Output format (default: json)
-- `--resource-dir <PATH>`: Override bundled resource directory
-
-## Output Formats
-
-### VCD (Value Change Dump)
-
-Standard waveform interchange format. Compatible with GTKWave and other waveform viewers.
-
-### JSON Metadata
-
-Capture metadata sidecar includes:
-- Capture configuration (sample rate, channels, limits)
-- Acquisition summary (packets, terminal events, status)
-- Artifact paths (VCD and metadata locations)
-- Timestamps (ISO 8601 format)
-
-Example:
-```json
-{
-  "capture": {
-    "sample_rate_hz": 100000000,
-    "requested_sample_limit": 2048,
-    "actual_sample_count": 2048,
-    "enabled_channels": [0, 1, 2, 3]
-  },
-  "acquisition": {
-    "completion": "clean_success",
-    "terminal_event": "normal_end"
-  },
-  "artifacts": {
-    "vcd_path": "/path/to/capture.vcd",
-    "metadata_path": "/path/to/capture.json"
-  }
-}
-```
+A source build is useful for development, but it is not the same as a fully relocatable release archive. Release archives are produced by the packaging workflow so native runtimes, decoder scripts, firmware resources, and Python runtime files are assembled and validated together.
 
 ## Development Notes
 
-### DSView Submodule
+The upstream DSView project is included as a git submodule and provides the native device communication stack used by this CLI. Treat that submodule as dependency code for normal development work.
 
-The `DSView/` directory is a git submodule containing the upstream DSView project. This provides the device communication stack (`libsigrok4DSL`) that the CLI integrates with.
+Workspace responsibilities:
 
-**Important**: Treat `DSView/` as read-only dependency code. Do not modify it for normal development work.
+- `dsview-cli` - command-line interface and user-facing command contracts.
+- `dsview-core` - safe Rust orchestration for discovery, capture, decode, and validation flows.
+- `dsview-sys` - native bindings and C/C++ integration boundary for DSView/libsigrok components.
 
-### Architecture
+The native boundary is intentionally isolated so unsafe and platform-specific behavior stays behind a narrow Rust API.
 
-- **dsview-cli**: Command-line interface and user-facing commands
-- **dsview-core**: Safe Rust orchestration for device/session/config flows
-- **dsview-sys**: Native bindings to DSView/libsigrok integration boundary
+## Packaging and CI
 
-The native integration is intentionally isolated behind Rust layers to keep unsafe code contained.
+CI builds every supported target, packages a release archive, validates the archive structure, and smoke-tests command discovery from the extracted bundle.
 
-### Packaging
+Validation checks include:
 
-Release bundles are created using `tools/package-bundle.py` and validated with `tools/validate-bundle.py`. CI uses these Python helpers to ensure consistent bundle structure across all platforms, including the bundled capture runtime, decode runtime, Python runtime, firmware resources, and decoder scripts, without relying on unstable Cargo script support.
+- Executable, capture runtime, decode runtime, decoder scripts, firmware resources, and Python runtime are present.
+- Unix decode runtime links resolve to bundled Python paths.
+- Windows bundles include native DLL and Python DLL dependencies.
+- `dsview-cli --help`, `devices list --help`, and `decode list --format json` work from the extracted bundle.
 
-## License
+Windows ARM64 CI uses GitHub-hosted `windows-11-arm` runners, which are public preview infrastructure as of April 2026. Runner image details may change over time.
 
-The original DSView CLI Rust code in this repository is licensed under Apache License, Version 2.0. See `LICENSE`.
+## Troubleshooting
 
-The upstream `DSView/` submodule and other bundled third-party components keep their own licenses. In particular, the vendored DSView/libsigrok sources ship their existing `COPYING` files and are not relicensed by this repository.
+### `libpython*.so*` or Python framework not found
+
+Use a current full release bundle and keep the extracted directory intact. This error usually means an old bundle was used or only the executable was copied away from its sibling directories.
+
+### `decode list` fails or returns no decoders
+
+Check that `decode-runtime/`, `decoders/`, and `python/` are still present next to the executable. If you use `--decode-runtime` or `--decoder-dir`, both paths must match the same decoder runtime build.
+
+### Linux cannot access the USB device as a normal user
+
+Install a udev rule, reload rules, and reconnect the device:
+
+```bash
+printf '%s\n' 'SUBSYSTEM=="usb", ATTRS{idVendor}=="2a0e", MODE="0666"' | \
+  sudo tee /etc/udev/rules.d/99-dsview-cli.rules >/dev/null
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+### Windows command is not found after installation
+
+Restart your shell so the updated user `PATH` is loaded, or run the generated launcher by full path.
 
 ## Contributing
 
-Contributions are welcome via issues and pull requests. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this repository is licensed under Apache License, Version 2.0.
+Issues and pull requests are welcome. Please keep user-facing command output stable for JSON consumers, and update documentation when behavior changes.
+
+## License
+
+The Rust code in this repository is licensed under the Apache License, Version 2.0. See `LICENSE`.
+
+The upstream DSView submodule and bundled third-party components keep their own licenses. Vendored DSView/libsigrok sources ship their existing license files and are not relicensed by this repository.
