@@ -256,6 +256,13 @@ def macos_python_archive_path(dependency_or_source: str, fallback_name: str) -> 
     return f"lib/{fallback_name}"
 
 
+def macos_framework_root(path: Path) -> Path | None:
+    for index, part in enumerate(path.parts):
+        if part.endswith(".framework"):
+            return Path(*path.parts[: index + 1])
+    return None
+
+
 def python_archive_path(target: str, dependency_or_source: str, fallback_name: str) -> str:
     if is_darwin_target(target):
         return macos_python_archive_path(dependency_or_source, fallback_name)
@@ -301,9 +308,7 @@ def python_shared_library_candidates(
         destination_path = archive_path or python_archive_path(target, str(path), path.name)
         if destination_path.endswith(".a"):
             return
-        # Store the real library bytes for each soname/install-name alias the
-        # loader may request. This avoids absolute or broken symlinks in tarballs.
-        entries[destination_path] = path.resolve()
+        entries[destination_path] = path
 
     linked_dependencies = linked_python_dependencies(target, decode_runtime)
     for dependency, dependency_name in linked_dependencies:
@@ -367,7 +372,26 @@ def add_unix_python_runtime(
             + ", ".join(missing_library_paths)
         )
 
+    bundled_by_framework: set[str] = set()
+    if is_darwin_target(target):
+        framework_roots: dict[str, Path] = {}
+        for library, archive_path in shared_libraries:
+            framework_root = macos_framework_root(library)
+            if framework_root is not None and framework_root.is_dir():
+                framework_roots[framework_root.name] = framework_root
+                bundled_by_framework.add(archive_path)
+
+        for framework_name, framework_root in sorted(framework_roots.items()):
+            add_directory_filtered(
+                archive,
+                framework_root,
+                f"{archive_root}/python/{framework_name}",
+                should_skip_python_path,
+            )
+
     for library, archive_path in shared_libraries:
+        if archive_path in bundled_by_framework:
+            continue
         add_regular_file(archive, library, f"{archive_root}/python/{archive_path}")
 
     stdlib_dir = Path(sysconfig.get_path("stdlib"))
