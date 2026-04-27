@@ -46,13 +46,13 @@ curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/mast
 Install a specific release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.2.1
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.2.2
 ```
 
 Useful installer options:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --prefix ~/.local/opt/dsview-cli --bin-dir ~/.local/bin --version v1.2.1
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --prefix ~/.local/opt/dsview-cli --bin-dir ~/.local/bin --version v1.2.2
 curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --dry-run
 ```
 
@@ -77,7 +77,7 @@ Install a specific release tag:
 ```powershell
 $script = Join-Path $env:TEMP "dsview-cli-install.ps1"
 irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.ps1 -OutFile $script
-powershell -ExecutionPolicy Bypass -File $script -Version v1.2.1
+powershell -ExecutionPolicy Bypass -File $script -Version v1.2.2
 ```
 
 Restart your shell after installation so the updated `PATH` is visible.
@@ -87,7 +87,7 @@ Restart your shell after installation so the updated `PATH` is visible.
 Download the `.tar.gz` bundle for your target from GitHub Releases, verify it with the release checksum file, and extract it:
 
 ```bash
-VERSION=v1.2.1
+VERSION=v1.2.2
 TARGET=x86_64-unknown-linux-gnu
 curl -LO "https://github.com/LISTENAI/dsview-cli/releases/download/$VERSION/dsview-cli-$VERSION-$TARGET.tar.gz"
 curl -LO "https://github.com/LISTENAI/dsview-cli/releases/download/$VERSION/dsview-cli-$VERSION-SHA256SUMS.txt"

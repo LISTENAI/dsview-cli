@@ -3419,7 +3419,7 @@ mod tests {
             vcd_path,
             metadata_path: None,
             tool_name: "dsview-cli".to_string(),
-            tool_version: "1.2.1".to_string(),
+            tool_version: "1.2.2".to_string(),
             capture_started_at: UNIX_EPOCH + Duration::from_secs(1_744_018_496),
             device_model: "DSLogic Plus".to_string(),
             device_stable_id: "dslogic-plus".to_string(),
