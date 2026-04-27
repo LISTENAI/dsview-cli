@@ -44,6 +44,13 @@ runs:
           throw "vcvarsall.bat failed for architecture: $arch"
         }
 
+        $preserveVariables = @(
+          'VCPKG_ROOT',
+          'VCPKG_INSTALLATION_ROOT',
+          'VCPKG_DEFAULT_BINARY_CACHE',
+          'VCPKG_DOWNLOADS'
+        )
+
         foreach ($line in $environment) {
           if ($line -notmatch '^([^=]+)=(.*)$') {
             continue
@@ -55,20 +62,17 @@ runs:
             continue
           }
 
-          $preserveVariables = @(
-            'VCPKG_ROOT',
-            'VCPKG_INSTALLATION_ROOT',
-            'VCPKG_DEFAULT_BINARY_CACHE',
-            'VCPKG_DOWNLOADS'
-          )
           if ($name -in $preserveVariables) {
             continue
           }
 
           if ($name -ieq 'Path') {
-            $value.Split(';') |
-              Where-Object { $_ } |
-              ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8 }
+            # Preserve vcvarsall's PATH ordering. GITHUB_PATH prepends entries and
+            # can make Visual Studio's bundled vcpkg shadow the runner vcpkg.
+            $delimiter = "MSVC_ENV_$([guid]::NewGuid().ToString('N'))"
+            "$name<<$delimiter" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            $value | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            $delimiter | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             continue
           }
 
