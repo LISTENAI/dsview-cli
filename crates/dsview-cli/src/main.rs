@@ -68,8 +68,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    #[command(about = "Discover and inspect connected DSLogic devices")]
     Devices(DeviceArgs),
+    #[command(about = "List, inspect, validate, and run offline protocol decoders")]
     Decode(DecodeArgs),
+    #[command(about = "Capture logic samples from a selected device into VCD artifacts")]
     Capture(CaptureArgs),
 }
 
@@ -81,8 +84,11 @@ struct DeviceArgs {
 
 #[derive(Subcommand, Debug)]
 enum DeviceCommand {
+    #[command(about = "List selectable devices and their handles")]
     List(ListArgs),
+    #[command(about = "Open a device handle to verify it is usable")]
     Open(OpenArgs),
+    #[command(about = "Show supported capture options and current values for a device")]
     Options(OptionsArgs),
 }
 
@@ -94,9 +100,13 @@ struct DecodeArgs {
 
 #[derive(Subcommand, Debug)]
 enum DecodeCommand {
+    #[command(about = "List available protocol decoders")]
     List(DecodeListArgs),
+    #[command(about = "Inspect decoder channels, options, and metadata")]
     Inspect(DecodeInspectArgs),
+    #[command(about = "Validate a decode config without running a session")]
     Validate(DecodeValidateArgs),
+    #[command(about = "Run an offline decode session and emit a report")]
     Run(DecodeRunArgs),
 }
 
