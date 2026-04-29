@@ -46,13 +46,13 @@ curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/mast
 安装指定 release tag：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.2.2
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --version v1.2.3
 ```
 
 常用安装选项：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --prefix ~/.local/opt/dsview-cli --bin-dir ~/.local/bin --version v1.2.2
+curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --prefix ~/.local/opt/dsview-cli --bin-dir ~/.local/bin --version v1.2.3
 curl -fsSL https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.sh | sh -s -- --dry-run
 ```
 
@@ -77,7 +77,7 @@ irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scri
 ```powershell
 $script = Join-Path $env:TEMP "dsview-cli-install.ps1"
 irm https://raw.githubusercontent.com/LISTENAI/dsview-cli/refs/heads/master/scripts/install.ps1 -OutFile $script
-powershell -ExecutionPolicy Bypass -File $script -Version v1.2.2
+powershell -ExecutionPolicy Bypass -File $script -Version v1.2.3
 ```
 
 安装后请重启 shell，让更新后的 `PATH` 生效。
@@ -87,7 +87,7 @@ powershell -ExecutionPolicy Bypass -File $script -Version v1.2.2
 从 GitHub Releases 下载对应目标平台的 `.tar.gz` bundle，使用 release checksum 文件校验后解压：
 
 ```bash
-VERSION=v1.2.2
+VERSION=v1.2.3
 TARGET=x86_64-unknown-linux-gnu
 curl -LO "https://github.com/LISTENAI/dsview-cli/releases/download/$VERSION/dsview-cli-$VERSION-$TARGET.tar.gz"
 curl -LO "https://github.com/LISTENAI/dsview-cli/releases/download/$VERSION/dsview-cli-$VERSION-SHA256SUMS.txt"

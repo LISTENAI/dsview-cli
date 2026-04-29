@@ -13,7 +13,7 @@ fn main() {
     let version = env::var("DSVIEW_BUILD_VERSION")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(detect_git_version)
+        .or_else(detect_git_tag_version)
         .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION should be set"));
 
     println!("cargo:rustc-env=DSVIEW_BUILD_VERSION={version}");
@@ -75,11 +75,10 @@ fn parse_gitdir_path(git_metadata: &Path, contents: &str) -> Option<PathBuf> {
     }
 }
 
-fn detect_git_version() -> Option<String> {
+fn detect_git_tag_version() -> Option<String> {
     let workspace_root = workspace_root()?;
 
     git_output(&workspace_root, &["describe", "--tags", "--exact-match"])
-        .or_else(|| git_output(&workspace_root, &["rev-parse", "--short", "HEAD"]))
 }
 
 fn git_output(workspace_root: &Path, args: &[&str]) -> Option<String> {
