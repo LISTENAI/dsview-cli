@@ -193,6 +193,8 @@ static struct dsview_decode_runtime_api g_decode_runtime_api;
 static struct dsview_bridge_acquisition_summary g_acquisition_summary;
 static int g_acquisition_callback_registration_active = 0;
 static struct dsview_recorded_stream g_recorded_stream;
+
+#define DSVIEW_BRIDGE_INITIAL_PACKET_CAPACITY 1024U
 static uint8_t g_enabled_channel_state[DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY];
 
 static void dsview_bridge_clear_registered_callbacks(void);
@@ -2666,7 +2668,6 @@ static int dsview_bridge_prepare_recording_capacity(void)
     int enabled_channel_count = 0;
     size_t enabled_index;
     size_t unitsize;
-    size_t packet_capacity;
     size_t payload_capacity;
 
     dsview_bridge_reset_recorded_stream();
@@ -2698,17 +2699,14 @@ static int dsview_bridge_prepare_recording_capacity(void)
     }
 
     payload_capacity = (size_t)sample_limit * unitsize;
-    if (sample_limit > (unsigned long long)(SIZE_MAX - 8)) {
-        return DSVIEW_EXPORT_ERR_OVERFLOW;
-    }
-    packet_capacity = (size_t)sample_limit + 8;
-
-    g_recorded_stream.packets = calloc(packet_capacity, sizeof(*g_recorded_stream.packets));
+    g_recorded_stream.packets = calloc(
+        DSVIEW_BRIDGE_INITIAL_PACKET_CAPACITY,
+        sizeof(*g_recorded_stream.packets));
     if (g_recorded_stream.packets == NULL) {
         return SR_ERR_MALLOC;
     }
 
-    g_recorded_stream.packet_capacity = packet_capacity;
+    g_recorded_stream.packet_capacity = DSVIEW_BRIDGE_INITIAL_PACKET_CAPACITY;
     g_recorded_stream.payload_capacity = payload_capacity;
     g_recorded_stream.expected_unitsize = (uint16_t)unitsize;
     g_recorded_stream.enabled_channel_count = (uint16_t)enabled_channel_count;
@@ -2717,12 +2715,31 @@ static int dsview_bridge_prepare_recording_capacity(void)
 
 static int dsview_bridge_append_retained_packet(const struct dsview_retained_packet *packet)
 {
+    size_t next_capacity;
+    struct dsview_retained_packet *resized;
+
     if (g_recorded_stream.overflowed) {
         return DSVIEW_EXPORT_ERR_OVERFLOW;
     }
     if (g_recorded_stream.packet_count >= g_recorded_stream.packet_capacity) {
-        g_recorded_stream.overflowed = 1;
-        return DSVIEW_EXPORT_ERR_OVERFLOW;
+        if (g_recorded_stream.packet_capacity > SIZE_MAX / 2) {
+            g_recorded_stream.overflowed = 1;
+            return DSVIEW_EXPORT_ERR_OVERFLOW;
+        }
+        next_capacity = g_recorded_stream.packet_capacity * 2;
+        resized = (struct dsview_retained_packet *)realloc(
+            g_recorded_stream.packets,
+            next_capacity * sizeof(*g_recorded_stream.packets));
+        if (resized == NULL) {
+            g_recorded_stream.overflowed = 1;
+            return SR_ERR_MALLOC;
+        }
+        memset(
+            resized + g_recorded_stream.packet_capacity,
+            0,
+            (next_capacity - g_recorded_stream.packet_capacity) * sizeof(*resized));
+        g_recorded_stream.packets = resized;
+        g_recorded_stream.packet_capacity = next_capacity;
     }
 
     g_recorded_stream.packets[g_recorded_stream.packet_count++] = *packet;

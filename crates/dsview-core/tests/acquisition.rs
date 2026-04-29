@@ -517,6 +517,7 @@ fn capture_without_validated_device_options_keeps_config_only_baseline() {
             enabled_channels: BTreeSet::from([0_u16, 1_u16]),
         },
         validated_device_options: None,
+        stop_after: None,
         wait_timeout: Duration::from_millis(100),
         poll_interval: Duration::from_millis(10),
     };

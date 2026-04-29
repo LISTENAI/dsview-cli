@@ -1383,6 +1383,7 @@ pub struct AcquisitionPreflight {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureCompletion {
     CleanSuccess,
+    StoppedByDuration,
     StartFailure,
     Detached,
     RunFailure,
@@ -1609,6 +1610,7 @@ pub struct CaptureRunRequest {
     pub selection_handle: SelectionHandle,
     pub config: CaptureConfigRequest,
     pub validated_device_options: Option<ValidatedDeviceOptionRequest>,
+    pub stop_after: Option<Duration>,
     pub wait_timeout: Duration,
     pub poll_interval: Duration,
 }
@@ -2341,7 +2343,8 @@ impl Discovery {
             });
         }
 
-        let deadline = Instant::now() + request.wait_timeout;
+        let started_at = Instant::now();
+        let deadline = started_at + request.stop_after.unwrap_or(request.wait_timeout);
         let mut summary = started.summary;
         while Instant::now() < deadline {
             summary = self
@@ -2360,8 +2363,29 @@ impl Discovery {
             thread::sleep(request.poll_interval);
         }
 
+        let mut planned_stop_requested = false;
+        if request.stop_after.is_some() && summary.is_collecting {
+            planned_stop_requested = true;
+            summary = self
+                .runtime
+                .stop_collect()
+                .map_err(BringUpError::Runtime)?
+                .summary;
+
+            let stop_deadline = Instant::now() + request.wait_timeout;
+            while summary.is_collecting && Instant::now() < stop_deadline {
+                summary = self
+                    .runtime
+                    .acquisition_summary()
+                    .map_err(BringUpError::Runtime)?;
+                thread::sleep(request.poll_interval);
+            }
+        }
+
         let completion = if summary.is_collecting {
             CaptureCompletion::Timeout
+        } else if planned_stop_requested {
+            classify_planned_stop_completion(&summary)
         } else {
             classify_capture_completion(&summary)
         };
@@ -2376,12 +2400,14 @@ impl Discovery {
         }
 
         match completion {
-            CaptureCompletion::CleanSuccess => Ok(CaptureRunSummary {
-                completion,
-                summary,
-                cleanup,
-                effective_device_options,
-            }),
+            CaptureCompletion::CleanSuccess | CaptureCompletion::StoppedByDuration => {
+                Ok(CaptureRunSummary {
+                    completion,
+                    summary,
+                    cleanup,
+                    effective_device_options,
+                })
+            }
             CaptureCompletion::StartFailure => Err(CaptureRunError::StartFailed {
                 code: NativeErrorCode::from_raw(summary.start_status),
                 last_error: summary.last_error,
@@ -2619,9 +2645,43 @@ fn classify_capture_completion(summary: &AcquisitionSummary) -> CaptureCompletio
     }
 }
 
+fn classify_planned_stop_completion(summary: &AcquisitionSummary) -> CaptureCompletion {
+    if !NativeErrorCode::from_raw(summary.start_status).is_ok() {
+        return CaptureCompletion::StartFailure;
+    }
+    if summary.is_collecting {
+        return CaptureCompletion::Timeout;
+    }
+    match summary.terminal_event {
+        AcquisitionTerminalEvent::EndByDetached => return CaptureCompletion::Detached,
+        AcquisitionTerminalEvent::EndByError => return CaptureCompletion::RunFailure,
+        AcquisitionTerminalEvent::None
+        | AcquisitionTerminalEvent::NormalEnd
+        | AcquisitionTerminalEvent::Unknown(_) => {}
+    }
+    if !summary.saw_collect_task_start
+        || !summary.saw_device_running
+        || !summary.saw_device_stopped
+        || summary.saw_terminal_end_by_detached
+        || summary.saw_terminal_end_by_error
+        || !summary.saw_logic_packet
+        || !summary.saw_end_packet
+        || !summary.saw_end_packet_ok
+        || summary.saw_data_error_packet
+    {
+        return CaptureCompletion::Incomplete;
+    }
+
+    match summary.end_packet_status {
+        Some(AcquisitionPacketStatus::Ok) => CaptureCompletion::StoppedByDuration,
+        None | Some(_) => CaptureCompletion::Incomplete,
+    }
+}
+
 fn capture_completion_stage(completion: CaptureCompletion) -> &'static str {
     match completion {
         CaptureCompletion::CleanSuccess => "clean_success",
+        CaptureCompletion::StoppedByDuration => "stopped_by_duration",
         CaptureCompletion::StartFailure => "start_failure",
         CaptureCompletion::Detached => "detach",
         CaptureCompletion::RunFailure => "run_failure",
@@ -2689,6 +2749,7 @@ fn terminal_event_name(event: AcquisitionTerminalEvent) -> String {
 fn completion_name(completion: CaptureCompletion) -> String {
     match completion {
         CaptureCompletion::CleanSuccess => "clean_success".to_string(),
+        CaptureCompletion::StoppedByDuration => "stopped_by_duration".to_string(),
         CaptureCompletion::StartFailure => "start_failure".to_string(),
         CaptureCompletion::Detached => "detach".to_string(),
         CaptureCompletion::RunFailure => "run_failure".to_string(),
@@ -2924,7 +2985,10 @@ impl Discovery {
         &self,
         request: &CaptureExportRequest,
     ) -> Result<CaptureExportSuccess, CaptureExportError> {
-        if request.capture.completion != CaptureCompletion::CleanSuccess {
+        if !matches!(
+            request.capture.completion,
+            CaptureCompletion::CleanSuccess | CaptureCompletion::StoppedByDuration
+        ) {
             return Err(CaptureExportError::CaptureNotExportable {
                 completion: request.capture.completion,
             });

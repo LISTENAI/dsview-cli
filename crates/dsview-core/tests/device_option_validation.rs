@@ -340,6 +340,26 @@ fn sample_limit_alignment_can_push_request_over_capacity() {
 }
 
 #[test]
+fn stream_mode_accepts_sample_limit_beyond_buffer_capacity() {
+    let capabilities = validation_capabilities();
+    let request = DeviceOptionValidationRequest {
+        operation_mode_id: "operation-mode:202".to_string(),
+        channel_mode_id: "channel-mode:21".to_string(),
+        stop_option_id: None,
+        sample_rate_hz: 25_000_000,
+        sample_limit: 300_000_000,
+        ..validation_request()
+    };
+
+    let validated = capabilities.validate_request(&request).unwrap();
+
+    assert_eq!(validated.operation_mode_id, "operation-mode:202");
+    assert_eq!(validated.channel_mode_id, "channel-mode:21");
+    assert_eq!(validated.requested_sample_limit, 300_000_000);
+    assert_eq!(validated.effective_sample_limit, 300_000_256);
+}
+
+#[test]
 fn threshold_value_must_stay_within_vth_range() {
     let capabilities = validation_capabilities();
     let request = DeviceOptionValidationRequest {

@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use thiserror::Error;
 
 use crate::{
-    capture_config::{align_down, align_sample_limit},
+    capture_config::{align_down, align_sample_limit, is_stream_mode_label},
     CurrentDeviceOptionValues, DeviceIdentitySnapshot, EnumOptionSnapshot, SupportedDevice,
     ThresholdCapabilitySnapshot,
 };
@@ -227,16 +227,18 @@ impl DeviceOptionValidationCapabilities {
 
         let effective_sample_limit =
             align_sample_limit(request.sample_limit, self.sample_limit_alignment);
-        let maximum_sample_limit = align_down(
-            self.hardware_sample_capacity / request.enabled_channels.len() as u64,
-            self.sample_limit_alignment,
-        );
-        if maximum_sample_limit == 0 || effective_sample_limit > maximum_sample_limit {
-            return Err(DeviceOptionValidationError::SampleLimitExceedsCapacity {
-                effective_sample_limit,
-                maximum_sample_limit,
-                enabled_channel_count: request.enabled_channels.len(),
-            });
+        if !is_stream_mode_label(&operation_mode.label) {
+            let maximum_sample_limit = align_down(
+                self.hardware_sample_capacity / request.enabled_channels.len() as u64,
+                self.sample_limit_alignment,
+            );
+            if maximum_sample_limit == 0 || effective_sample_limit > maximum_sample_limit {
+                return Err(DeviceOptionValidationError::SampleLimitExceedsCapacity {
+                    effective_sample_limit,
+                    maximum_sample_limit,
+                    enabled_channel_count: request.enabled_channels.len(),
+                });
+            }
         }
 
         let stop_option_code =

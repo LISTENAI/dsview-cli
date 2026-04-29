@@ -280,6 +280,12 @@ struct CaptureArgs {
     )]
     wait_timeout_ms: u64,
     #[arg(
+        long = "duration-ms",
+        value_name = "MS",
+        help = "Planned stream capture duration before actively stopping collection"
+    )]
+    duration_ms: Option<u64>,
+    #[arg(
         long = "poll-interval-ms",
         default_value_t = 50,
         help = "Polling interval for checking capture progress while waiting"
@@ -1290,6 +1296,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         selection_handle: handle,
         config: config_request,
         validated_device_options: validated_device_options.clone(),
+        stop_after: args.duration_ms.map(Duration::from_millis),
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
@@ -2756,6 +2763,7 @@ pub(crate) fn classify_export_error(error: &CaptureExportError) -> ErrorResponse
 fn completion_name(completion: CaptureCompletion) -> &'static str {
     match completion {
         CaptureCompletion::CleanSuccess => "clean_success",
+        CaptureCompletion::StoppedByDuration => "stopped_by_duration",
         CaptureCompletion::StartFailure => "start_failure",
         CaptureCompletion::Detached => "detach",
         CaptureCompletion::RunFailure => "run_failure",
@@ -3722,6 +3730,7 @@ mod tests {
             output: PathBuf::from("artifacts/run.vcd"),
             metadata_output: None,
             wait_timeout_ms: 10_000,
+            duration_ms: None,
             poll_interval_ms: 50,
         }
     }

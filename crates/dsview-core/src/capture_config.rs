@@ -142,17 +142,20 @@ impl CaptureCapabilities {
 
         let effective_sample_limit =
             align_sample_limit(request.sample_limit, self.sample_limit_alignment);
-        let maximum_sample_limit = align_down(
-            self.hardware_sample_capacity / enabled_channels.len() as u64,
-            self.sample_limit_alignment,
-        );
 
-        if maximum_sample_limit == 0 || effective_sample_limit > maximum_sample_limit {
-            return Err(CaptureConfigError::SampleLimitExceedsCapacity {
-                effective_sample_limit,
-                maximum_sample_limit,
-                enabled_channel_count: enabled_channels.len(),
-            });
+        if !is_stream_mode_label(&active_mode.name) {
+            let maximum_sample_limit = align_down(
+                self.hardware_sample_capacity / enabled_channels.len() as u64,
+                self.sample_limit_alignment,
+            );
+
+            if maximum_sample_limit == 0 || effective_sample_limit > maximum_sample_limit {
+                return Err(CaptureConfigError::SampleLimitExceedsCapacity {
+                    effective_sample_limit,
+                    maximum_sample_limit,
+                    enabled_channel_count: enabled_channels.len(),
+                });
+            }
         }
 
         Ok(ValidatedCaptureConfig {
@@ -163,6 +166,12 @@ impl CaptureCapabilities {
             channel_mode_id: active_mode.id,
         })
     }
+}
+
+pub(crate) fn is_stream_mode_label(label: &str) -> bool {
+    label
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|token| token.eq_ignore_ascii_case("stream"))
 }
 
 pub(crate) fn align_sample_limit(value: u64, alignment: u64) -> u64 {
@@ -225,6 +234,12 @@ mod tests {
                         200_000_000,
                         400_000_000,
                     ],
+                },
+                ChannelModeCapability {
+                    id: 30,
+                    name: "Stream 20x16".to_string(),
+                    max_enabled_channels: 16,
+                    supported_sample_rates: vec![20_000_000, 25_000_000],
                 },
             ],
             hardware_sample_capacity: 268_435_456,
@@ -339,6 +354,19 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn stream_mode_allows_sample_limit_beyond_buffer_capacity() {
+        let mut capabilities = dslogic_plus_capabilities();
+        capabilities.active_channel_mode = 30;
+
+        let validated = capabilities
+            .validate_request(&request(25_000_000, 300_000_000, &[0, 1, 2, 3]))
+            .unwrap();
+
+        assert_eq!(validated.channel_mode_id, 30);
+        assert_eq!(validated.effective_sample_limit, 300_000_256);
     }
 
     #[test]

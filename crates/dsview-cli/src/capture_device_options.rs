@@ -250,7 +250,18 @@ pub fn resolve_capture_device_option_request<T: CaptureDeviceOptionInput>(
     )?;
     let stop_option_id = explicit_stop_option_id.or_else(|| {
         if snapshot.current.operation_mode_id.as_deref() == Some(operation_mode_id.as_str()) {
-            snapshot.current.stop_option_id.clone()
+            snapshot
+                .current
+                .stop_option_id
+                .as_ref()
+                .filter(|stop_option_id| {
+                    operation_mode_supports_stop_option(
+                        capabilities,
+                        &operation_mode_id,
+                        stop_option_id,
+                    )
+                })
+                .cloned()
         } else {
             None
         }
@@ -282,6 +293,22 @@ pub fn resolve_capture_device_option_request<T: CaptureDeviceOptionInput>(
         threshold_volts,
         filter_id,
     })
+}
+
+fn operation_mode_supports_stop_option(
+    capabilities: &DeviceOptionValidationCapabilities,
+    operation_mode_id: &str,
+    stop_option_id: &str,
+) -> bool {
+    capabilities
+        .operation_modes
+        .iter()
+        .find(|mode| mode.id == operation_mode_id)
+        .is_some_and(|mode| {
+            mode.stop_option_ids
+                .iter()
+                .any(|supported_id| supported_id == stop_option_id)
+        })
 }
 
 fn resolve_known_token<F>(
@@ -444,9 +471,147 @@ fn infer_unique_operation_mode(matches: &[(String, String)]) -> Option<String> {
 mod tests {
     use super::{
         build_capture_token_guide, build_cli_channel_mode_option, build_cli_token_option,
-        build_operation_mode_option, slug_token,
+        build_operation_mode_option, resolve_capture_device_option_request, slug_token,
+        CaptureDeviceOptionInput,
     };
-    use dsview_core::{ChannelModeOptionSnapshot, EnumOptionSnapshot};
+    use dsview_core::{
+        ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, ChannelModeValidationCapabilities,
+        CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionValidationCapabilities,
+        DeviceOptionsSnapshot, EnumOptionSnapshot, OperationModeValidationCapabilities,
+        ThresholdCapabilitySnapshot,
+    };
+
+    #[derive(Default)]
+    struct TestCaptureArgs {
+        operation_mode: Option<&'static str>,
+        stop_option: Option<&'static str>,
+        channel_mode: Option<&'static str>,
+    }
+
+    impl CaptureDeviceOptionInput for TestCaptureArgs {
+        fn operation_mode(&self) -> Option<&str> {
+            self.operation_mode
+        }
+
+        fn stop_option(&self) -> Option<&str> {
+            self.stop_option
+        }
+
+        fn channel_mode(&self) -> Option<&str> {
+            self.channel_mode
+        }
+
+        fn threshold_volts(&self) -> Option<f64> {
+            None
+        }
+
+        fn filter(&self) -> Option<&str> {
+            None
+        }
+    }
+
+    fn stream_snapshot_with_incompatible_current_stop_option() -> DeviceOptionsSnapshot {
+        DeviceOptionsSnapshot {
+            device: DeviceIdentitySnapshot {
+                selection_handle: 1,
+                native_handle: 41,
+                stable_id: "dslogic-plus".to_string(),
+                kind: "DSLogic Plus".to_string(),
+                name: "DSLogic PLus".to_string(),
+            },
+            current: CurrentDeviceOptionValues {
+                operation_mode_id: Some("operation-mode:1".to_string()),
+                operation_mode_code: Some(1),
+                stop_option_id: Some("stop-option:1".to_string()),
+                stop_option_code: Some(1),
+                filter_id: None,
+                filter_code: None,
+                channel_mode_id: Some("channel-mode:1".to_string()),
+                channel_mode_code: Some(1),
+            },
+            operation_modes: vec![
+                EnumOptionSnapshot {
+                    id: "operation-mode:0".to_string(),
+                    native_code: 0,
+                    label: "Buffer Mode".to_string(),
+                },
+                EnumOptionSnapshot {
+                    id: "operation-mode:1".to_string(),
+                    native_code: 1,
+                    label: "Stream Mode".to_string(),
+                },
+            ],
+            stop_options: vec![EnumOptionSnapshot {
+                id: "stop-option:1".to_string(),
+                native_code: 1,
+                label: "Stop after samples".to_string(),
+            }],
+            filters: Vec::new(),
+            channel_modes_by_operation_mode: vec![ChannelModeGroupSnapshot {
+                operation_mode_id: "operation-mode:1".to_string(),
+                operation_mode_code: 1,
+                current_channel_mode_id: Some("channel-mode:1".to_string()),
+                current_channel_mode_code: Some(1),
+                channel_modes: vec![ChannelModeOptionSnapshot {
+                    id: "channel-mode:1".to_string(),
+                    native_code: 1,
+                    label: "Use 12 Channels (Max 25MHz)".to_string(),
+                    max_enabled_channels: 12,
+                }],
+            }],
+            threshold: ThresholdCapabilitySnapshot {
+                id: "threshold:vth-range".to_string(),
+                kind: "voltage-range".to_string(),
+                current_volts: None,
+                min_volts: 0.0,
+                max_volts: 5.0,
+                step_volts: 0.1,
+                legacy_metadata: None,
+            },
+        }
+    }
+
+    fn stream_validation_capabilities() -> DeviceOptionValidationCapabilities {
+        DeviceOptionValidationCapabilities {
+            device: stream_snapshot_with_incompatible_current_stop_option().device,
+            current: CurrentDeviceOptionValues {
+                operation_mode_id: Some("operation-mode:1".to_string()),
+                operation_mode_code: Some(1),
+                stop_option_id: Some("stop-option:1".to_string()),
+                stop_option_code: Some(1),
+                filter_id: None,
+                filter_code: None,
+                channel_mode_id: Some("channel-mode:1".to_string()),
+                channel_mode_code: Some(1),
+            },
+            total_channel_count: 16,
+            hardware_sample_capacity: 16 * 4096,
+            sample_limit_alignment: 1024,
+            operation_modes: vec![OperationModeValidationCapabilities {
+                id: "operation-mode:1".to_string(),
+                native_code: 1,
+                label: "Stream Mode".to_string(),
+                stop_option_ids: Vec::new(),
+                channel_modes: vec![ChannelModeValidationCapabilities {
+                    id: "channel-mode:1".to_string(),
+                    native_code: 1,
+                    label: "Use 12 Channels (Max 25MHz)".to_string(),
+                    max_enabled_channels: 12,
+                    supported_sample_rates: vec![25_000_000],
+                }],
+            }],
+            filters: Vec::new(),
+            threshold: ThresholdCapabilitySnapshot {
+                id: "threshold:vth-range".to_string(),
+                kind: "voltage-range".to_string(),
+                current_volts: None,
+                min_volts: 0.0,
+                max_volts: 5.0,
+                step_volts: 0.1,
+                legacy_metadata: None,
+            },
+        }
+    }
 
     #[test]
     fn slug_token_normalizes_display_labels_to_kebab_case() {
@@ -506,5 +671,30 @@ mod tests {
         });
 
         assert_eq!(option.token, "stop-after-samples");
+    }
+
+    #[test]
+    fn current_incompatible_stop_option_is_not_inherited_for_stream_mode() {
+        let snapshot = stream_snapshot_with_incompatible_current_stop_option();
+        let capabilities = stream_validation_capabilities();
+        let args = TestCaptureArgs {
+            operation_mode: Some("stream"),
+            channel_mode: Some("use-12-channels-max-25mhz"),
+            ..TestCaptureArgs::default()
+        };
+
+        let request = resolve_capture_device_option_request(
+            &snapshot,
+            &capabilities,
+            &args,
+            25_000_000,
+            300_000_000,
+            &[0, 1, 2, 3],
+        )
+        .unwrap();
+
+        assert_eq!(request.operation_mode_id, "operation-mode:1");
+        assert_eq!(request.channel_mode_id, "channel-mode:1");
+        assert_eq!(request.stop_option_id, None);
     }
 }
