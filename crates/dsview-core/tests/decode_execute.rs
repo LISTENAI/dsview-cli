@@ -513,6 +513,101 @@ fn offline_decode_result_projects_to_flat_event_report() {
 }
 
 #[test]
+fn decode_report_renders_numeric_ignore_marker_as_display_text() {
+    let annotation = DecodeCapturedAnnotation {
+        decoder_id: "1:uart".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 0,
+        annotation_type: 108,
+        texts: vec!["\n".to_string()],
+        number_hex: Some("5B".to_string()),
+        numeric_value: Some(0x5B),
+    };
+    let runtime = RecordingRuntime::with_end_response(SessionResponse::Ok(vec![annotation]));
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x01, 0x02],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![2]),
+    };
+
+    let result = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect("decode run should succeed");
+    let report = result.to_report("1:uart", 0, input.sample_count().unwrap());
+
+    assert_eq!(report.events[0].texts, vec!["["]);
+    assert_eq!(report.events[0].raw_texts, Some(vec!["\n".to_string()]));
+    assert_eq!(report.events[0].number_hex.as_deref(), Some("5B"));
+    assert_eq!(report.events[0].numeric_value, Some(0x5B));
+}
+
+#[test]
+fn decode_report_replaces_numeric_placeholders_with_hex() {
+    let annotation = DecodeCapturedAnnotation {
+        decoder_id: "spiflash".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 3,
+        annotation_type: 0,
+        texts: vec!["Data {$}".to_string(), "\n".to_string()],
+        number_hex: Some("AB".to_string()),
+        numeric_value: Some(0xAB),
+    };
+    let runtime = RecordingRuntime::with_end_response(SessionResponse::Ok(vec![annotation]));
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x01, 0x02],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![2]),
+    };
+
+    let result = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect("decode run should succeed");
+    let report = result.to_report("spiflash", 0, input.sample_count().unwrap());
+
+    assert_eq!(report.events[0].texts, vec!["Data AB", "AB"]);
+    assert_eq!(
+        report.events[0].raw_texts,
+        Some(vec!["Data {$}".to_string(), "\n".to_string()])
+    );
+}
+
+#[test]
+fn decode_report_uses_hex_for_non_printable_numeric_marker() {
+    let annotation = DecodeCapturedAnnotation {
+        decoder_id: "1:spi".to_string(),
+        start_sample: 0,
+        end_sample: 2,
+        annotation_class: 0,
+        annotation_type: 0,
+        texts: vec!["\n".to_string()],
+        number_hex: Some("FF".to_string()),
+        numeric_value: Some(0xFF),
+    };
+    let runtime = RecordingRuntime::with_end_response(SessionResponse::Ok(vec![annotation]));
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x01, 0x02],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: Some(vec![2]),
+    };
+
+    let result = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect("decode run should succeed");
+    let report = result.to_report("1:spi", 0, input.sample_count().unwrap());
+
+    assert_eq!(report.events[0].texts, vec!["FF"]);
+    assert_eq!(report.events[0].raw_texts, Some(vec!["\n".to_string()]));
+}
+
+#[test]
 fn failed_decode_report_retains_partial_events_without_partial_success_state() {
     let retained = DecodeCapturedAnnotation {
         decoder_id: "eeprom24xx".to_string(),

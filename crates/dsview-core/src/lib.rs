@@ -621,6 +621,8 @@ pub struct DecodeEvent {
     pub annotation_type: i32,
     pub texts: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_texts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number_hex: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub numeric_value: Option<i64>,
@@ -651,16 +653,80 @@ pub struct DecodeFailureReport {
 
 impl From<&DecodeCapturedAnnotation> for DecodeEvent {
     fn from(annotation: &DecodeCapturedAnnotation) -> Self {
+        let rendered = render_decode_annotation_texts(annotation);
         Self {
             decoder_id: annotation.decoder_id.clone(),
             start_sample: annotation.start_sample,
             end_sample: annotation.end_sample,
             annotation_class: annotation.annotation_class,
             annotation_type: annotation.annotation_type,
-            texts: annotation.texts.clone(),
+            texts: rendered.texts,
+            raw_texts: rendered.raw_texts,
             number_hex: annotation.number_hex.clone(),
             numeric_value: annotation.numeric_value,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderedDecodeTexts {
+    texts: Vec<String>,
+    raw_texts: Option<Vec<String>>,
+}
+
+fn render_decode_annotation_texts(annotation: &DecodeCapturedAnnotation) -> RenderedDecodeTexts {
+    let raw_texts = annotation.texts.clone();
+    let Some(number_hex) = annotation.number_hex.as_deref() else {
+        return RenderedDecodeTexts {
+            texts: raw_texts,
+            raw_texts: None,
+        };
+    };
+
+    let numeric_value = annotation
+        .numeric_value
+        .or_else(|| i64::from_str_radix(number_hex, 16).ok());
+    let numeric_text = numeric_value
+        .and_then(render_numeric_annotation_value)
+        .unwrap_or_else(|| number_hex.to_string());
+
+    let texts = if raw_texts.is_empty() {
+        vec![numeric_text]
+    } else {
+        raw_texts
+            .iter()
+            .map(|text| {
+                if text == "\n" {
+                    numeric_text.clone()
+                } else if text.contains("{$}") {
+                    text.replace("{$}", number_hex)
+                } else {
+                    text.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let raw_texts = if texts == raw_texts {
+        None
+    } else {
+        Some(raw_texts)
+    };
+    RenderedDecodeTexts { texts, raw_texts }
+}
+
+fn render_numeric_annotation_value(value: i64) -> Option<String> {
+    let value = u32::try_from(value).ok()?;
+    let character = char::from_u32(value)?;
+    if character.is_ascii_graphic()
+        || character == ' '
+        || character == '\r'
+        || character == '\n'
+        || character == '\t'
+    {
+        Some(character.to_string())
+    } else {
+        None
     }
 }
 
@@ -850,12 +916,7 @@ impl OfflineDecodeRuntimeSession for dsview_sys::DecodeExecutionSession {
             .into_iter()
             .filter(|annotation| annotation.annotation_class >= 0)
             .map(|annotation| DecodeCapturedAnnotation {
-                texts: normalize_captured_annotation_texts(
-                    &annotation.decoder_id,
-                    annotation.annotation_class,
-                    &annotation.texts,
-                    annotation.numeric_value,
-                ),
+                texts: annotation.texts,
                 decoder_id: annotation.decoder_id,
                 start_sample: annotation.start_sample,
                 end_sample: annotation.end_sample,
@@ -874,12 +935,7 @@ impl OfflineDecodeRuntimeSession for dsview_sys::DecodeExecutionSession {
             .into_iter()
             .filter(|annotation| annotation.annotation_class >= 0)
             .map(|annotation| DecodeCapturedAnnotation {
-                texts: normalize_captured_annotation_texts(
-                    &annotation.decoder_id,
-                    annotation.annotation_class,
-                    &annotation.texts,
-                    annotation.numeric_value,
-                ),
+                texts: annotation.texts,
                 decoder_id: annotation.decoder_id,
                 start_sample: annotation.start_sample,
                 end_sample: annotation.end_sample,
@@ -890,24 +946,6 @@ impl OfflineDecodeRuntimeSession for dsview_sys::DecodeExecutionSession {
             })
             .collect())
     }
-}
-
-fn normalize_captured_annotation_texts(
-    decoder_id: &str,
-    annotation_class: i32,
-    texts: &[String],
-    numeric_value: Option<i64>,
-) -> Vec<String> {
-    let is_uart_data = decoder_id.ends_with(":uart") && annotation_class == 0;
-    let is_numeric_ignore_marker = texts.len() == 1 && texts[0] == "\n";
-    if is_uart_data && is_numeric_ignore_marker {
-        if let Some(value) = numeric_value.and_then(|value| u32::try_from(value).ok()) {
-            if let Some(character) = char::from_u32(value) {
-                return vec![character.to_string()];
-            }
-        }
-    }
-    texts.to_vec()
 }
 
 pub fn run_offline_decode<R: OfflineDecodeRuntime>(

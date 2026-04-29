@@ -812,6 +812,8 @@ mod tests {
                 annotation_class: 0,
                 annotation_type: 10,
                 texts: vec!["start".to_string()],
+                number_hex: None,
+                numeric_value: None,
             }])],
             SessionResponse::Ok(vec![DecodeCapturedAnnotation {
                 decoder_id: "eeprom24xx".to_string(),
@@ -820,6 +822,8 @@ mod tests {
                 annotation_class: 1,
                 annotation_type: 20,
                 texts: vec!["write".to_string()],
+                number_hex: None,
+                numeric_value: None,
             }]),
         );
         let input = fixture_input();
@@ -876,6 +880,8 @@ mod tests {
             annotation_class: 1,
             annotation_type: 20,
             texts: vec!["write".to_string()],
+            number_hex: None,
+            numeric_value: None,
         };
         let runtime = RecordingRuntime::with_send_responses(vec![
             SessionResponse::Ok(vec![retained.clone()]),
@@ -952,6 +958,8 @@ mod tests {
                 annotation_class: 0,
                 annotation_type: 10,
                 texts: vec!["start".to_string()],
+                number_hex: None,
+                numeric_value: None,
             }])],
             SessionResponse::Ok(vec![DecodeCapturedAnnotation {
                 decoder_id: "eeprom24xx".to_string(),
@@ -960,6 +968,8 @@ mod tests {
                 annotation_class: 1,
                 annotation_type: 20,
                 texts: vec!["write".to_string()],
+                number_hex: None,
+                numeric_value: None,
             }]),
         );
         let input = fixture_input();
