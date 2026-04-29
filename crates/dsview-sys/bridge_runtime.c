@@ -188,17 +188,36 @@ struct dsview_recorded_stream {
     uint16_t enabled_channel_count;
 };
 
+struct dsview_streaming_vcd_writer {
+    int active;
+    FILE *file;
+    char *path;
+    struct sr_dev_inst *sdi;
+    const struct sr_output *output;
+    unsigned long long samplerate_hz;
+    uint16_t enabled_channel_count;
+    unsigned long long exported_sample_count;
+    size_t packet_count;
+    unsigned long long output_bytes;
+    int saw_logic_packet;
+    int saw_end_packet;
+    int end_packet_status;
+    int status;
+};
+
 static struct dsview_bridge_api g_bridge_api;
 static struct dsview_decode_runtime_api g_decode_runtime_api;
 static struct dsview_bridge_acquisition_summary g_acquisition_summary;
 static int g_acquisition_callback_registration_active = 0;
 static struct dsview_recorded_stream g_recorded_stream;
+static struct dsview_streaming_vcd_writer g_streaming_vcd_writer;
 
 #define DSVIEW_BRIDGE_INITIAL_PACKET_CAPACITY 1024U
 static uint8_t g_enabled_channel_state[DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY];
 
 static void dsview_bridge_clear_registered_callbacks(void);
 static void dsview_bridge_reset_recorded_stream(void);
+static void dsview_bridge_reset_streaming_vcd_writer(void);
 static int dsview_bridge_prepare_recording_capacity(void);
 static int dsview_bridge_record_packet(const struct sr_datafeed_packet *packet);
 static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *request, const struct dsview_recorded_stream *stream, struct dsview_export_buffer *out_buffer);
@@ -210,6 +229,7 @@ static int dsview_bridge_emit_cross_logic_packet(
     const struct dsview_retained_packet *packet,
     uint16_t enabled_channel_count,
     GString **assembled_output);
+static int dsview_bridge_stream_emit_packet(struct dsview_retained_packet *packet);
 static uint16_t dsview_bridge_expected_logic_unitsize(void);
 static int dsview_bridge_get_optional_int16_config(int key, int *has_value, int *value);
 static int dsview_bridge_get_optional_double_config(int key, int *has_value, double *value);
@@ -2656,6 +2676,21 @@ static void dsview_bridge_reset_recorded_stream(void)
     g_recorded_stream.end_packet_status = -1;
 }
 
+static void dsview_bridge_reset_streaming_vcd_writer(void)
+{
+    if (g_streaming_vcd_writer.output != NULL && g_bridge_api.sr_output_free != NULL) {
+        g_bridge_api.sr_output_free(g_streaming_vcd_writer.output);
+    }
+    if (g_streaming_vcd_writer.file != NULL) {
+        fclose(g_streaming_vcd_writer.file);
+    }
+    dsview_bridge_free_vcd_device(g_streaming_vcd_writer.sdi);
+    free(g_streaming_vcd_writer.path);
+    memset(&g_streaming_vcd_writer, 0, sizeof(g_streaming_vcd_writer));
+    g_streaming_vcd_writer.end_packet_status = -1;
+    g_streaming_vcd_writer.status = SR_OK;
+}
+
 static uint16_t dsview_bridge_expected_logic_unitsize(void)
 {
     return g_recorded_stream.expected_unitsize != 0 ? g_recorded_stream.expected_unitsize : 1;
@@ -2692,6 +2727,12 @@ static int dsview_bridge_prepare_recording_capacity(void)
     unitsize = (size_t)((enabled_channel_count + 7) / 8);
     if (unitsize == 0) {
         unitsize = 1;
+    }
+
+    if (g_streaming_vcd_writer.active) {
+        g_recorded_stream.expected_unitsize = (uint16_t)unitsize;
+        g_recorded_stream.enabled_channel_count = (uint16_t)enabled_channel_count;
+        return SR_OK;
     }
 
     if (sample_limit > (unsigned long long)(SIZE_MAX / unitsize)) {
@@ -2773,6 +2814,10 @@ static int dsview_bridge_record_meta_packet(const struct sr_datafeed_packet *pac
         }
     }
 
+    if (g_streaming_vcd_writer.active) {
+        return dsview_bridge_stream_emit_packet(&retained);
+    }
+
     return dsview_bridge_append_retained_packet(&retained);
 }
 
@@ -2797,7 +2842,8 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
     if (logic->length > SIZE_MAX) {
         return DSVIEW_EXPORT_ERR_OVERFLOW;
     }
-    if (g_recorded_stream.payload_bytes > g_recorded_stream.payload_capacity - (size_t)logic->length) {
+    if (!g_streaming_vcd_writer.active
+        && g_recorded_stream.payload_bytes > g_recorded_stream.payload_capacity - (size_t)logic->length) {
         g_recorded_stream.overflowed = 1;
         return DSVIEW_EXPORT_ERR_OVERFLOW;
     }
@@ -2810,16 +2856,10 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
     retained.unitsize = unitsize;
     retained.data_error = logic->data_error;
     retained.error_pattern = logic->error_pattern;
-    retained.data = malloc(retained.length);
-    if (retained.data == NULL) {
-        return SR_ERR_MALLOC;
-    }
-    memcpy(retained.data, logic->data, retained.length);
 
     if (logic->format == LA_CROSS_DATA) {
         if (g_recorded_stream.enabled_channel_count == 0
             || ((size_t)logic->length % ((size_t)g_recorded_stream.enabled_channel_count * sizeof(uint64_t))) != 0) {
-            free(retained.data);
             return DSVIEW_EXPORT_ERR_GENERIC;
         }
         packet_samples = ((unsigned long long)logic->length * 8ULL)
@@ -2828,7 +2868,6 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
         packet_samples = logic->length / unitsize;
     }
     if (g_recorded_stream.sample_count > G_MAXUINT64 - packet_samples) {
-        free(retained.data);
         g_recorded_stream.overflowed = 1;
         return DSVIEW_EXPORT_ERR_OVERFLOW;
     }
@@ -2839,6 +2878,17 @@ static int dsview_bridge_record_logic_packet(const struct sr_datafeed_packet *pa
         g_recorded_stream.max_unitsize = retained.unitsize;
     }
     g_recorded_stream.saw_logic_packet = 1;
+
+    if (g_streaming_vcd_writer.active) {
+        retained.data = (uint8_t *)logic->data;
+        return dsview_bridge_stream_emit_packet(&retained);
+    }
+
+    retained.data = malloc(retained.length);
+    if (retained.data == NULL) {
+        return SR_ERR_MALLOC;
+    }
+    memcpy(retained.data, logic->data, retained.length);
 
     return dsview_bridge_append_retained_packet(&retained);
 }
@@ -2852,6 +2902,9 @@ static int dsview_bridge_record_end_packet(const struct sr_datafeed_packet *pack
     retained.status = packet->status;
     g_recorded_stream.saw_end_packet = 1;
     g_recorded_stream.end_packet_status = packet->status;
+    if (g_streaming_vcd_writer.active) {
+        return dsview_bridge_stream_emit_packet(&retained);
+    }
     return dsview_bridge_append_retained_packet(&retained);
 }
 
@@ -3043,6 +3096,7 @@ int dsview_bridge_load_library(const char *path)
 void dsview_bridge_unload_library(void)
 {
     dsview_bridge_clear_registered_callbacks();
+    dsview_bridge_reset_streaming_vcd_writer();
     dsview_bridge_reset_recorded_stream();
 
     if (g_bridge_api.library_handle != NULL) {
@@ -3971,6 +4025,24 @@ static int dsview_bridge_append_output_chunk(GString **assembled_output, GString
     return SR_OK;
 }
 
+static int dsview_bridge_write_output_chunk(FILE *file, GString *chunk)
+{
+    if (chunk == NULL) {
+        return SR_OK;
+    }
+    if (file == NULL) {
+        g_string_free(chunk, TRUE);
+        return DSVIEW_EXPORT_ERR_RUNTIME;
+    }
+    if (chunk->len > 0 && fwrite(chunk->str, 1, chunk->len, file) != chunk->len) {
+        g_string_free(chunk, TRUE);
+        return DSVIEW_EXPORT_ERR_RUNTIME;
+    }
+    g_streaming_vcd_writer.output_bytes += (unsigned long long)chunk->len;
+    g_string_free(chunk, TRUE);
+    return SR_OK;
+}
+
 static int dsview_bridge_emit_packet(const struct sr_output *output, const struct dsview_retained_packet *packet, GString **assembled_output)
 {
     struct sr_datafeed_packet replay_packet;
@@ -4112,6 +4184,63 @@ static int dsview_bridge_emit_cross_logic_packet(
 
     free(expanded);
     return status;
+}
+
+static int dsview_bridge_stream_emit_packet(struct dsview_retained_packet *packet)
+{
+    GString *chunk = NULL;
+    int status;
+
+    if (!g_streaming_vcd_writer.active) {
+        return SR_OK;
+    }
+    if (g_streaming_vcd_writer.status != SR_OK) {
+        return g_streaming_vcd_writer.status;
+    }
+    if (packet == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    if (packet->type == DSVIEW_EXPORT_PACKET_META && packet->samplerate_hz == 0) {
+        packet->samplerate_hz = g_streaming_vcd_writer.samplerate_hz;
+    }
+
+    if (packet->type == DSVIEW_EXPORT_PACKET_LOGIC && packet->format == LA_CROSS_DATA) {
+        status = dsview_bridge_emit_cross_logic_packet(
+            g_streaming_vcd_writer.output,
+            packet,
+            g_streaming_vcd_writer.enabled_channel_count,
+            &chunk);
+    } else {
+        status = dsview_bridge_emit_packet(g_streaming_vcd_writer.output, packet, &chunk);
+    }
+    if (status == SR_OK) {
+        status = dsview_bridge_write_output_chunk(g_streaming_vcd_writer.file, chunk);
+    } else if (chunk != NULL) {
+        g_string_free(chunk, TRUE);
+    }
+    if (status != SR_OK) {
+        g_streaming_vcd_writer.status = status;
+        return status;
+    }
+
+    if (packet->type == DSVIEW_EXPORT_PACKET_LOGIC) {
+        uint16_t logic_unitsize = packet->unitsize != 0 ? packet->unitsize : 1;
+        if (packet->format == LA_CROSS_DATA) {
+            g_streaming_vcd_writer.exported_sample_count +=
+                ((unsigned long long)packet->length * 8ULL)
+                / (unsigned long long)g_streaming_vcd_writer.enabled_channel_count;
+        } else {
+            g_streaming_vcd_writer.exported_sample_count +=
+                (unsigned long long)(packet->length / logic_unitsize);
+        }
+        g_streaming_vcd_writer.saw_logic_packet = 1;
+    } else if (packet->type == DSVIEW_EXPORT_PACKET_END) {
+        g_streaming_vcd_writer.saw_end_packet = 1;
+        g_streaming_vcd_writer.end_packet_status = packet->status;
+    }
+    g_streaming_vcd_writer.packet_count++;
+    return SR_OK;
 }
 
 static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *request, const struct dsview_recorded_stream *stream, struct dsview_export_buffer *out_buffer)
@@ -4266,6 +4395,121 @@ int dsview_bridge_ds_export_recorded_vcd(
 
     memset(out_buffer, 0, sizeof(*out_buffer));
     return dsview_bridge_export_stream(request, &g_recorded_stream, out_buffer);
+}
+
+int dsview_bridge_ds_begin_streaming_vcd(
+    const struct dsview_vcd_export_request *request,
+    const char *path)
+{
+    const struct sr_output_module *module;
+    struct dsview_retained_packet meta_packet;
+    int status;
+
+    if (request == NULL || path == NULL || path[0] == '\0') {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.sr_output_find == NULL || g_bridge_api.sr_output_new == NULL
+        || g_bridge_api.sr_output_send == NULL || g_bridge_api.sr_output_free == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+    if (request->samplerate_hz == 0) {
+        return DSVIEW_EXPORT_ERR_MISSING_SAMPLERATE;
+    }
+    if (request->enabled_channel_count == 0 || request->enabled_channel_count > UINT16_MAX) {
+        return DSVIEW_EXPORT_ERR_NO_ENABLED_CHANNELS;
+    }
+
+    dsview_bridge_reset_streaming_vcd_writer();
+
+    module = g_bridge_api.sr_output_find("vcd");
+    if (module == NULL) {
+        return DSVIEW_EXPORT_ERR_OUTPUT_MODULE;
+    }
+
+    status = dsview_bridge_build_vcd_device(request, &g_streaming_vcd_writer.sdi);
+    if (status != SR_OK) {
+        dsview_bridge_reset_streaming_vcd_writer();
+        return status;
+    }
+
+    g_streaming_vcd_writer.output = g_bridge_api.sr_output_new(
+        module,
+        NULL,
+        g_streaming_vcd_writer.sdi);
+    if (g_streaming_vcd_writer.output == NULL) {
+        dsview_bridge_reset_streaming_vcd_writer();
+        return DSVIEW_EXPORT_ERR_OUTPUT_MODULE;
+    }
+
+    g_streaming_vcd_writer.file = fopen(path, "wb");
+    if (g_streaming_vcd_writer.file == NULL) {
+        dsview_bridge_reset_streaming_vcd_writer();
+        return DSVIEW_EXPORT_ERR_RUNTIME;
+    }
+    g_streaming_vcd_writer.path = strdup(path);
+    if (g_streaming_vcd_writer.path == NULL) {
+        dsview_bridge_reset_streaming_vcd_writer();
+        return SR_ERR_MALLOC;
+    }
+
+    g_streaming_vcd_writer.active = 1;
+    g_streaming_vcd_writer.samplerate_hz = request->samplerate_hz;
+    g_streaming_vcd_writer.enabled_channel_count = (uint16_t)request->enabled_channel_count;
+    g_streaming_vcd_writer.end_packet_status = -1;
+    g_streaming_vcd_writer.status = SR_OK;
+
+    memset(&meta_packet, 0, sizeof(meta_packet));
+    meta_packet.type = DSVIEW_EXPORT_PACKET_META;
+    meta_packet.status = SR_PKT_OK;
+    meta_packet.samplerate_hz = request->samplerate_hz;
+    status = dsview_bridge_stream_emit_packet(&meta_packet);
+    if (status != SR_OK) {
+        dsview_bridge_reset_streaming_vcd_writer();
+        return status;
+    }
+
+    return SR_OK;
+}
+
+int dsview_bridge_ds_finish_streaming_vcd(struct dsview_stream_export_facts *out_facts)
+{
+    int status;
+
+    if (out_facts == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    memset(out_facts, 0, sizeof(*out_facts));
+    if (!g_streaming_vcd_writer.active) {
+        return DSVIEW_EXPORT_ERR_NO_STREAM;
+    }
+
+    status = g_streaming_vcd_writer.status;
+    if (status == SR_OK && !g_streaming_vcd_writer.saw_logic_packet) {
+        status = DSVIEW_EXPORT_ERR_NO_STREAM;
+    }
+    if (status == SR_OK && !g_streaming_vcd_writer.saw_end_packet) {
+        status = DSVIEW_EXPORT_ERR_NO_STREAM;
+    }
+    if (status == SR_OK && g_streaming_vcd_writer.end_packet_status != SR_PKT_OK) {
+        status = DSVIEW_EXPORT_ERR_BAD_END_STATUS;
+    }
+    if (status == SR_OK && fflush(g_streaming_vcd_writer.file) != 0) {
+        status = DSVIEW_EXPORT_ERR_RUNTIME;
+    }
+
+    if (status == SR_OK) {
+        out_facts->sample_count = g_streaming_vcd_writer.exported_sample_count;
+        out_facts->packet_count = g_streaming_vcd_writer.packet_count;
+        out_facts->output_bytes = g_streaming_vcd_writer.output_bytes;
+    }
+
+    dsview_bridge_reset_streaming_vcd_writer();
+    return status;
+}
+
+void dsview_bridge_ds_abort_streaming_vcd(void)
+{
+    dsview_bridge_reset_streaming_vcd_writer();
 }
 
 int dsview_bridge_render_vcd_from_samples(

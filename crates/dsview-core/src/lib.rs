@@ -4,6 +4,10 @@ use std::fmt;
 use std::fs;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -21,24 +25,19 @@ pub use device_option_validation::{
     OperationModeValidationCapabilities, ValidatedDeviceOptionRequest,
 };
 pub use device_options::{
-    normalize_device_options_snapshot, ChannelModeGroupSnapshot, ChannelModeOptionSnapshot,
-    CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot,
+    ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
+    DeviceIdentitySnapshot, DeviceOptionsSnapshot, EnumOptionSnapshot,
     LegacyThresholdMetadataSnapshot, RawOptionMetadataSnapshot, ThresholdCapabilitySnapshot,
+    normalize_device_options_snapshot,
 };
+use dsview_sys::{AcquisitionPacketStatus, DecodeRuntimeBridge, RuntimeBridge};
 pub use dsview_sys::{
-    decode_runtime_library_name, runtime_library_name, source_decode_runtime_library_path,
-    source_runtime_library_path, AcquisitionSummary, AcquisitionTerminalEvent, DeviceHandle,
-    DeviceSummary, DecodeExecutionLogicFormat, DecodeOptionValueKind, DecodeRuntimeError,
-    DecodeRuntimeErrorCode, DecodeSessionChannelBinding, DecodeSessionInstance,
-    DecodeSessionOption, DecodeSessionOptionValue, ExportErrorCode, NativeErrorCode,
-    RuntimeError, VcdExportFacts, VcdExportRequest,
-};
-pub use dsview_sys::{
-    DecodeRuntimeError as DecoderRuntimeError,
-    DecodeRuntimeErrorCode as DecoderRuntimeErrorCode,
-};
-use dsview_sys::{
-    AcquisitionPacketStatus, DecodeRuntimeBridge, RuntimeBridge,
+    AcquisitionSummary, AcquisitionTerminalEvent, DecodeExecutionLogicFormat,
+    DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode, DecodeSessionChannelBinding,
+    DecodeSessionInstance, DecodeSessionOption, DecodeSessionOptionValue, DeviceHandle,
+    DeviceSummary, ExportErrorCode, NativeErrorCode, RuntimeError, VcdExportFacts,
+    VcdExportRequest, decode_runtime_library_name, runtime_library_name,
+    source_decode_runtime_library_path, source_runtime_library_path,
 };
 use dsview_sys::{
     DecodeAnnotation as SysDecodeAnnotation, DecodeAnnotationRow as SysDecodeAnnotationRow,
@@ -46,10 +45,13 @@ use dsview_sys::{
     DecodeInput as SysDecodeInput, DecodeOption as SysDecodeOption,
     DecodeOutput as SysDecodeOutput,
 };
+pub use dsview_sys::{
+    DecodeRuntimeError as DecoderRuntimeError, DecodeRuntimeErrorCode as DecoderRuntimeErrorCode,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 const DSLOGIC_PLUS_MODELS: &[&str] = &["DSLogic PLus"];
 const DSLOGIC_PLUS_PRIMARY_FIRMWARES: &[&str] = &["DSLogicPlus.fw"];
@@ -190,7 +192,11 @@ pub fn normalize_decoder_descriptor(decoder: SysDecodeDecoder) -> DecoderDescrip
         longname: decoder.longname,
         description: decoder.description,
         license: decoder.license,
-        inputs: decoder.inputs.into_iter().map(normalize_decoder_input).collect(),
+        inputs: decoder
+            .inputs
+            .into_iter()
+            .map(normalize_decoder_input)
+            .collect(),
         outputs: decoder
             .outputs
             .into_iter()
@@ -264,9 +270,7 @@ fn normalize_decoder_annotation(annotation: SysDecodeAnnotation) -> DecoderAnnot
     }
 }
 
-fn normalize_decoder_annotation_row(
-    row: SysDecodeAnnotationRow,
-) -> DecoderAnnotationRowDescriptor {
+fn normalize_decoder_annotation_row(row: SysDecodeAnnotationRow) -> DecoderAnnotationRowDescriptor {
     DecoderAnnotationRowDescriptor {
         id: row.id,
         description: row.description,
@@ -445,8 +449,9 @@ impl OfflineDecodeInput {
                 self.unitsize as usize
             }
             OfflineDecodeDataFormat::CrossLogic => {
-                let channel_count =
-                    self.channel_count.ok_or(OfflineDecodeInputError::MissingChannelCount)?;
+                let channel_count = self
+                    .channel_count
+                    .ok_or(OfflineDecodeInputError::MissingChannelCount)?;
                 if channel_count == 0 {
                     return Err(OfflineDecodeInputError::InvalidChannelCount);
                 }
@@ -797,13 +802,14 @@ pub fn run_offline_decode<R: OfflineDecodeRuntime>(
 ) -> Result<OfflineDecodeResult, OfflineDecodeRunError> {
     input.validate_basic_shape()?;
 
-    let mut session = runtime
-        .create_session()
-        .map_err(|source| OfflineDecodeRunError::Runtime {
-            operation: "create session",
-            source,
-            diagnostics: OfflineDecodeDiagnostics::default(),
-        })?;
+    let mut session =
+        runtime
+            .create_session()
+            .map_err(|source| OfflineDecodeRunError::Runtime {
+                operation: "create session",
+                source,
+                diagnostics: OfflineDecodeDiagnostics::default(),
+            })?;
     let mut diagnostics = OfflineDecodeDiagnostics::default();
 
     session
@@ -845,7 +851,9 @@ pub fn run_offline_decode<R: OfflineDecodeRuntime>(
             })?;
         diagnostics.completed_chunks += 1;
         diagnostics.consumed_samples += input.sample_count_for_len(chunk.len())?;
-        diagnostics.partial_annotations.extend(chunk_annotations.clone());
+        diagnostics
+            .partial_annotations
+            .extend(chunk_annotations.clone());
         annotations.extend(chunk_annotations);
         abs_start_sample = diagnostics.consumed_samples;
     }
@@ -857,7 +865,9 @@ pub fn run_offline_decode<R: OfflineDecodeRuntime>(
             source,
             diagnostics: diagnostics.clone(),
         })?;
-    diagnostics.partial_annotations.extend(tail_annotations.clone());
+    diagnostics
+        .partial_annotations
+        .extend(tail_annotations.clone());
     annotations.extend(tail_annotations);
 
     Ok(OfflineDecodeResult {
@@ -912,11 +922,9 @@ fn decode_session_options(
 
 fn offline_decode_logic_format(input: &OfflineDecodeInput) -> DecodeExecutionLogicFormat {
     match input.format {
-        OfflineDecodeDataFormat::SplitLogic => {
-            DecodeExecutionLogicFormat::SplitLogic {
-                unitsize: input.unitsize,
-            }
-        }
+        OfflineDecodeDataFormat::SplitLogic => DecodeExecutionLogicFormat::SplitLogic {
+            unitsize: input.unitsize,
+        },
         OfflineDecodeDataFormat::CrossLogic => DecodeExecutionLogicFormat::CrossLogic {
             channel_count: input.channel_count.expect("validated before execution"),
         },
@@ -1124,18 +1132,18 @@ fn validate_option_values(
     options: &BTreeMap<String, DecodeOptionValue>,
 ) -> Result<(), DecodeConfigValidationError> {
     for (option_id, value) in options {
-        let metadata =
-            descriptor
-                .options
-                .iter()
-                .find(|option| option.id == *option_id)
-                .ok_or_else(|| DecodeConfigValidationError::UnknownOption {
-                    decoder_id: descriptor.id.clone(),
-                    option_id: option_id.clone(),
-                })?;
+        let metadata = descriptor
+            .options
+            .iter()
+            .find(|option| option.id == *option_id)
+            .ok_or_else(|| DecodeConfigValidationError::UnknownOption {
+                decoder_id: descriptor.id.clone(),
+                option_id: option_id.clone(),
+            })?;
         let actual_kind = decode_option_value_kind(value);
 
-        if metadata.value_kind != DecodeOptionValueKind::Unknown && metadata.value_kind != actual_kind
+        if metadata.value_kind != DecodeOptionValueKind::Unknown
+            && metadata.value_kind != actual_kind
         {
             return Err(DecodeConfigValidationError::InvalidOptionValueType {
                 decoder_id: descriptor.id.clone(),
@@ -1147,7 +1155,11 @@ fn validate_option_values(
 
         if !metadata.values.is_empty() {
             let rendered_value = render_decode_option_value(value);
-            if !metadata.values.iter().any(|candidate| candidate == &rendered_value) {
+            if !metadata
+                .values
+                .iter()
+                .any(|candidate| candidate == &rendered_value)
+            {
                 return Err(DecodeConfigValidationError::InvalidOptionValue {
                     decoder_id: descriptor.id.clone(),
                     option_id: option_id.clone(),
@@ -1176,10 +1188,11 @@ fn ensure_stack_link(
         .map(|input| input.id.clone())
         .collect::<Vec<_>>();
 
-    if upstream_outputs
-        .iter()
-        .any(|output_id| downstream_inputs.iter().any(|input_id| input_id == output_id))
-    {
+    if upstream_outputs.iter().any(|output_id| {
+        downstream_inputs
+            .iter()
+            .any(|input_id| input_id == output_id)
+    }) {
         return Ok(());
     }
 
@@ -1281,16 +1294,16 @@ impl DecodeDiscoveryPaths {
         runtime_override: Option<impl AsRef<Path>>,
         decoder_dir_override: Option<impl AsRef<Path>>,
     ) -> Result<Self, DecodeBringUpError> {
-        let executable =
-            env::current_exe().map_err(|error| DecodeBringUpError::CurrentExecutableUnavailable {
+        let executable = env::current_exe().map_err(|error| {
+            DecodeBringUpError::CurrentExecutableUnavailable {
                 detail: error.to_string(),
-            })?;
-        let executable_dir =
-            executable
-                .parent()
-                .ok_or_else(|| DecodeBringUpError::CurrentExecutableUnavailable {
-                    detail: format!("path `{}` has no parent directory", executable.display()),
-                })?;
+            }
+        })?;
+        let executable_dir = executable.parent().ok_or_else(|| {
+            DecodeBringUpError::CurrentExecutableUnavailable {
+                detail: format!("path `{}` has no parent directory", executable.display()),
+            }
+        })?;
         Self::from_executable_dir(executable_dir, runtime_override, decoder_dir_override)
     }
 
@@ -1384,12 +1397,19 @@ pub struct AcquisitionPreflight {
 pub enum CaptureCompletion {
     CleanSuccess,
     StoppedByDuration,
+    StoppedByInterrupt,
     StartFailure,
     Detached,
     RunFailure,
     Incomplete,
     CleanupFailure,
     Timeout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlannedStop {
+    Duration,
+    Interrupt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1491,6 +1511,13 @@ pub struct CaptureRunSummary {
     pub summary: AcquisitionSummary,
     pub cleanup: CaptureCleanup,
     pub effective_device_options: Option<EffectiveDeviceOptionState>,
+    pub streamed_vcd: Option<StreamedVcdArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamedVcdArtifact {
+    pub temp_path: PathBuf,
+    pub export: VcdExportFacts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1605,12 +1632,14 @@ pub enum CaptureExportError {
     MetadataWriteFailed { path: PathBuf, detail: String },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct CaptureRunRequest {
     pub selection_handle: SelectionHandle,
     pub config: CaptureConfigRequest,
     pub validated_device_options: Option<ValidatedDeviceOptionRequest>,
     pub stop_after: Option<Duration>,
+    pub stop_on_interrupt: Option<Arc<AtomicBool>>,
+    pub stream_vcd_path: Option<PathBuf>,
     pub wait_timeout: Duration,
     pub poll_interval: Duration,
 }
@@ -1858,7 +1887,10 @@ impl DecodeDiscovery {
         Ok(normalize_decoder_registry(decoders))
     }
 
-    pub fn decode_inspect(&self, decoder_id: &str) -> Result<DecoderDescriptor, DecodeBringUpError> {
+    pub fn decode_inspect(
+        &self,
+        decoder_id: &str,
+    ) -> Result<DecoderDescriptor, DecodeBringUpError> {
         let decoder = self
             .runtime
             .decode_inspect(decoder_id)
@@ -1986,9 +2018,11 @@ pub fn apply_validated_device_options(
     )?;
 
     if let Some(stop_option_code) = request.stop_option_code {
-        apply_device_option_step(&mut applied_steps, DeviceOptionApplyStep::StopOption, || {
-            runtime.set_stop_option(stop_option_code)
-        })?;
+        apply_device_option_step(
+            &mut applied_steps,
+            DeviceOptionApplyStep::StopOption,
+            || runtime.set_stop_option(stop_option_code),
+        )?;
     }
 
     apply_device_option_step(
@@ -2016,12 +2050,16 @@ pub fn apply_validated_device_options(
         DeviceOptionApplyStep::EnabledChannels,
         || runtime.set_enabled_channels(&request.enabled_channels, total_channel_count),
     )?;
-    apply_device_option_step(&mut applied_steps, DeviceOptionApplyStep::SampleLimit, || {
-        runtime.set_sample_limit(request.effective_sample_limit)
-    })?;
-    apply_device_option_step(&mut applied_steps, DeviceOptionApplyStep::SampleRate, || {
-        runtime.set_samplerate(request.sample_rate_hz)
-    })?;
+    apply_device_option_step(
+        &mut applied_steps,
+        DeviceOptionApplyStep::SampleLimit,
+        || runtime.set_sample_limit(request.effective_sample_limit),
+    )?;
+    apply_device_option_step(
+        &mut applied_steps,
+        DeviceOptionApplyStep::SampleRate,
+        || runtime.set_samplerate(request.sample_rate_hz),
+    )?;
 
     effective_device_option_state(runtime, &request.enabled_channels).map_err(|runtime_error| {
         DeviceOptionApplyFailure {
@@ -2246,6 +2284,15 @@ impl Discovery {
         selection_handle: SelectionHandle,
         config: &ValidatedCaptureConfig,
     ) -> Result<CaptureSession<'_>, CaptureRunError> {
+        self.prepare_capture_session_with_streaming(selection_handle, config, None)
+    }
+
+    fn prepare_capture_session_with_streaming(
+        &self,
+        selection_handle: SelectionHandle,
+        config: &ValidatedCaptureConfig,
+        stream_vcd_path: Option<&Path>,
+    ) -> Result<CaptureSession<'_>, CaptureRunError> {
         let request = CaptureConfigRequest {
             sample_rate_hz: config.sample_rate_hz,
             sample_limit: config.requested_sample_limit,
@@ -2268,10 +2315,31 @@ impl Discovery {
         self.runtime
             .reset_acquisition_summary()
             .map_err(BringUpError::Runtime)?;
-        self.runtime
-            .register_acquisition_callbacks()
-            .map_err(BringUpError::Runtime)?;
+        self.begin_streaming_vcd_if_requested(&request, stream_vcd_path)?;
+        if let Err(error) = self.runtime.register_acquisition_callbacks() {
+            if stream_vcd_path.is_some() {
+                self.runtime.abort_streaming_vcd();
+            }
+            return Err(BringUpError::Runtime(error).into());
+        }
         Ok(CaptureSession { opened })
+    }
+
+    fn begin_streaming_vcd_if_requested(
+        &self,
+        request: &CaptureConfigRequest,
+        stream_vcd_path: Option<&Path>,
+    ) -> Result<(), BringUpError> {
+        if let Some(path) = stream_vcd_path {
+            let export_request = VcdExportRequest {
+                samplerate_hz: request.sample_rate_hz,
+                enabled_channels: request.enabled_channels.iter().copied().collect(),
+            };
+            self.runtime
+                .begin_streaming_vcd_to_path(&export_request, path)
+                .map_err(BringUpError::Runtime)?;
+        }
+        Ok(())
     }
 
     fn prepare_option_aware_capture_session(
@@ -2287,18 +2355,19 @@ impl Discovery {
                 )))
             })?
             .total_channel_count;
-        let effective_device_options = apply_capture_request_device_options(
-            &self.runtime,
-            request,
-            total_channel_count,
-        )?
-        .expect("option-aware session requires validated device options");
+        let effective_device_options =
+            apply_capture_request_device_options(&self.runtime, request, total_channel_count)?
+                .expect("option-aware session requires validated device options");
         self.runtime
             .reset_acquisition_summary()
             .map_err(BringUpError::Runtime)?;
-        self.runtime
-            .register_acquisition_callbacks()
-            .map_err(BringUpError::Runtime)?;
+        self.begin_streaming_vcd_if_requested(&request.config, request.stream_vcd_path.as_deref())?;
+        if let Err(error) = self.runtime.register_acquisition_callbacks() {
+            if request.stream_vcd_path.is_some() {
+                self.runtime.abort_streaming_vcd();
+            }
+            return Err(BringUpError::Runtime(error).into());
+        }
         Ok((CaptureSession { opened }, effective_device_options))
     }
 
@@ -2307,20 +2376,24 @@ impl Discovery {
         request: &CaptureRunRequest,
     ) -> Result<CaptureRunSummary, CaptureRunError> {
         let (session, effective_device_options) = if request.validated_device_options.is_some() {
-                let (session, effective_device_options) =
-                    self.prepare_option_aware_capture_session(request)?;
-                (session, Some(effective_device_options))
-            } else {
-                let validated = self
-                    .validate_capture_config(request.selection_handle, &request.config)
-                    .map_err(|error| {
-                        CaptureRunError::BringUp(BringUpError::Runtime(
-                            RuntimeError::InvalidArgument(error.to_string()),
-                        ))
-                    })?;
-                let session = self.prepare_capture_session(request.selection_handle, &validated)?;
-                (session, None)
-            };
+            let (session, effective_device_options) =
+                self.prepare_option_aware_capture_session(request)?;
+            (session, Some(effective_device_options))
+        } else {
+            let validated = self
+                .validate_capture_config(request.selection_handle, &request.config)
+                .map_err(|error| {
+                    CaptureRunError::BringUp(BringUpError::Runtime(RuntimeError::InvalidArgument(
+                        error.to_string(),
+                    )))
+                })?;
+            let session = self.prepare_capture_session_with_streaming(
+                request.selection_handle,
+                &validated,
+                request.stream_vcd_path.as_deref(),
+            )?;
+            (session, None)
+        };
 
         let started = self
             .runtime
@@ -2328,6 +2401,9 @@ impl Discovery {
             .map_err(BringUpError::Runtime)?;
         if !started.start_status.is_ok() {
             let cleanup = session.cleanup(&self.runtime, true);
+            if request.stream_vcd_path.is_some() {
+                self.runtime.abort_streaming_vcd();
+            }
             return Err(if cleanup.succeeded() {
                 CaptureRunError::StartFailed {
                     code: started.start_status,
@@ -2344,13 +2420,14 @@ impl Discovery {
         }
 
         let started_at = Instant::now();
-        let deadline = started_at + request.stop_after.unwrap_or(request.wait_timeout);
-        let mut summary = started.summary;
-        while Instant::now() < deadline {
-            summary = self
-                .runtime
-                .acquisition_summary()
-                .map_err(BringUpError::Runtime)?;
+        let timeout_deadline = started_at + request.wait_timeout;
+        let duration_deadline = request.stop_after.map(|duration| started_at + duration);
+        let mut summary = self
+            .runtime
+            .acquisition_summary()
+            .map_err(BringUpError::Runtime)?;
+        let mut planned_stop = None;
+        loop {
             if matches!(
                 summary.terminal_event,
                 AcquisitionTerminalEvent::NormalEnd
@@ -2360,12 +2437,33 @@ impl Discovery {
             {
                 break;
             }
+            let now = Instant::now();
+            if request
+                .stop_on_interrupt
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::SeqCst))
+            {
+                planned_stop = Some(PlannedStop::Interrupt);
+                break;
+            }
+            if duration_deadline.is_some_and(|deadline| now >= deadline) {
+                planned_stop = Some(PlannedStop::Duration);
+                break;
+            }
+            if request.stop_after.is_none()
+                && request.stop_on_interrupt.is_none()
+                && now >= timeout_deadline
+            {
+                break;
+            }
             thread::sleep(request.poll_interval);
+            summary = self
+                .runtime
+                .acquisition_summary()
+                .map_err(BringUpError::Runtime)?;
         }
 
-        let mut planned_stop_requested = false;
-        if request.stop_after.is_some() && summary.is_collecting {
-            planned_stop_requested = true;
+        if planned_stop.is_some() && summary.is_collecting {
             summary = self
                 .runtime
                 .stop_collect()
@@ -2384,14 +2482,17 @@ impl Discovery {
 
         let completion = if summary.is_collecting {
             CaptureCompletion::Timeout
-        } else if planned_stop_requested {
-            classify_planned_stop_completion(&summary)
+        } else if let Some(planned_stop) = planned_stop {
+            classify_planned_stop_completion(&summary, planned_stop)
         } else {
             classify_capture_completion(&summary)
         };
         let cleanup = session.cleanup(&self.runtime, true);
 
         if !cleanup.succeeded() {
+            if request.stream_vcd_path.is_some() {
+                self.runtime.abort_streaming_vcd();
+            }
             return Err(CaptureRunError::CleanupFailed {
                 during: capture_completion_stage(completion),
                 summary,
@@ -2399,15 +2500,36 @@ impl Discovery {
             });
         }
 
-        match completion {
-            CaptureCompletion::CleanSuccess | CaptureCompletion::StoppedByDuration => {
-                Ok(CaptureRunSummary {
-                    completion,
-                    summary,
-                    cleanup,
-                    effective_device_options,
-                })
+        let streamed_vcd = if let Some(path) = request.stream_vcd_path.as_ref() {
+            match completion {
+                CaptureCompletion::CleanSuccess
+                | CaptureCompletion::StoppedByDuration
+                | CaptureCompletion::StoppedByInterrupt => Some(StreamedVcdArtifact {
+                    temp_path: path.clone(),
+                    export: self
+                        .runtime
+                        .finish_streaming_vcd()
+                        .map_err(BringUpError::Runtime)?,
+                }),
+                _ => {
+                    self.runtime.abort_streaming_vcd();
+                    None
+                }
             }
+        } else {
+            None
+        };
+
+        match completion {
+            CaptureCompletion::CleanSuccess
+            | CaptureCompletion::StoppedByDuration
+            | CaptureCompletion::StoppedByInterrupt => Ok(CaptureRunSummary {
+                completion,
+                summary,
+                cleanup,
+                effective_device_options,
+                streamed_vcd,
+            }),
             CaptureCompletion::StartFailure => Err(CaptureRunError::StartFailed {
                 code: NativeErrorCode::from_raw(summary.start_status),
                 last_error: summary.last_error,
@@ -2645,7 +2767,10 @@ fn classify_capture_completion(summary: &AcquisitionSummary) -> CaptureCompletio
     }
 }
 
-fn classify_planned_stop_completion(summary: &AcquisitionSummary) -> CaptureCompletion {
+fn classify_planned_stop_completion(
+    summary: &AcquisitionSummary,
+    planned_stop: PlannedStop,
+) -> CaptureCompletion {
     if !NativeErrorCode::from_raw(summary.start_status).is_ok() {
         return CaptureCompletion::StartFailure;
     }
@@ -2673,7 +2798,10 @@ fn classify_planned_stop_completion(summary: &AcquisitionSummary) -> CaptureComp
     }
 
     match summary.end_packet_status {
-        Some(AcquisitionPacketStatus::Ok) => CaptureCompletion::StoppedByDuration,
+        Some(AcquisitionPacketStatus::Ok) => match planned_stop {
+            PlannedStop::Duration => CaptureCompletion::StoppedByDuration,
+            PlannedStop::Interrupt => CaptureCompletion::StoppedByInterrupt,
+        },
         None | Some(_) => CaptureCompletion::Incomplete,
     }
 }
@@ -2682,6 +2810,7 @@ fn capture_completion_stage(completion: CaptureCompletion) -> &'static str {
     match completion {
         CaptureCompletion::CleanSuccess => "clean_success",
         CaptureCompletion::StoppedByDuration => "stopped_by_duration",
+        CaptureCompletion::StoppedByInterrupt => "stopped_by_interrupt",
         CaptureCompletion::StartFailure => "start_failure",
         CaptureCompletion::Detached => "detach",
         CaptureCompletion::RunFailure => "run_failure",
@@ -2750,6 +2879,7 @@ fn completion_name(completion: CaptureCompletion) -> String {
     match completion {
         CaptureCompletion::CleanSuccess => "clean_success".to_string(),
         CaptureCompletion::StoppedByDuration => "stopped_by_duration".to_string(),
+        CaptureCompletion::StoppedByInterrupt => "stopped_by_interrupt".to_string(),
         CaptureCompletion::StartFailure => "start_failure".to_string(),
         CaptureCompletion::Detached => "detach".to_string(),
         CaptureCompletion::RunFailure => "run_failure".to_string(),
@@ -2799,7 +2929,8 @@ fn resolve_channel_mode_option_id(
             .iter()
             .find(|group| group.operation_mode_code == mode_code)
             .and_then(|group| {
-                group.channel_modes
+                group
+                    .channel_modes
                     .iter()
                     .find(|mode| mode.native_code == channel_mode_code)
             })
@@ -2871,17 +3002,13 @@ fn inherited_capture_device_option_snapshot(
     validated_config: &ValidatedCaptureConfig,
 ) -> Result<CaptureDeviceOptionSnapshot, String> {
     Ok(CaptureDeviceOptionSnapshot {
-        operation_mode_id: snapshot
-            .current
-            .operation_mode_id
-            .clone()
-            .ok_or_else(|| "missing `operation_mode_id` for baseline capture reporting".to_string())?,
+        operation_mode_id: snapshot.current.operation_mode_id.clone().ok_or_else(|| {
+            "missing `operation_mode_id` for baseline capture reporting".to_string()
+        })?,
         stop_option_id: snapshot.current.stop_option_id.clone(),
-        channel_mode_id: snapshot
-            .current
-            .channel_mode_id
-            .clone()
-            .ok_or_else(|| "missing `channel_mode_id` for baseline capture reporting".to_string())?,
+        channel_mode_id: snapshot.current.channel_mode_id.clone().ok_or_else(|| {
+            "missing `channel_mode_id` for baseline capture reporting".to_string()
+        })?,
         enabled_channels: validated_config.enabled_channels.clone(),
         threshold_volts: snapshot.threshold.current_volts,
         filter_id: snapshot.current.filter_id.clone(),
@@ -2980,6 +3107,23 @@ fn write_metadata_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn promote_streamed_vcd(temp_path: &Path, final_path: &Path) -> Result<(), String> {
+    let parent = final_path.parent().ok_or_else(|| {
+        format!(
+            "VCD path `{}` has no parent directory",
+            final_path.display()
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+
+    if let Err(error) = fs::rename(temp_path, final_path) {
+        let _ = fs::remove_file(temp_path);
+        return Err(error.to_string());
+    }
+
+    Ok(())
+}
+
 impl Discovery {
     pub fn export_clean_capture_vcd(
         &self,
@@ -2987,7 +3131,9 @@ impl Discovery {
     ) -> Result<CaptureExportSuccess, CaptureExportError> {
         if !matches!(
             request.capture.completion,
-            CaptureCompletion::CleanSuccess | CaptureCompletion::StoppedByDuration
+            CaptureCompletion::CleanSuccess
+                | CaptureCompletion::StoppedByDuration
+                | CaptureCompletion::StoppedByInterrupt
         ) {
             return Err(CaptureExportError::CaptureNotExportable {
                 completion: request.capture.completion,
@@ -2999,14 +3145,24 @@ impl Discovery {
             resolve_capture_artifact_paths(&request.vcd_path, request.metadata_path.as_ref())?;
         let vcd_path = artifact_paths.vcd_path;
         let metadata_path = artifact_paths.metadata_path;
-        let export = self
-            .runtime
-            .export_recorded_vcd_to_path(&export_request, &vcd_path)
-            .map_err(|error| CaptureExportError::ExportFailed {
-                path: vcd_path.clone(),
-                kind: export_failure_kind(&error),
-                detail: error.to_string(),
+        let export = if let Some(streamed_vcd) = request.capture.streamed_vcd.as_ref() {
+            promote_streamed_vcd(&streamed_vcd.temp_path, &vcd_path).map_err(|detail| {
+                CaptureExportError::ExportFailed {
+                    path: vcd_path.clone(),
+                    kind: CaptureExportFailureKind::Runtime,
+                    detail,
+                }
             })?;
+            streamed_vcd.export.clone()
+        } else {
+            self.runtime
+                .export_recorded_vcd_to_path(&export_request, &vcd_path)
+                .map_err(|error| CaptureExportError::ExportFailed {
+                    path: vcd_path.clone(),
+                    kind: export_failure_kind(&error),
+                    detail: error.to_string(),
+                })?
+        };
         let metadata =
             build_capture_metadata(request, &metadata_path, &export).map_err(|detail| {
                 CaptureExportError::MetadataSerializationFailed {
@@ -3101,9 +3257,10 @@ fn ensure_decoder_script_dir(path: &Path) -> Result<(), DecodeBringUpError> {
         });
     }
 
-    let metadata = fs::metadata(path).map_err(|_| DecodeBringUpError::UnreadableDecoderDirectory {
-        path: path.to_path_buf(),
-    })?;
+    let metadata =
+        fs::metadata(path).map_err(|_| DecodeBringUpError::UnreadableDecoderDirectory {
+            path: path.to_path_buf(),
+        })?;
     if !metadata.is_dir() {
         return Err(DecodeBringUpError::UnreadableDecoderDirectory {
             path: path.to_path_buf(),
@@ -3472,6 +3629,7 @@ mod tests {
                     ..CaptureCleanup::default()
                 },
                 effective_device_options: None,
+                streamed_vcd: None,
             },
             validated_config: ValidatedCaptureConfig {
                 sample_rate_hz: 100_000_000,

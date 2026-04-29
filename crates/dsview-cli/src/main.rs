@@ -2,49 +2,51 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
-    DecodeInspectResponse, DecodeListResponse, DecodeValidateResponse,
-    build_decode_contract_failure_report, build_decode_failure_report_response,
-    build_decode_inspect_response, build_decode_list_response,
-    build_decode_report_response, build_decode_validate_response,
+    DecodeInspectResponse, DecodeListResponse, DecodeReportWriteError, DecodeValidateResponse,
+    DeviceOptionsResponse, build_decode_contract_failure_report,
+    build_decode_failure_report_response, build_decode_inspect_response,
+    build_decode_list_response, build_decode_report_response, build_decode_validate_response,
     build_device_options_response,
     capture_device_options::{
-        resolve_capture_device_option_request, CaptureDeviceOptionParseError,
+        CaptureDeviceOptionParseError, resolve_capture_device_option_request,
     },
     render_decode_inspect_text, render_decode_list_text, render_decode_report_text,
     render_decode_validate_text, render_device_options_text, serialize_decode_report,
-    write_decode_report, DecodeReportWriteError, DeviceOptionsResponse,
+    write_decode_report,
 };
 use dsview_core::{
-    DecodeBringUpError, DecodeConfigLoadError, DecodeConfigParseError,
-    DecodeConfigValidationError, DecodeDiscovery, DecodeFailureReport, DecodeReport,
-    DecoderRuntimeError, DecoderRuntimeErrorCode,
-    describe_native_error, resolve_capture_artifact_paths,
-    decode_inspect as core_decode_inspect, decode_list as core_decode_list,
-    parse_decode_config_slice, run_offline_decode as core_run_offline_decode,
-    validate_decode_config,
-    validate_decode_config_file as core_validate_decode_config_file,
-    validated_capture_config_from_device_options, AcquisitionSummary, AcquisitionTerminalEvent,
-    BringUpError, CaptureArtifactPathError, CaptureCleanup, CaptureCompletion, CaptureConfigError,
-    CaptureConfigRequest, CaptureDeviceOptionFacts, CaptureExportError, CaptureRunError,
-    CaptureRunRequest, ChannelModeGroupSnapshot, ChannelModeOptionSnapshot,
-    CurrentDeviceOptionValues, DeviceIdentitySnapshot, DeviceOptionApplyFailure,
+    AcquisitionSummary, AcquisitionTerminalEvent, BringUpError, CaptureArtifactPathError,
+    CaptureCleanup, CaptureCompletion, CaptureConfigError, CaptureConfigRequest,
+    CaptureDeviceOptionFacts, CaptureExportError, CaptureRunError, CaptureRunRequest,
+    ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
+    DecodeBringUpError, DecodeConfigLoadError, DecodeConfigParseError, DecodeConfigValidationError,
+    DecodeDiscovery, DecodeFailureReport, DecodeReport, DecoderRuntimeError,
+    DecoderRuntimeErrorCode, DeviceIdentitySnapshot, DeviceOptionApplyFailure,
     DeviceOptionValidationCapabilities, DeviceOptionValidationError, DeviceOptionsSnapshot,
     Discovery, EnumOptionSnapshot, MetadataAcquisitionInfo, MetadataArtifactInfo,
     MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OfflineDecodeInput,
     OfflineDecodeInputError, OfflineDecodeRunError, OperationModeValidationCapabilities,
     RuntimeError, SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
-    ValidatedCaptureConfig, ValidatedDecodeConfig,
+    ValidatedCaptureConfig, ValidatedDecodeConfig, decode_inspect as core_decode_inspect,
+    decode_list as core_decode_list, describe_native_error, parse_decode_config_slice,
+    resolve_capture_artifact_paths, run_offline_decode as core_run_offline_decode,
+    validate_decode_config, validate_decode_config_file as core_validate_decode_config_file,
+    validated_capture_config_from_device_options,
 };
 use serde::Serialize;
 
 #[cfg(debug_assertions)]
 use dsview_core::{
-    DecodeCapturedAnnotation, DecodeExecutionLogicFormat, DecodeRuntimeError,
-    OfflineDecodeRuntime, OfflineDecodeRuntimeSession,
+    DecodeCapturedAnnotation, DecodeExecutionLogicFormat, DecodeRuntimeError, OfflineDecodeRuntime,
+    OfflineDecodeRuntimeSession,
 };
 
 const BUILD_VERSION: &str = match option_env!("DSVIEW_BUILD_VERSION") {
@@ -143,7 +145,10 @@ struct DecodeListArgs {
 struct DecodeInspectArgs {
     #[command(flatten)]
     decode: SharedDecodeArgs,
-    #[arg(value_name = "DECODER_ID", help = "Canonical upstream decoder id from `decode list`")]
+    #[arg(
+        value_name = "DECODER_ID",
+        help = "Canonical upstream decoder id from `decode list`"
+    )]
     decoder_id: String,
 }
 
@@ -282,9 +287,15 @@ struct CaptureArgs {
     #[arg(
         long = "duration-ms",
         value_name = "MS",
+        conflicts_with = "until_interrupt",
         help = "Planned stream capture duration before actively stopping collection"
     )]
     duration_ms: Option<u64>,
+    #[arg(
+        long = "until-interrupt",
+        help = "Continue capture until Ctrl-C/SIGINT, then stop collection and finalize artifacts"
+    )]
+    until_interrupt: bool,
     #[arg(
         long = "poll-interval-ms",
         default_value_t = 50,
@@ -542,7 +553,12 @@ fn run_decode_validate(args: DecodeValidateArgs) -> Result<(), FailedCommand> {
         &args.config,
     )
     .map_err(|error| command_error(args.decode.format, classify_decode_validate_error(&error)))?;
-    let bound_channel_ids = validated.decoder.channels.keys().cloned().collect::<Vec<_>>();
+    let bound_channel_ids = validated
+        .decoder
+        .channels
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
     let response = build_decode_validate_response(
         validated.version,
         validated.decoder.descriptor.id.clone(),
@@ -1231,6 +1247,16 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         resolve_capture_artifact_paths(&args.output, args.metadata_output.as_ref()).map_err(
             |error| command_error(args.runtime.format, classify_artifact_path_error(&error)),
         )?;
+    let interrupt_flag = if args.until_interrupt {
+        Some(install_interrupt_flag(args.runtime.format)?)
+    } else {
+        None
+    };
+    let streaming_vcd_path = if args.duration_ms.is_some() || args.until_interrupt {
+        Some(streaming_vcd_temp_path(&artifact_paths.vcd_path))
+    } else {
+        None
+    };
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
     let mut validated_device_options = None;
@@ -1297,6 +1323,8 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         config: config_request,
         validated_device_options: validated_device_options.clone(),
         stop_after: args.duration_ms.map(Duration::from_millis),
+        stop_on_interrupt: interrupt_flag.clone(),
+        stream_vcd_path: streaming_vcd_path.clone(),
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
@@ -1353,6 +1381,36 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     };
     render_capture_success(args.runtime.format, &response);
     Ok(())
+}
+
+fn install_interrupt_flag(format: OutputFormat) -> Result<Arc<AtomicBool>, FailedCommand> {
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let handler_flag = Arc::clone(&interrupted);
+    ctrlc::set_handler(move || {
+        handler_flag.store(true, Ordering::SeqCst);
+    })
+    .map_err(|error| {
+        command_error(
+            format,
+            ErrorResponse {
+                code: "interrupt_handler_failed",
+                message: "failed to install Ctrl-C handler for capture shutdown".to_string(),
+                detail: Some(error.to_string()),
+                native_error: None,
+                terminal_event: None,
+                cleanup: None,
+            },
+        )
+    })?;
+    Ok(interrupted)
+}
+
+fn streaming_vcd_temp_path(vcd_path: &Path) -> PathBuf {
+    let extension = vcd_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("vcd");
+    vcd_path.with_extension(format!("{extension}.streaming.tmp"))
 }
 
 #[cfg(debug_assertions)]
@@ -1465,6 +1523,7 @@ fn run_capture_with_test_fixture(
                 summary: fixture_acquisition_summary(),
                 cleanup: fixture_capture_cleanup(),
                 effective_device_options,
+                streamed_vcd: None,
             };
             let export_request = dsview_core::CaptureExportRequest {
                 capture: capture.clone(),
@@ -1746,7 +1805,10 @@ fn classify_decode_runtime_error(error: &DecoderRuntimeError) -> ErrorResponse {
     match error {
         DecoderRuntimeError::LibraryLoad { path, detail } => ErrorResponse {
             code: "decode_runtime_load_failed",
-            message: format!("failed to load decoder runtime `{}`: {detail}", path.display()),
+            message: format!(
+                "failed to load decoder runtime `{}`: {detail}",
+                path.display()
+            ),
             detail: None,
             native_error: None,
             terminal_event: None,
@@ -1784,8 +1846,9 @@ fn classify_decode_runtime_error(error: &DecoderRuntimeError) -> ErrorResponse {
                 DecoderRuntimeErrorCode::OutOfMemory => "decode_out_of_memory",
                 DecoderRuntimeErrorCode::InputShape => "decode_input_invalid",
                 DecoderRuntimeErrorCode::SessionState => "decode_runtime_failed",
-                DecoderRuntimeErrorCode::Upstream
-                | DecoderRuntimeErrorCode::Unknown(_) => "decode_runtime_failed",
+                DecoderRuntimeErrorCode::Upstream | DecoderRuntimeErrorCode::Unknown(_) => {
+                    "decode_runtime_failed"
+                }
             },
             message: format!("decoder runtime operation `{operation}` failed: {detail}"),
             detail: None,
@@ -2010,10 +2073,9 @@ fn classify_decode_report_write_error(error: &DecodeReportWriteError) -> ErrorRe
             terminal_event: None,
             cleanup: None,
         },
-        DecodeReportWriteError::Write { path, detail } => classify_decode_output_write_error(
-            path,
-            &std::io::Error::other(detail.clone()),
-        ),
+        DecodeReportWriteError::Write { path, detail } => {
+            classify_decode_output_write_error(path, &std::io::Error::other(detail.clone()))
+        }
     }
 }
 
@@ -2764,6 +2826,7 @@ fn completion_name(completion: CaptureCompletion) -> &'static str {
     match completion {
         CaptureCompletion::CleanSuccess => "clean_success",
         CaptureCompletion::StoppedByDuration => "stopped_by_duration",
+        CaptureCompletion::StoppedByInterrupt => "stopped_by_interrupt",
         CaptureCompletion::StartFailure => "start_failure",
         CaptureCompletion::Detached => "detach",
         CaptureCompletion::RunFailure => "run_failure",
@@ -3058,8 +3121,8 @@ mod tests {
         AcquisitionSummary, AcquisitionTerminalEvent, CaptureConfigError, ChannelModeGroupSnapshot,
         ChannelModeOptionSnapshot, CurrentDeviceOptionValues, DecodeRunStatus,
         DeviceIdentitySnapshot, DeviceOptionValidationCapabilities, EnumOptionSnapshot,
-        OfflineDecodeDiagnostics, OfflineDecodeRunError,
-        OperationModeValidationCapabilities, SelectionHandle, ThresholdCapabilitySnapshot,
+        OfflineDecodeDiagnostics, OfflineDecodeRunError, OperationModeValidationCapabilities,
+        SelectionHandle, ThresholdCapabilitySnapshot,
     };
 
     #[test]
@@ -3253,12 +3316,8 @@ mod tests {
             diagnostics: OfflineDecodeDiagnostics::default(),
         };
         let classified = classify_decode_run_error(&runtime_error);
-        let report = build_decode_failure_report_response(
-            "fixture:i2c",
-            1,
-            Some(4),
-            &runtime_error,
-        );
+        let report =
+            build_decode_failure_report_response("fixture:i2c", 1, Some(4), &runtime_error);
         let response = build_decode_run_failure_response(report, &classified);
         let value = serde_json::to_value(&response).expect("failure response should serialize");
 
@@ -3558,16 +3617,20 @@ mod tests {
 
         assert_eq!(error.code, "device_option_apply_failed");
         assert_eq!(error.native_error, Some("SR_ERR_ARG"));
-        assert!(error
-            .detail
-            .as_deref()
-            .unwrap()
-            .contains("applied_steps=operation_mode,stop_option"));
-        assert!(error
-            .detail
-            .as_deref()
-            .unwrap()
-            .contains("failed_step=filter"));
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("applied_steps=operation_mode,stop_option")
+        );
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("failed_step=filter")
+        );
     }
 
     fn sample_device_options_snapshot() -> dsview_core::DeviceOptionsSnapshot {
@@ -3731,6 +3794,7 @@ mod tests {
             metadata_output: None,
             wait_timeout_ms: 10_000,
             duration_ms: None,
+            until_interrupt: false,
             poll_interval_ms: 50,
         }
     }

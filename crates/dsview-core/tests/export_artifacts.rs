@@ -45,6 +45,7 @@ fn clean_capture() -> CaptureRunSummary {
             ..CaptureCleanup::default()
         },
         effective_device_options: None,
+        streamed_vcd: None,
     }
 }
 

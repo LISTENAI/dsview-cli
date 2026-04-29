@@ -104,6 +104,12 @@ unsafe extern "C" {
         request: *const RawVcdExportRequest,
         out_buffer: *mut RawExportBuffer,
     ) -> c_int;
+    fn dsview_bridge_ds_begin_streaming_vcd(
+        request: *const RawVcdExportRequest,
+        path: *const c_char,
+    ) -> c_int;
+    fn dsview_bridge_ds_finish_streaming_vcd(out_facts: *mut RawStreamExportFacts) -> c_int;
+    fn dsview_bridge_ds_abort_streaming_vcd();
     fn dsview_bridge_render_vcd_from_samples(
         request: *const RawVcdExportRequest,
         sample_bytes: *const u8,
@@ -135,10 +141,7 @@ unsafe extern "C" {
     fn dsview_decode_last_loader_error() -> *const c_char;
     fn dsview_decode_last_error() -> *const c_char;
     fn dsview_decode_last_error_name() -> *const c_char;
-    fn dsview_decode_list(
-        out_list: *mut *mut RawDecodeListEntry,
-        out_count: *mut usize,
-    ) -> c_int;
+    fn dsview_decode_list(out_list: *mut *mut RawDecodeListEntry, out_count: *mut usize) -> c_int;
     fn dsview_decode_free_list(list: *mut RawDecodeListEntry, count: usize);
     fn dsview_decode_inspect(
         decoder_id: *const c_char,
@@ -352,6 +355,14 @@ struct RawExportBuffer {
     len: usize,
     sample_count: u64,
     packet_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawStreamExportFacts {
+    sample_count: u64,
+    packet_count: usize,
+    output_bytes: u64,
 }
 
 #[repr(C)]
@@ -876,11 +887,7 @@ pub struct DeviceHandle(u64);
 
 impl DeviceHandle {
     pub const fn new(raw: u64) -> Option<Self> {
-        if raw == 0 {
-            None
-        } else {
-            Some(Self(raw))
-        }
+        if raw == 0 { None } else { Some(Self(raw)) }
     }
 
     pub const fn raw(self) -> u64 {
@@ -1456,33 +1463,27 @@ impl RuntimeBridge {
     }
 
     pub fn current_operation_mode_code(&self) -> Result<Option<i16>, RuntimeError> {
-        Ok(
-            get_optional_i32_config(
-                "ds_get_current_operation_mode",
-                dsview_bridge_ds_get_current_operation_mode,
-            )?
-            .map(|value| value as i16),
-        )
+        Ok(get_optional_i32_config(
+            "ds_get_current_operation_mode",
+            dsview_bridge_ds_get_current_operation_mode,
+        )?
+        .map(|value| value as i16))
     }
 
     pub fn current_stop_option_code(&self) -> Result<Option<i16>, RuntimeError> {
-        Ok(
-            get_optional_i32_config(
-                "ds_get_current_stop_option",
-                dsview_bridge_ds_get_current_stop_option,
-            )?
-            .map(|value| value as i16),
-        )
+        Ok(get_optional_i32_config(
+            "ds_get_current_stop_option",
+            dsview_bridge_ds_get_current_stop_option,
+        )?
+        .map(|value| value as i16))
     }
 
     pub fn current_channel_mode_code(&self) -> Result<Option<i16>, RuntimeError> {
-        Ok(
-            get_optional_i32_config(
-                "ds_get_current_channel_mode",
-                dsview_bridge_ds_get_current_channel_mode,
-            )?
-            .map(|value| value as i16),
-        )
+        Ok(get_optional_i32_config(
+            "ds_get_current_channel_mode",
+            dsview_bridge_ds_get_current_channel_mode,
+        )?
+        .map(|value| value as i16))
     }
 
     pub fn current_threshold_volts(&self) -> Result<Option<f64>, RuntimeError> {
@@ -1504,7 +1505,10 @@ impl RuntimeBridge {
     }
 
     pub fn current_samplerate(&self) -> Result<Option<u64>, RuntimeError> {
-        get_optional_u64_config("ds_get_current_samplerate", dsview_bridge_ds_get_current_samplerate)
+        get_optional_u64_config(
+            "ds_get_current_samplerate",
+            dsview_bridge_ds_get_current_samplerate,
+        )
     }
 
     pub fn register_acquisition_callbacks(
@@ -1613,6 +1617,43 @@ impl RuntimeBridge {
             packet_count: export.packet_count,
             output_bytes: export.bytes.len() as u64,
         })
+    }
+
+    pub fn begin_streaming_vcd_to_path(
+        &self,
+        request: &VcdExportRequest,
+        path: impl AsRef<Path>,
+    ) -> Result<(), RuntimeError> {
+        let raw_request = raw_vcd_export_request(request)?;
+        let path = path.as_ref();
+        let path_text = path.to_string_lossy();
+        let c_path =
+            CString::new(path_text.as_bytes()).map_err(|_| RuntimeError::PathContainsNul {
+                path: path.to_path_buf(),
+            })?;
+        export_call_status("ds_begin_streaming_vcd", unsafe {
+            dsview_bridge_ds_begin_streaming_vcd(&raw_request, c_path.as_ptr())
+        })
+    }
+
+    pub fn finish_streaming_vcd(&self) -> Result<VcdExportFacts, RuntimeError> {
+        let mut raw = RawStreamExportFacts {
+            sample_count: 0,
+            packet_count: 0,
+            output_bytes: 0,
+        };
+        export_call_status("ds_finish_streaming_vcd", unsafe {
+            dsview_bridge_ds_finish_streaming_vcd(&mut raw)
+        })?;
+        Ok(VcdExportFacts {
+            sample_count: raw.sample_count,
+            packet_count: raw.packet_count,
+            output_bytes: raw.output_bytes,
+        })
+    }
+
+    pub fn abort_streaming_vcd(&self) {
+        unsafe { dsview_bridge_ds_abort_streaming_vcd() };
     }
 
     pub fn render_vcd_from_samples(
@@ -1889,9 +1930,11 @@ impl DecodeRuntimeBridge {
                 initialized: Cell::new(false),
                 python_home_guard: RefCell::new(None),
             }),
-            DSVIEW_BRIDGE_ERR_ARG | DSVIEW_DECODE_ERR_ARG => Err(DecodeRuntimeError::InvalidArgument(
-                "decode runtime library path must not be empty".to_string(),
-            )),
+            DSVIEW_BRIDGE_ERR_ARG | DSVIEW_DECODE_ERR_ARG => {
+                Err(DecodeRuntimeError::InvalidArgument(
+                    "decode runtime library path must not be empty".to_string(),
+                ))
+            }
             DSVIEW_BRIDGE_ERR_DLOPEN => Err(DecodeRuntimeError::LibraryLoad {
                 path: path.to_path_buf(),
                 detail: decode_last_loader_error(),
@@ -1973,9 +2016,11 @@ impl DecodeRuntimeBridge {
     }
 
     pub fn decode_inspect(&self, decoder_id: &str) -> Result<DecodeDecoder, DecodeRuntimeError> {
-        let decoder_id = CString::new(decoder_id).map_err(|_| DecodeRuntimeError::InvalidArgument(
-            "decoder id must not contain interior NUL bytes".to_string(),
-        ))?;
+        let decoder_id = CString::new(decoder_id).map_err(|_| {
+            DecodeRuntimeError::InvalidArgument(
+                "decoder id must not contain interior NUL bytes".to_string(),
+            )
+        })?;
         let mut raw = RawDecodeMetadata {
             id: std::ptr::null_mut(),
             name: std::ptr::null_mut(),
@@ -2069,12 +2114,10 @@ impl DecodeExecutionSession {
         decode_native_call_status("decode session new", unsafe {
             dsview_decode_session_new(&mut raw)
         })?;
-        let raw = NonNull::new(raw).ok_or_else(|| {
-            DecodeRuntimeError::NativeCall {
-                operation: "decode session new",
-                code: DecodeRuntimeErrorCode::SessionState,
-                detail: "decode session bridge returned a null session".to_string(),
-            }
+        let raw = NonNull::new(raw).ok_or_else(|| DecodeRuntimeError::NativeCall {
+            operation: "decode session new",
+            code: DecodeRuntimeErrorCode::SessionState,
+            detail: "decode session bridge returned a null session".to_string(),
         })?;
         Ok(Self {
             raw,
@@ -2432,7 +2475,8 @@ fn validate_logic_packet_lengths(
     };
     if lengths.is_empty() {
         return Err(DecodeRuntimeError::InvalidArgument(
-            "logic packet lengths must not be empty when packet boundaries are supplied".to_string(),
+            "logic packet lengths must not be empty when packet boundaries are supplied"
+                .to_string(),
         ));
     }
 
@@ -2668,8 +2712,9 @@ fn decode_optional_c_string(raw: *const c_char) -> Result<Option<String>, Decode
 }
 
 fn decode_required_c_string(raw: *const c_char) -> Result<String, DecodeRuntimeError> {
-    decode_optional_c_string(raw)?
-        .ok_or_else(|| DecodeRuntimeError::InvalidArgument("expected non-null decode string".to_string()))
+    decode_optional_c_string(raw)?.ok_or_else(|| {
+        DecodeRuntimeError::InvalidArgument("expected non-null decode string".to_string())
+    })
 }
 
 fn decode_string_array(
@@ -2690,24 +2735,16 @@ fn decode_inputs(
     raw: *const *mut c_char,
     count: usize,
 ) -> Result<Vec<DecodeInput>, DecodeRuntimeError> {
-    decode_string_array(raw, count).map(|values| {
-        values
-            .into_iter()
-            .map(|id| DecodeInput { id })
-            .collect()
-    })
+    decode_string_array(raw, count)
+        .map(|values| values.into_iter().map(|id| DecodeInput { id }).collect())
 }
 
 fn decode_outputs(
     raw: *const *mut c_char,
     count: usize,
 ) -> Result<Vec<DecodeOutput>, DecodeRuntimeError> {
-    decode_string_array(raw, count).map(|values| {
-        values
-            .into_iter()
-            .map(|id| DecodeOutput { id })
-            .collect()
-    })
+    decode_string_array(raw, count)
+        .map(|values| values.into_iter().map(|id| DecodeOutput { id }).collect())
 }
 
 fn decode_channel_from_raw(raw: &RawDecodeChannel) -> Result<DecodeChannel, DecodeRuntimeError> {
@@ -2755,7 +2792,8 @@ fn decode_annotation_from_raw(
 fn decode_annotation_row_from_raw(
     raw: &RawDecodeAnnotationRow,
 ) -> Result<DecodeAnnotationRow, DecodeRuntimeError> {
-    let annotation_classes = if raw.annotation_classes.is_null() || raw.annotation_class_count == 0 {
+    let annotation_classes = if raw.annotation_classes.is_null() || raw.annotation_class_count == 0
+    {
         Vec::new()
     } else {
         unsafe { std::slice::from_raw_parts(raw.annotation_classes, raw.annotation_class_count) }
@@ -2777,7 +2815,10 @@ fn decode_captured_annotation_from_raw(
     } else {
         unsafe { std::slice::from_raw_parts(raw.texts, raw.text_count) }
             .iter()
-            .map(|text| decode_optional_c_string((*text).cast_const()).map(|value| value.unwrap_or_default()))
+            .map(|text| {
+                decode_optional_c_string((*text).cast_const())
+                    .map(|value| value.unwrap_or_default())
+            })
             .collect::<Result<Vec<_>, _>>()?
     };
 
@@ -2791,7 +2832,9 @@ fn decode_captured_annotation_from_raw(
     })
 }
 
-fn decode_list_entry_from_raw(raw: &RawDecodeListEntry) -> Result<DecodeDecoder, DecodeRuntimeError> {
+fn decode_list_entry_from_raw(
+    raw: &RawDecodeListEntry,
+) -> Result<DecodeDecoder, DecodeRuntimeError> {
     Ok(DecodeDecoder {
         id: decode_required_c_string(raw.id.cast_const())?,
         name: decode_required_c_string(raw.name.cast_const())?,

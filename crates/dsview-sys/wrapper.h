@@ -50,6 +50,12 @@ struct dsview_export_buffer {
     size_t packet_count;
 };
 
+struct dsview_stream_export_facts {
+    unsigned long long sample_count;
+    size_t packet_count;
+    unsigned long long output_bytes;
+};
+
 enum dsview_bridge_status {
     DSVIEW_BRIDGE_OK = 0,
     DSVIEW_BRIDGE_ERR_ARG = -1,
@@ -330,6 +336,11 @@ int dsview_bridge_ds_get_acquisition_summary(struct dsview_bridge_acquisition_su
 int dsview_bridge_ds_export_recorded_vcd(
     const struct dsview_vcd_export_request *request,
     struct dsview_export_buffer *out_buffer);
+int dsview_bridge_ds_begin_streaming_vcd(
+    const struct dsview_vcd_export_request *request,
+    const char *path);
+int dsview_bridge_ds_finish_streaming_vcd(struct dsview_stream_export_facts *out_facts);
+void dsview_bridge_ds_abort_streaming_vcd(void);
 int dsview_bridge_render_vcd_from_samples(
     const struct dsview_vcd_export_request *request,
     const uint8_t *sample_bytes,
