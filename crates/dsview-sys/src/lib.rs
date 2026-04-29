@@ -416,6 +416,9 @@ struct RawDecodeCapturedAnnotation {
     ann_type: c_int,
     texts: *mut *mut c_char,
     text_count: usize,
+    number_hex: *mut c_char,
+    has_numeric_value: c_int,
+    numeric_value: i64,
 }
 
 #[repr(C)]
@@ -701,6 +704,8 @@ pub struct DecodeCapturedAnnotation {
     pub annotation_class: i32,
     pub annotation_type: i32,
     pub texts: Vec<String>,
+    pub number_hex: Option<String>,
+    pub numeric_value: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2829,6 +2834,12 @@ fn decode_captured_annotation_from_raw(
         annotation_class: raw.ann_class,
         annotation_type: raw.ann_type,
         texts,
+        number_hex: decode_optional_c_string(raw.number_hex.cast_const())?,
+        numeric_value: if raw.has_numeric_value != 0 {
+            Some(raw.numeric_value)
+        } else {
+            None
+        },
     })
 }
 

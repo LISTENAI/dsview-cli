@@ -251,14 +251,87 @@ fn normalize_decoder_channel(channel: SysDecodeChannel) -> DecoderChannelDescrip
 }
 
 fn normalize_decoder_option(option: SysDecodeOption) -> DecoderOptionDescriptor {
+    let value_kind = infer_decoder_option_value_kind(
+        option.value_kind,
+        option.default_value.as_deref(),
+        &option.values,
+    );
     DecoderOptionDescriptor {
         id: option.id,
         idn: option.idn,
         description: option.description,
-        value_kind: option.value_kind,
-        default_value: option.default_value,
-        values: option.values,
+        value_kind,
+        default_value: option
+            .default_value
+            .map(|value| normalize_decoder_option_metadata_value(value_kind, value)),
+        values: option
+            .values
+            .into_iter()
+            .map(|value| normalize_decoder_option_metadata_value(value_kind, value))
+            .collect(),
     }
+}
+
+fn infer_decoder_option_value_kind(
+    value_kind: DecodeOptionValueKind,
+    default_value: Option<&str>,
+    values: &[String],
+) -> DecodeOptionValueKind {
+    if value_kind != DecodeOptionValueKind::Unknown {
+        return value_kind;
+    }
+
+    default_value
+        .into_iter()
+        .chain(values.iter().map(String::as_str))
+        .find_map(infer_decoder_option_metadata_value_kind)
+        .unwrap_or(DecodeOptionValueKind::Unknown)
+}
+
+fn infer_decoder_option_metadata_value_kind(value: &str) -> Option<DecodeOptionValueKind> {
+    let value = value.trim();
+    if value.starts_with('\'') && value.ends_with('\'') {
+        return Some(DecodeOptionValueKind::String);
+    }
+    if normalized_integer_metadata_value(value).is_some() {
+        return Some(DecodeOptionValueKind::Integer);
+    }
+    if value.parse::<f64>().is_ok() {
+        return Some(DecodeOptionValueKind::Float);
+    }
+    None
+}
+
+fn normalize_decoder_option_metadata_value(
+    value_kind: DecodeOptionValueKind,
+    value: String,
+) -> String {
+    match value_kind {
+        DecodeOptionValueKind::String => value
+            .strip_prefix('\'')
+            .and_then(|stripped| stripped.strip_suffix('\''))
+            .unwrap_or(&value)
+            .to_string(),
+        DecodeOptionValueKind::Integer => normalized_integer_metadata_value(&value)
+            .map(|parsed| parsed.to_string())
+            .unwrap_or(value),
+        DecodeOptionValueKind::Float => value
+            .strip_prefix("double ")
+            .unwrap_or(&value)
+            .parse::<f64>()
+            .map(|parsed| parsed.to_string())
+            .unwrap_or(value),
+        DecodeOptionValueKind::Unknown => value,
+    }
+}
+
+fn normalized_integer_metadata_value(value: &str) -> Option<i64> {
+    value
+        .trim()
+        .strip_prefix("int64 ")
+        .unwrap_or(value.trim())
+        .parse::<i64>()
+        .ok()
 }
 
 fn normalize_decoder_annotation(annotation: SysDecodeAnnotation) -> DecoderAnnotationDescriptor {
@@ -515,6 +588,10 @@ pub struct DecodeCapturedAnnotation {
     pub annotation_class: i32,
     pub annotation_type: i32,
     pub texts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numeric_value: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -543,6 +620,10 @@ pub struct DecodeEvent {
     pub annotation_class: i32,
     pub annotation_type: i32,
     pub texts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numeric_value: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -577,6 +658,8 @@ impl From<&DecodeCapturedAnnotation> for DecodeEvent {
             annotation_class: annotation.annotation_class,
             annotation_type: annotation.annotation_type,
             texts: annotation.texts.clone(),
+            number_hex: annotation.number_hex.clone(),
+            numeric_value: annotation.numeric_value,
         }
     }
 }
@@ -767,12 +850,19 @@ impl OfflineDecodeRuntimeSession for dsview_sys::DecodeExecutionSession {
             .into_iter()
             .filter(|annotation| annotation.annotation_class >= 0)
             .map(|annotation| DecodeCapturedAnnotation {
+                texts: normalize_captured_annotation_texts(
+                    &annotation.decoder_id,
+                    annotation.annotation_class,
+                    &annotation.texts,
+                    annotation.numeric_value,
+                ),
                 decoder_id: annotation.decoder_id,
                 start_sample: annotation.start_sample,
                 end_sample: annotation.end_sample,
                 annotation_class: annotation.annotation_class,
                 annotation_type: annotation.annotation_type,
-                texts: annotation.texts,
+                number_hex: annotation.number_hex,
+                numeric_value: annotation.numeric_value,
             })
             .collect())
     }
@@ -784,15 +874,40 @@ impl OfflineDecodeRuntimeSession for dsview_sys::DecodeExecutionSession {
             .into_iter()
             .filter(|annotation| annotation.annotation_class >= 0)
             .map(|annotation| DecodeCapturedAnnotation {
+                texts: normalize_captured_annotation_texts(
+                    &annotation.decoder_id,
+                    annotation.annotation_class,
+                    &annotation.texts,
+                    annotation.numeric_value,
+                ),
                 decoder_id: annotation.decoder_id,
                 start_sample: annotation.start_sample,
                 end_sample: annotation.end_sample,
                 annotation_class: annotation.annotation_class,
                 annotation_type: annotation.annotation_type,
-                texts: annotation.texts,
+                number_hex: annotation.number_hex,
+                numeric_value: annotation.numeric_value,
             })
             .collect())
     }
+}
+
+fn normalize_captured_annotation_texts(
+    decoder_id: &str,
+    annotation_class: i32,
+    texts: &[String],
+    numeric_value: Option<i64>,
+) -> Vec<String> {
+    let is_uart_data = decoder_id.ends_with(":uart") && annotation_class == 0;
+    let is_numeric_ignore_marker = texts.len() == 1 && texts[0] == "\n";
+    if is_uart_data && is_numeric_ignore_marker {
+        if let Some(value) = numeric_value.and_then(|value| u32::try_from(value).ok()) {
+            if let Some(character) = char::from_u32(value) {
+                return vec![character.to_string()];
+            }
+        }
+    }
+    texts.to_vec()
 }
 
 pub fn run_offline_decode<R: OfflineDecodeRuntime>(
@@ -812,20 +927,19 @@ pub fn run_offline_decode<R: OfflineDecodeRuntime>(
             })?;
     let mut diagnostics = OfflineDecodeDiagnostics::default();
 
-    session
-        .set_samplerate_hz(input.samplerate_hz)
-        .map_err(|source| OfflineDecodeRunError::Runtime {
-            operation: "set samplerate",
-            source,
-            diagnostics: diagnostics.clone(),
-        })?;
-
     let root = build_root_decode_session(config);
     let stack = build_stacked_decode_sessions(config);
     session
         .build_linear_stack(&root, &stack)
         .map_err(|source| OfflineDecodeRunError::Runtime {
             operation: "build linear stack",
+            source,
+            diagnostics: diagnostics.clone(),
+        })?;
+    session
+        .set_samplerate_hz(input.samplerate_hz)
+        .map_err(|source| OfflineDecodeRunError::Runtime {
+            operation: "set samplerate",
             source,
             diagnostics: diagnostics.clone(),
         })?;
@@ -1054,6 +1168,36 @@ pub fn validate_decode_config(
         decoder: validated_decoder,
         stack: validated_stack,
     })
+}
+
+pub fn decode_registry_for_config(
+    discovery: &DecodeDiscovery,
+    config: &DecodeConfig,
+) -> Result<Vec<DecoderDescriptor>, DecodeBringUpError> {
+    let mut registry = discovery.decode_list()?;
+    let referenced_ids = referenced_decode_ids(config);
+
+    for decoder_id in referenced_ids {
+        if let Some(index) = registry
+            .iter()
+            .position(|descriptor| descriptor.id == decoder_id)
+        {
+            registry[index] = discovery.decode_inspect(&decoder_id)?;
+        }
+    }
+
+    Ok(registry)
+}
+
+fn referenced_decode_ids(config: &DecodeConfig) -> Vec<String> {
+    let mut ids = Vec::with_capacity(config.stack.len() + 1);
+    ids.push(config.decoder.id.clone());
+    for entry in &config.stack {
+        if !ids.iter().any(|id| id == &entry.id) {
+            ids.push(entry.id.clone());
+        }
+    }
+    ids
 }
 
 fn validate_root_decode_decoder(
@@ -1941,7 +2085,8 @@ pub fn validate_decode_config_file(
         }
     })?;
     let config = parse_decode_config_slice(&config_bytes)?;
-    let registry = decode_list(runtime_override, decoder_dir_override)?;
+    let discovery = DecodeDiscovery::connect_auto(runtime_override, decoder_dir_override)?;
+    let registry = decode_registry_for_config(&discovery, &config)?;
     validate_decode_config(&config, &registry).map_err(DecodeConfigLoadError::from)
 }
 

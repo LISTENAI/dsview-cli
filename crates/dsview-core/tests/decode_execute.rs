@@ -4,12 +4,11 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use dsview_core::{
-    run_offline_decode, DecodeCapturedAnnotation, DecodeExecutionLogicFormat, DecodeOptionValue,
-    DecodeRunStatus, DecodeRuntimeError, DecoderChannelDescriptor, DecoderDescriptor,
-    DecoderInputDescriptor, DecoderOutputDescriptor, OfflineDecodeDataFormat,
+    DecodeCapturedAnnotation, DecodeExecutionLogicFormat, DecodeOptionValue, DecodeRunStatus,
+    DecodeRuntimeError, DecoderChannelDescriptor, DecoderDescriptor, DecoderInputDescriptor,
+    DecoderOutputDescriptor, OFFLINE_DECODE_FIXED_CHUNK_BYTES, OfflineDecodeDataFormat,
     OfflineDecodeInput, OfflineDecodeRuntime, OfflineDecodeRuntimeSession, ValidatedDecodeConfig,
-    ValidatedDecodeDecoderConfig, ValidatedDecodeStackEntryConfig,
-    OFFLINE_DECODE_FIXED_CHUNK_BYTES,
+    ValidatedDecodeDecoderConfig, ValidatedDecodeStackEntryConfig, run_offline_decode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +23,7 @@ struct RecordingState {
     root: Option<dsview_core::DecodeSessionInstance>,
     stack: Vec<dsview_core::DecodeSessionInstance>,
     chunks: Vec<RecordedChunk>,
+    operations: Vec<&'static str>,
     send_responses: VecDeque<SessionResponse>,
     end_response: Option<SessionResponse>,
 }
@@ -88,6 +88,7 @@ impl OfflineDecodeRuntime for RecordingRuntime {
 
 impl OfflineDecodeRuntimeSession for RecordingSession {
     fn set_samplerate_hz(&mut self, _samplerate_hz: u64) -> Result<(), DecodeRuntimeError> {
+        self.state.borrow_mut().operations.push("set_samplerate");
         Ok(())
     }
 
@@ -97,12 +98,14 @@ impl OfflineDecodeRuntimeSession for RecordingSession {
         stack: &[dsview_core::DecodeSessionInstance],
     ) -> Result<(), DecodeRuntimeError> {
         let mut state = self.state.borrow_mut();
+        state.operations.push("build_linear_stack");
         state.root = Some(root.clone());
         state.stack = stack.to_vec();
         Ok(())
     }
 
     fn start(&mut self) -> Result<(), DecodeRuntimeError> {
+        self.state.borrow_mut().operations.push("start");
         Ok(())
     }
 
@@ -139,6 +142,28 @@ impl OfflineDecodeRuntimeSession for RecordingSession {
 }
 
 #[test]
+fn offline_decode_builds_stack_before_setting_samplerate() {
+    let runtime = RecordingRuntime::default();
+    let input = OfflineDecodeInput {
+        samplerate_hz: 1_000_000,
+        format: OfflineDecodeDataFormat::SplitLogic,
+        sample_bytes: vec![0x00, 0x01, 0x02, 0x03],
+        unitsize: 1,
+        channel_count: None,
+        logic_packet_lengths: None,
+    };
+
+    run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect("decode run should succeed");
+
+    let state = runtime.state.borrow();
+    assert_eq!(
+        state.operations,
+        vec!["build_linear_stack", "set_samplerate", "start"]
+    );
+}
+
+#[test]
 fn offline_decode_uses_absolute_sample_cursor_across_chunks() {
     let runtime = RecordingRuntime::default();
     let input = OfflineDecodeInput {
@@ -150,8 +175,8 @@ fn offline_decode_uses_absolute_sample_cursor_across_chunks() {
         logic_packet_lengths: None,
     };
 
-    let result =
-        run_offline_decode(&validated_decode_config(), &input, &runtime).expect("decode run should succeed");
+    let result = run_offline_decode(&validated_decode_config(), &input, &runtime)
+        .expect("decode run should succeed");
 
     assert!(result.annotations().is_empty());
 
@@ -212,7 +237,10 @@ fn offline_decode_root_only_binds_logic_channels() {
         .expect("decode run should succeed");
 
     let state = runtime.state.borrow();
-    let root = state.root.as_ref().expect("root instance should be recorded");
+    let root = state
+        .root
+        .as_ref()
+        .expect("root instance should be recorded");
     assert_eq!(root.channel_bindings.len(), 2);
     assert_eq!(state.stack.len(), 1);
     assert!(state.stack[0].channel_bindings.is_empty());
@@ -220,7 +248,8 @@ fn offline_decode_root_only_binds_logic_channels() {
 
 #[test]
 fn offline_decode_fails_when_session_send_fails() {
-    let runtime = RecordingRuntime::with_send_responses(vec![SessionResponse::Err("send exploded")]);
+    let runtime =
+        RecordingRuntime::with_send_responses(vec![SessionResponse::Err("send exploded")]);
     let input = OfflineDecodeInput {
         samplerate_hz: 1_000_000,
         format: OfflineDecodeDataFormat::SplitLogic,
@@ -265,6 +294,8 @@ fn offline_decode_retains_partial_annotations_for_diagnostics_only() {
         annotation_class: 9,
         annotation_type: 9,
         texts: vec!["Byte write".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let runtime = RecordingRuntime::with_send_responses(vec![
         SessionResponse::Ok(vec![retained.clone()]),
@@ -296,6 +327,8 @@ fn offline_decode_failure_report_preserves_failure_status_with_partial_annotatio
         annotation_class: 9,
         annotation_type: 9,
         texts: vec!["Byte write".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let runtime = RecordingRuntime::with_send_responses(vec![
         SessionResponse::Ok(vec![retained.clone()]),
@@ -320,9 +353,11 @@ fn offline_decode_failure_report_preserves_failure_status_with_partial_annotatio
     assert_eq!(report.partial_events[0].decoder_id, "eeprom24xx");
     assert_eq!(report.diagnostics.as_ref().unwrap().partial_event_count, 1);
     assert_eq!(json["run"]["status"], "failure");
-    assert!(serde_json::to_string(&json)
-        .expect("failure report json should serialize")
-        .contains("partial_events"));
+    assert!(
+        serde_json::to_string(&json)
+            .expect("failure report json should serialize")
+            .contains("partial_events")
+    );
     assert!(
         !serde_json::to_string(&json)
             .expect("failure report json should serialize")
@@ -339,6 +374,8 @@ fn offline_decode_failure_report_keeps_binary_status_with_partial_diagnostics() 
         annotation_class: 9,
         annotation_type: 9,
         texts: vec!["Byte write".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let runtime = RecordingRuntime::with_send_responses(vec![
         SessionResponse::Ok(vec![retained.clone()]),
@@ -368,11 +405,13 @@ fn offline_decode_failure_report_keeps_binary_status_with_partial_diagnostics() 
     assert_eq!(report.diagnostics.as_ref().unwrap().completed_chunks, 1);
     assert_eq!(report.diagnostics.as_ref().unwrap().consumed_samples, 2);
     assert_eq!(report.diagnostics.as_ref().unwrap().partial_event_count, 1);
-    assert!(report
-        .diagnostics
-        .as_ref()
-        .unwrap()
-        .partial_events_available);
+    assert!(
+        report
+            .diagnostics
+            .as_ref()
+            .unwrap()
+            .partial_events_available
+    );
     assert!(json.get("events").is_none());
     assert!(json.get("partial_events").is_some());
     assert!(json.get("diagnostics").is_some());
@@ -392,6 +431,8 @@ fn offline_decode_collects_fixture_annotations_for_successful_runs() {
         annotation_class: 0,
         annotation_type: 0,
         texts: vec!["chunk-1".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let stack_annotation = DecodeCapturedAnnotation {
         decoder_id: "fixture:eeprom24xx".to_string(),
@@ -400,6 +441,8 @@ fn offline_decode_collects_fixture_annotations_for_successful_runs() {
         annotation_class: 1,
         annotation_type: 1,
         texts: vec!["fixture-complete".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let runtime = RecordingRuntime::with_send_and_end(
         vec![
@@ -414,11 +457,7 @@ fn offline_decode_collects_fixture_annotations_for_successful_runs() {
 
     assert_eq!(
         result.annotations(),
-        &[
-            root_annotation.clone(),
-            root_annotation,
-            stack_annotation,
-        ]
+        &[root_annotation.clone(), root_annotation, stack_annotation,]
     );
 }
 
@@ -431,6 +470,8 @@ fn offline_decode_result_projects_to_flat_event_report() {
         annotation_class: 0,
         annotation_type: 11,
         texts: vec!["start".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let stack_annotation = DecodeCapturedAnnotation {
         decoder_id: "eeprom24xx".to_string(),
@@ -439,6 +480,8 @@ fn offline_decode_result_projects_to_flat_event_report() {
         annotation_class: 1,
         annotation_type: 21,
         texts: vec!["write".to_string(), "0x50".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let runtime = RecordingRuntime::with_send_and_end(
         vec![SessionResponse::Ok(vec![root_annotation.clone()])],
@@ -478,6 +521,8 @@ fn failed_decode_report_retains_partial_events_without_partial_success_state() {
         annotation_class: 9,
         annotation_type: 9,
         texts: vec!["Byte write".to_string()],
+        number_hex: None,
+        numeric_value: None,
     };
     let runtime = RecordingRuntime::with_send_responses(vec![
         SessionResponse::Ok(vec![retained.clone()]),
@@ -503,7 +548,9 @@ fn failed_decode_report_retains_partial_events_without_partial_success_state() {
     assert_eq!(report.run.event_count, None);
     assert_eq!(report.partial_events.len(), 1);
     assert_eq!(report.partial_events[0].decoder_id, "eeprom24xx");
-    let diagnostics = report.diagnostics.expect("runtime failures retain diagnostics");
+    let diagnostics = report
+        .diagnostics
+        .expect("runtime failures retain diagnostics");
     assert_eq!(diagnostics.completed_chunks, 1);
     assert_eq!(diagnostics.consumed_samples, 2);
     assert_eq!(diagnostics.partial_event_count, 1);
@@ -526,10 +573,7 @@ fn validated_decode_config() -> ValidatedDecodeConfig {
         version: 1,
         decoder: ValidatedDecodeDecoderConfig {
             descriptor: root_decoder_descriptor(),
-            channels: BTreeMap::from([
-                ("scl".to_string(), 0_u32),
-                ("sda".to_string(), 1_u32),
-            ]),
+            channels: BTreeMap::from([("scl".to_string(), 0_u32), ("sda".to_string(), 1_u32)]),
             options: BTreeMap::from([(
                 "address_format".to_string(),
                 DecodeOptionValue::String("unshifted".to_string()),

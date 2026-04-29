@@ -27,18 +27,19 @@ use dsview_core::{
     CaptureCleanup, CaptureCompletion, CaptureConfigError, CaptureConfigRequest,
     CaptureDeviceOptionFacts, CaptureExportError, CaptureRunError, CaptureRunRequest,
     ChannelModeGroupSnapshot, ChannelModeOptionSnapshot, CurrentDeviceOptionValues,
-    DecodeBringUpError, DecodeConfigLoadError, DecodeConfigParseError, DecodeConfigValidationError,
-    DecodeDiscovery, DecodeFailureReport, DecodeReport, DecoderRuntimeError,
-    DecoderRuntimeErrorCode, DeviceIdentitySnapshot, DeviceOptionApplyFailure,
+    DecodeBringUpError, DecodeConfig, DecodeConfigLoadError, DecodeConfigParseError,
+    DecodeConfigValidationError, DecodeDiscovery, DecodeFailureReport, DecodeReport,
+    DecoderRuntimeError, DecoderRuntimeErrorCode, DeviceIdentitySnapshot, DeviceOptionApplyFailure,
     DeviceOptionValidationCapabilities, DeviceOptionValidationError, DeviceOptionsSnapshot,
     Discovery, EnumOptionSnapshot, MetadataAcquisitionInfo, MetadataArtifactInfo,
     MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OfflineDecodeInput,
     OfflineDecodeInputError, OfflineDecodeRunError, OperationModeValidationCapabilities,
     RuntimeError, SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
     ValidatedCaptureConfig, ValidatedDecodeConfig, decode_inspect as core_decode_inspect,
-    decode_list as core_decode_list, describe_native_error, parse_decode_config_slice,
-    resolve_capture_artifact_paths, run_offline_decode as core_run_offline_decode,
-    validate_decode_config, validate_decode_config_file as core_validate_decode_config_file,
+    decode_list as core_decode_list, decode_registry_for_config, describe_native_error,
+    parse_decode_config_slice, resolve_capture_artifact_paths,
+    run_offline_decode as core_run_offline_decode, validate_decode_config,
+    validate_decode_config_file as core_validate_decode_config_file,
     validated_capture_config_from_device_options,
 };
 use serde::Serialize;
@@ -582,10 +583,8 @@ fn run_decode_run(args: DecodeRunArgs) -> Result<(), FailedCommand> {
         args.decode.decoder_dir.as_deref(),
     )
     .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
-    let registry = discovery
-        .decode_list()
-        .map_err(|error| command_error(args.decode.format, classify_decode_error(&error)))?;
-    let validated = load_decode_run_config(&args.config, &registry, args.decode.format)?;
+    let validated =
+        load_decode_run_config_with_discovery(&args.config, &discovery, args.decode.format)?;
     let base_context = decode_run_report_context(&validated, None);
     let input = load_offline_decode_input(&args.input).map_err(|error| {
         render_decode_run_contract_failure(
@@ -747,6 +746,27 @@ fn load_decode_run_config(
     registry: &[dsview_core::DecoderDescriptor],
     format: OutputFormat,
 ) -> Result<ValidatedDecodeConfig, FailedCommand> {
+    let config = load_decode_config(config_path, format)?;
+    validate_decode_config(&config, registry)
+        .map_err(|error| command_error(format, classify_decode_config_validation_error(&error)))
+}
+
+fn load_decode_run_config_with_discovery(
+    config_path: &PathBuf,
+    discovery: &DecodeDiscovery,
+    format: OutputFormat,
+) -> Result<ValidatedDecodeConfig, FailedCommand> {
+    let config = load_decode_config(config_path, format)?;
+    let registry = decode_registry_for_config(discovery, &config)
+        .map_err(|error| command_error(format, classify_decode_error(&error)))?;
+    validate_decode_config(&config, &registry)
+        .map_err(|error| command_error(format, classify_decode_config_validation_error(&error)))
+}
+
+fn load_decode_config(
+    config_path: &PathBuf,
+    format: OutputFormat,
+) -> Result<DecodeConfig, FailedCommand> {
     let config_bytes = fs::read(config_path).map_err(|error| {
         let response = if error.kind() == std::io::ErrorKind::NotFound {
             ErrorResponse {
@@ -778,10 +798,8 @@ fn load_decode_run_config(
         };
         command_error(format, response)
     })?;
-    let config = parse_decode_config_slice(&config_bytes)
-        .map_err(|error| command_error(format, classify_decode_config_parse_error(&error)))?;
-    validate_decode_config(&config, registry)
-        .map_err(|error| command_error(format, classify_decode_config_validation_error(&error)))
+    parse_decode_config_slice(&config_bytes)
+        .map_err(|error| command_error(format, classify_decode_config_parse_error(&error)))
 }
 
 fn load_offline_decode_input(input_path: &PathBuf) -> Result<OfflineDecodeInput, ErrorResponse> {
@@ -926,6 +944,8 @@ impl OfflineDecodeRuntimeSession for DecodeRunFixtureSession {
             annotation_class: 0,
             annotation_type: 0,
             texts: vec![format!("chunk-{}", self.sent_chunks)],
+            number_hex: None,
+            numeric_value: None,
         }])
     }
 
@@ -937,6 +957,8 @@ impl OfflineDecodeRuntimeSession for DecodeRunFixtureSession {
             annotation_class: 1,
             annotation_type: 1,
             texts: vec!["fixture-complete".to_string()],
+            number_hex: None,
+            numeric_value: None,
         }])
     }
 }

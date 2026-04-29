@@ -264,6 +264,9 @@ struct dsview_decode_captured_annotation {
     int ann_type;
     char **texts;
     size_t text_count;
+    char *number_hex;
+    int has_numeric_value;
+    long long numeric_value;
 };
 
 struct dsview_decode_list_entry {

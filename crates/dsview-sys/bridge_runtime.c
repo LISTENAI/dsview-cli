@@ -979,6 +979,7 @@ static void dsview_decode_free_captured_annotations_internal(
         size_t text_index;
 
         free(annotations[index].decoder_id);
+        free(annotations[index].number_hex);
         if (annotations[index].texts != NULL) {
             for (text_index = 0; text_index < annotations[index].text_count; text_index++) {
                 free(annotations[index].texts[text_index]);
@@ -1075,6 +1076,17 @@ static void dsview_decode_annotation_callback(
         annotation = (struct srd_proto_data_annotation *)pdata->data;
         captured->ann_class = annotation->ann_class;
         captured->ann_type = annotation->ann_type;
+        if (annotation->str_number_hex[0] != '\0') {
+            captured->number_hex = dsview_decode_strdup(annotation->str_number_hex);
+            if (captured->number_hex == NULL) {
+                free(captured->decoder_id);
+                memset(captured, 0, sizeof(*captured));
+                g_mutex_unlock(&session->annotation_lock);
+                return;
+            }
+            captured->has_numeric_value = 1;
+            captured->numeric_value = strtoll(annotation->str_number_hex, NULL, 16);
+        }
 
         if (annotation->ann_text != NULL) {
             while (annotation->ann_text[text_count] != NULL) {
@@ -1086,6 +1098,7 @@ static void dsview_decode_annotation_callback(
             captured->texts = (char **)calloc(text_count, sizeof(*captured->texts));
             if (captured->texts == NULL) {
                 free(captured->decoder_id);
+                free(captured->number_hex);
                 memset(captured, 0, sizeof(*captured));
                 g_mutex_unlock(&session->annotation_lock);
                 return;
@@ -1099,6 +1112,7 @@ static void dsview_decode_annotation_callback(
                     }
                     free(captured->texts);
                     free(captured->decoder_id);
+                    free(captured->number_hex);
                     memset(captured, 0, sizeof(*captured));
                     g_mutex_unlock(&session->annotation_lock);
                     return;

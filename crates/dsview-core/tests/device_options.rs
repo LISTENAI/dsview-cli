@@ -1,11 +1,11 @@
 use dsview_core::{
-    normalize_decoder_descriptor, normalize_device_options_snapshot, DecoderDescriptor,
-    DeviceHandle, SelectionHandle, SupportedDevice, SupportedDeviceKind,
+    DecoderDescriptor, DeviceHandle, SelectionHandle, SupportedDevice, SupportedDeviceKind,
+    normalize_decoder_descriptor, normalize_device_options_snapshot,
 };
 use dsview_sys::{
-    DecodeAnnotation, DecodeAnnotationRow, DecodeChannel, DecodeDecoder, DecodeInput,
-    DecodeOption, DecodeOptionValueKind, DecodeOutput, DeviceOptionChannelMode,
-    DeviceOptionChannelModeGroup, DeviceOptionValue, DeviceOptionsSnapshot as NativeDeviceOptionsSnapshot,
+    DecodeAnnotation, DecodeAnnotationRow, DecodeChannel, DecodeDecoder, DecodeInput, DecodeOption,
+    DecodeOptionValueKind, DecodeOutput, DeviceOptionChannelMode, DeviceOptionChannelModeGroup,
+    DeviceOptionValue, DeviceOptionsSnapshot as NativeDeviceOptionsSnapshot,
     LegacyThresholdMetadata as NativeLegacyThresholdMetadata, ThresholdVoltageRange,
 };
 
@@ -220,10 +220,19 @@ fn normalizes_option_ids_without_label_parsing() {
         vec!["channel-mode:21", "channel-mode:22"]
     );
 
-    assert_eq!(snapshot.current.operation_mode_id.as_deref(), Some("operation-mode:2"));
-    assert_eq!(snapshot.current.stop_option_id.as_deref(), Some("stop-option:9"));
+    assert_eq!(
+        snapshot.current.operation_mode_id.as_deref(),
+        Some("operation-mode:2")
+    );
+    assert_eq!(
+        snapshot.current.stop_option_id.as_deref(),
+        Some("stop-option:9")
+    );
     assert_eq!(snapshot.current.filter_id.as_deref(), Some("filter:4"));
-    assert_eq!(snapshot.current.channel_mode_id.as_deref(), Some("channel-mode:22"));
+    assert_eq!(
+        snapshot.current.channel_mode_id.as_deref(),
+        Some("channel-mode:22")
+    );
 }
 
 #[test]
@@ -254,7 +263,9 @@ fn selected_device_snapshot_preserves_channel_mode_groups() {
         None
     );
     assert_eq!(
-        snapshot.channel_modes_by_operation_mode[1].current_channel_mode_id.as_deref(),
+        snapshot.channel_modes_by_operation_mode[1]
+            .current_channel_mode_id
+            .as_deref(),
         Some("channel-mode:22")
     );
     assert_eq!(
@@ -353,4 +364,48 @@ fn exposes_stack_relevant_inputs_and_outputs() {
         vec!["i2c", "i2c-messages"]
     );
     assert_eq!(descriptor.annotation_rows[0].annotation_classes, vec![0]);
+}
+
+#[test]
+fn normalizes_python_repr_decoder_option_values_for_config_files() {
+    let mut native = native_decoder();
+    native.options = vec![
+        DecodeOption {
+            id: "invert".to_string(),
+            idn: Some("invert".to_string()),
+            description: Some("Invert signal".to_string()),
+            value_kind: DecodeOptionValueKind::String,
+            default_value: Some("'no'".to_string()),
+            values: vec!["'yes'".to_string(), "'no'".to_string()],
+        },
+        DecodeOption {
+            id: "num_stop_bits".to_string(),
+            idn: Some("num_stop_bits".to_string()),
+            description: Some("Stop bits".to_string()),
+            value_kind: DecodeOptionValueKind::Float,
+            default_value: Some("1.0".to_string()),
+            values: vec!["0.0".to_string(), "1.0".to_string(), "1.5".to_string()],
+        },
+        DecodeOption {
+            id: "num_data_bits".to_string(),
+            idn: Some("num_data_bits".to_string()),
+            description: Some("Data bits".to_string()),
+            value_kind: DecodeOptionValueKind::Unknown,
+            default_value: Some("int64 8".to_string()),
+            values: vec!["int64 7".to_string(), "int64 8".to_string()],
+        },
+    ];
+
+    let descriptor = normalize_decoder_descriptor(native);
+
+    assert_eq!(descriptor.options[0].default_value.as_deref(), Some("no"));
+    assert_eq!(descriptor.options[0].values, vec!["yes", "no"]);
+    assert_eq!(descriptor.options[1].default_value.as_deref(), Some("1"));
+    assert_eq!(descriptor.options[1].values, vec!["0", "1", "1.5"]);
+    assert_eq!(descriptor.options[2].default_value.as_deref(), Some("8"));
+    assert_eq!(descriptor.options[2].values, vec!["7", "8"]);
+    assert_eq!(
+        descriptor.options[2].value_kind,
+        DecodeOptionValueKind::Integer
+    );
 }
