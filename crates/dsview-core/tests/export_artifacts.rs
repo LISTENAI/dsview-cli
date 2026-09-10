@@ -56,7 +56,9 @@ fn validated_config() -> ValidatedCaptureConfig {
         effective_sample_limit: 2048,
         enabled_channels: vec![0, 1, 2, 3],
         channel_mode_id: 20,
-    }
+    
+ 
+    trigger: None,}
 }
 
 fn device_option_snapshot() -> DeviceOptionsSnapshot {

@@ -1,4 +1,6 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::str::FromStr;
 
 use crate::{NativeErrorCode, RuntimeError};
 use thiserror::Error;
@@ -8,6 +10,145 @@ pub struct CaptureConfigRequest {
     pub sample_rate_hz: u64,
     pub sample_limit: u64,
     pub enabled_channels: BTreeSet<u16>,
+    /// Optional simple trigger. `None` starts the capture immediately.
+    pub trigger: Option<TriggerSpec>,
+}
+
+/// Condition a single channel must meet for the trigger to fire.
+///
+/// These map onto the uppercase characters libsigrok4DSL matches on; the
+/// lowercase spellings are what a user types on the command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerCondition {
+    DontCare,
+    Low,
+    High,
+    Rising,
+    Falling,
+    Either,
+}
+
+impl TriggerCondition {
+    pub fn as_native_char(self) -> u8 {
+        match self {
+            TriggerCondition::DontCare => b'X',
+            TriggerCondition::Low => b'0',
+            TriggerCondition::High => b'1',
+            TriggerCondition::Rising => b'R',
+            TriggerCondition::Falling => b'F',
+            TriggerCondition::Either => b'C',
+        }
+    }
+
+    pub fn token(self) -> &'static str {
+        match self {
+            TriggerCondition::DontCare => "x",
+            TriggerCondition::Low => "0",
+            TriggerCondition::High => "1",
+            TriggerCondition::Rising => "r",
+            TriggerCondition::Falling => "f",
+            TriggerCondition::Either => "c",
+        }
+    }
+}
+
+impl fmt::Display for TriggerCondition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.token())
+    }
+}
+
+impl FromStr for TriggerCondition {
+    type Err = TriggerParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "x" => Ok(TriggerCondition::DontCare),
+            "0" | "low" => Ok(TriggerCondition::Low),
+            "1" | "high" => Ok(TriggerCondition::High),
+            "r" | "rising" => Ok(TriggerCondition::Rising),
+            "f" | "falling" => Ok(TriggerCondition::Falling),
+            "c" | "change" | "either" => Ok(TriggerCondition::Either),
+            other => Err(TriggerParseError::UnknownCondition(other.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TriggerParseError {
+    #[error("trigger term '{0}' is not CHANNEL=CONDITION")]
+    MalformedTerm(String),
+    #[error("'{0}' is not a channel index")]
+    BadChannel(String),
+    #[error("unknown trigger condition '{0}'; expected one of 0 1 r f c x")]
+    UnknownCondition(String),
+    #[error("channel {0} appears more than once")]
+    DuplicateChannel(u16),
+    #[error("trigger position must be 0-100, got {0}")]
+    BadPosition(u32),
+    #[error("every channel is 'x', so the trigger would never fire")]
+    AllDontCare,
+}
+
+/// A simple (single-stage) trigger: a condition per channel, plus how much of
+/// the capture buffer to keep from before the trigger fires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerSpec {
+    pub conditions: BTreeMap<u16, TriggerCondition>,
+    pub position_percent: u16,
+}
+
+impl TriggerSpec {
+    pub const DEFAULT_POSITION_PERCENT: u16 = 0;
+
+    /// Parse a spec like `0=r,1=1,3=f`. Whitespace around terms is ignored.
+    pub fn parse(spec: &str, position_percent: u16) -> Result<Self, TriggerParseError> {
+        if position_percent > 100 {
+            return Err(TriggerParseError::BadPosition(u32::from(position_percent)));
+        }
+
+        let mut conditions = BTreeMap::new();
+        for term in spec.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            let (channel_text, condition_text) = term
+                .split_once('=')
+                .ok_or_else(|| TriggerParseError::MalformedTerm(term.to_string()))?;
+            let channel_text = channel_text.trim();
+            // accept both "0" and the "D0" spelling the VCD output uses
+            let normalised = channel_text
+                .strip_prefix(['D', 'd'])
+                .unwrap_or(channel_text);
+            let channel: u16 = normalised
+                .parse()
+                .map_err(|_| TriggerParseError::BadChannel(channel_text.to_string()))?;
+            let condition: TriggerCondition = condition_text.parse()?;
+            if conditions.insert(channel, condition).is_some() {
+                return Err(TriggerParseError::DuplicateChannel(channel));
+            }
+        }
+
+        if conditions
+            .values()
+            .all(|c| matches!(c, TriggerCondition::DontCare))
+        {
+            return Err(TriggerParseError::AllDontCare);
+        }
+
+        Ok(Self {
+            conditions,
+            position_percent,
+        })
+    }
+
+    /// Channels referenced by the trigger that are not in `enabled`. The device
+    /// cannot trigger on a channel it is not sampling, so this is an error the
+    /// caller should surface rather than let the capture hang.
+    pub fn channels_not_enabled(&self, enabled: &[u16]) -> Vec<u16> {
+        self.conditions
+            .keys()
+            .copied()
+            .filter(|c| !enabled.contains(c))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +176,7 @@ pub struct ValidatedCaptureConfig {
     pub effective_sample_limit: u64,
     pub enabled_channels: Vec<u16>,
     pub channel_mode_id: i16,
+    pub trigger: Option<TriggerSpec>,
 }
 
 impl CaptureConfigError {
@@ -159,6 +301,7 @@ impl CaptureCapabilities {
         }
 
         Ok(ValidatedCaptureConfig {
+            trigger: request.trigger.clone(),
             sample_rate_hz: request.sample_rate_hz,
             requested_sample_limit: request.sample_limit,
             effective_sample_limit,
@@ -257,6 +400,7 @@ mod tests {
             sample_rate_hz,
             sample_limit,
             enabled_channels: enabled_channels.iter().copied().collect(),
+            trigger: None,
         }
     }
 

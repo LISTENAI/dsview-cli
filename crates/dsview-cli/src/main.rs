@@ -36,7 +36,8 @@ use dsview_core::{
     MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OfflineDecodeInput,
     OfflineDecodeInputError, OfflineDecodeRunError, OperationModeValidationCapabilities,
     RuntimeError, SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
-    ValidatedCaptureConfig, ValidatedDecodeConfig, decode_inspect as core_decode_inspect,
+    TriggerSpec, ValidatedCaptureConfig, ValidatedDecodeConfig,
+    decode_inspect as core_decode_inspect,
     decode_list as core_decode_list, decode_registry_for_config, describe_native_error,
     parse_decode_config_slice, resolve_capture_artifact_paths,
     run_offline_decode as core_run_offline_decode, validate_decode_config,
@@ -299,6 +300,23 @@ struct CaptureArgs {
         help = "Comma-separated logic channel indexes to enable, for example 0,1,2,3"
     )]
     channels: Vec<u16>,
+    #[arg(
+        long = "trigger",
+        value_name = "CH=COND[,CH=COND...]",
+        help = "Arm a trigger and capture around it, for example 0=r,1=1. \
+                Conditions: 0 low, 1 high, r rising, f falling, c either edge, \
+                x don't care. Channels may be written 0 or D0. Without this the \
+                capture starts immediately."
+    )]
+    trigger: Option<String>,
+    #[arg(
+        long = "trigger-position",
+        value_name = "PERCENT",
+        default_value_t = 0,
+        help = "Percent of the capture buffer to keep from before the trigger \
+                fires (0-100). 0 captures only what follows the trigger."
+    )]
+    trigger_position: u16,
     #[command(flatten)]
     device_options: CaptureDeviceOptionArgs,
     #[arg(
@@ -1382,10 +1400,44 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         );
     }
     let discovery = connect_runtime(&args.runtime)?;
+    let trigger = match args.trigger.as_deref() {
+        Some(spec) => {
+            let parsed = TriggerSpec::parse(spec, args.trigger_position).map_err(|error| {
+                command_error(
+                    args.runtime.format,
+                    plain_error_response("capture_trigger_invalid", &error.to_string()),
+                )
+            })?;
+            // The device samples only the enabled channels, so a trigger that
+            // names a disabled one would simply never fire. Fail loudly here
+            // rather than let the capture sit until it times out.
+            let missing = parsed.channels_not_enabled(&args.channels);
+            if !missing.is_empty() {
+                let list = missing
+                    .iter()
+                    .map(|c| format!("D{c}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(command_error(
+                    args.runtime.format,
+                    plain_error_response(
+                        "capture_trigger_channel_not_enabled",
+                        &format!(
+                            "trigger references {list}, which --channels does not enable; \
+                             the trigger could never fire"
+                        ),
+                    ),
+                ));
+            }
+            Some(parsed)
+        }
+        None => None,
+    };
     let config_request = CaptureConfigRequest {
         sample_rate_hz: args.sample_rate_hz,
         sample_limit: args.sample_limit,
         enabled_channels: args.channels.iter().copied().collect::<BTreeSet<_>>(),
+        trigger,
     };
     let run_request = CaptureRunRequest {
         selection_handle: handle,
@@ -1545,6 +1597,7 @@ fn fixture_validated_capture_config(
         effective_sample_limit: args.sample_limit,
         enabled_channels: args.channels.clone(),
         channel_mode_id,
+        trigger: None,
     })
 }
 
