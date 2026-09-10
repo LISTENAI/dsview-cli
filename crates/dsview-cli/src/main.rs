@@ -315,8 +315,10 @@ struct CaptureArgs {
     metadata_output: Option<PathBuf>,
     #[arg(
         long = "wait-timeout-ms",
-        default_value_t = 10_000,
-        help = "Maximum time to wait for capture completion before aborting"
+        default_value_t = 0,
+        help = "Maximum time to wait for capture completion before aborting. \
+                0 (the default) derives it from the sample rate and sample limit, \
+                so large captures are not aborted while still running."
     )]
     wait_timeout_ms: u64,
     #[arg(
@@ -443,6 +445,9 @@ struct CaptureResponse {
     cleanup_succeeded: bool,
     device_options: CaptureDeviceOptionFacts,
     artifacts: CaptureArtifactsResponse,
+    /// Settings the device silently coerced. Empty when it honoured everything.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1270,6 +1275,14 @@ fn run_list(args: ListArgs) -> Result<(), FailedCommand> {
         .list_supported_devices()
         .map_err(|error| command_error(args.runtime.format, classify_error(&error)))?;
 
+    // An empty list is a legitimate result when nothing is plugged in, but not
+    // when the bus is holding a DreamSourceLab device this build cannot drive.
+    if devices.is_empty() {
+        if let Some(error) = unsupported_device_present_error() {
+            return Err(command_error(args.runtime.format, error));
+        }
+    }
+
     let response = DeviceListResponse {
         devices: devices.iter().map(device_record).collect(),
     };
@@ -1381,7 +1394,11 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         stop_after: args.duration_ms.map(Duration::from_millis),
         stop_on_interrupt: interrupt_flag.clone(),
         stream_vcd_path: streaming_vcd_path.clone(),
-        wait_timeout: Duration::from_millis(args.wait_timeout_ms),
+        wait_timeout: Duration::from_millis(resolve_wait_timeout_ms(
+            args.wait_timeout_ms,
+            args.sample_rate_hz,
+            args.sample_limit,
+        )),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
     let validated_config = if let Some(validated_device_options) = validated_device_options.as_ref()
@@ -1429,12 +1446,18 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         saw_end_packet: result.summary.saw_end_packet,
         saw_terminal_normal_end: result.summary.saw_terminal_normal_end,
         cleanup_succeeded: result.cleanup.succeeded(),
+        warnings: coercion_warnings(&export.metadata.device_options),
         device_options: export.metadata.device_options.clone(),
         artifacts: CaptureArtifactsResponse {
             vcd_path: export.vcd_path.display().to_string(),
             metadata_path: export.metadata_path.display().to_string(),
         },
     };
+    // Text mode prints only the artifact paths, so a coercion would be invisible
+    // there. Send warnings to stderr, leaving stdout clean for piping.
+    for warning in &response.warnings {
+        eprintln!("warning: {warning}");
+    }
     render_capture_success(args.runtime.format, &response);
     Ok(())
 }
@@ -1623,7 +1646,8 @@ fn run_capture_with_test_fixture(
                     vcd_path: artifact_paths.vcd_path.display().to_string(),
                     metadata_path: artifact_paths.metadata_path.display().to_string(),
                 },
-            };
+            
+                warnings: Vec::new(),};
             render_capture_success(format, &response);
             Ok(())
         }
@@ -2914,6 +2938,137 @@ fn capture_cleanup_response(cleanup: &CaptureCleanup) -> CaptureCleanupResponse 
     }
 }
 
+/// USB devices from DreamSourceLab (VID 0x2a0e) that the operating system can
+/// see, regardless of whether the native library recognises them.
+///
+/// The native scan logs unmatched devices at `info`, which is below the default
+/// log level, so an unsupported board otherwise looks identical to no board at
+/// all: an empty list and a success exit code. Probing the bus separately lets
+/// the difference be reported.
+#[cfg(target_os = "linux")]
+fn dreamsourcelab_usb_devices() -> Vec<String> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/sys/bus/usb/devices") else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let (Ok(vendor), Ok(product)) = (
+            std::fs::read_to_string(path.join("idVendor")),
+            std::fs::read_to_string(path.join("idProduct")),
+        ) else {
+            continue;
+        };
+        let vendor = vendor.trim().to_ascii_lowercase();
+        if vendor == "2a0e" {
+            found.push(format!("{vendor}:{}", product.trim().to_ascii_lowercase()));
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+#[cfg(not(target_os = "linux"))]
+fn dreamsourcelab_usb_devices() -> Vec<String> {
+    Vec::new()
+}
+
+/// Turn "no devices" into a specific error when the bus says otherwise.
+fn unsupported_device_present_error() -> Option<ErrorResponse> {
+    let present = dreamsourcelab_usb_devices();
+    if present.is_empty() {
+        return None;
+    }
+    Some(plain_error_response(
+        "devices_present_but_unsupported",
+        &format!(
+            "found DreamSourceLab USB device(s) [{}] that this build does not recognise. \
+             The device profile table in the bundled DSView submodule has no entry for \
+             that product id, so the native scan skipped it. Re-run with \
+             --log-level info to see the scan decision.",
+            present.join(", ")
+        ),
+    ))
+}
+
+/// Report settings the device did not honour.
+///
+/// The device quietly coerces values it cannot meet - selecting `internal-test`
+/// forces its own sample rate, for instance. Both figures are already in the
+/// JSON, but only if the caller thinks to diff them, so surface the mismatch
+/// explicitly rather than let a capture be silently taken at the wrong rate.
+fn coercion_warnings(facts: &CaptureDeviceOptionFacts) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let (requested, effective) = (&facts.requested, &facts.effective);
+
+    if requested.sample_rate_hz != effective.sample_rate_hz {
+        warnings.push(format!(
+            "sample rate coerced: requested {} Hz, device used {} Hz",
+            requested.sample_rate_hz, effective.sample_rate_hz
+        ));
+    }
+    // The device rounds the sample limit up to its own buffer granularity on
+    // essentially every capture (200000 -> 200704), which is expected and not
+    // worth a warning - a warning that always fires is one nobody reads. A
+    // clamp that actually matters, such as hitting the hardware capacity, is
+    // far larger than the alignment step, so only report differences above a
+    // small relative tolerance.
+    if requested.sample_limit != effective.sample_limit {
+        let (req, eff) = (requested.sample_limit, effective.sample_limit);
+        let delta = req.abs_diff(eff);
+        let significant = req == 0 || (delta.saturating_mul(100) / req.max(1)) >= 1;
+        if significant {
+            warnings.push(format!(
+                "sample limit coerced: requested {req}, device used {eff}"
+            ));
+        }
+    }
+    if requested.enabled_channels != effective.enabled_channels {
+        warnings.push(format!(
+            "enabled channels coerced: requested {:?}, device used {:?}",
+            requested.enabled_channels, effective.enabled_channels
+        ));
+    }
+    if requested.channel_mode_id != effective.channel_mode_id {
+        warnings.push(format!(
+            "channel mode coerced: requested {}, device used {}",
+            requested.channel_mode_id, effective.channel_mode_id
+        ));
+    }
+    warnings
+}
+
+/// Wait long enough for the capture actually requested.
+///
+/// A fixed 10 s default is fine for a small buffer capture and far too short
+/// for a multi-million-sample one, where it aborts a capture that was working.
+/// `0` means: derive it from how long the capture must take, with generous
+/// headroom for arming and upload.
+fn resolve_wait_timeout_ms(requested: u64, sample_rate_hz: u64, sample_limit: u64) -> u64 {
+    if requested != 0 {
+        return requested;
+    }
+    let capture_ms = if sample_rate_hz == 0 {
+        0
+    } else {
+        sample_limit.saturating_mul(1000) / sample_rate_hz
+    };
+    // 3x the capture duration covers upload, plus a 10 s floor.
+    capture_ms.saturating_mul(3).saturating_add(10_000).max(10_000)
+}
+
+fn plain_error_response(code: &'static str, message: &str) -> ErrorResponse {
+    ErrorResponse {
+        code,
+        message: message.to_string(),
+        detail: None,
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    }
+}
+
 fn command_error(format: OutputFormat, error: ErrorResponse) -> FailedCommand {
     FailedCommand {
         format,
@@ -3897,7 +4052,8 @@ mod tests {
                 metadata_path: "/tmp/run.json".to_string(),
             },
             device_options: sample_capture_device_option_facts(),
-        };
+        
+            warnings: Vec::new(),};
 
         let payload = serde_json::to_value(response).unwrap();
 
@@ -3926,7 +4082,8 @@ mod tests {
                 metadata_path: "/tmp/run.json".to_string(),
             },
             device_options: sample_capture_device_option_facts(),
-        };
+        
+            warnings: Vec::new(),};
 
         let text = capture_success_text(&response);
 
