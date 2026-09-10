@@ -32,6 +32,7 @@ use dsview_core::{
     DecoderRuntimeError, DecoderRuntimeErrorCode, DeviceIdentitySnapshot, DeviceOptionApplyFailure,
     DeviceOptionValidationCapabilities, DeviceOptionValidationError, DeviceOptionsSnapshot,
     Discovery, EnumOptionSnapshot, MetadataAcquisitionInfo, MetadataArtifactInfo,
+    NativeLogLevel,
     MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OfflineDecodeInput,
     OfflineDecodeInputError, OfflineDecodeRunError, OperationModeValidationCapabilities,
     RuntimeError, SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
@@ -136,6 +137,29 @@ struct SharedDecodeArgs {
     format: OutputFormat,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum LogLevelArg {
+    None,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Detail,
+}
+
+impl From<LogLevelArg> for NativeLogLevel {
+    fn from(value: LogLevelArg) -> Self {
+        match value {
+            LogLevelArg::None => NativeLogLevel::None,
+            LogLevelArg::Error => NativeLogLevel::Error,
+            LogLevelArg::Warn => NativeLogLevel::Warn,
+            LogLevelArg::Info => NativeLogLevel::Info,
+            LogLevelArg::Debug => NativeLogLevel::Debug,
+            LogLevelArg::Detail => NativeLogLevel::Detail,
+        }
+    }
+}
+
 #[derive(Args, Debug)]
 struct DecodeListArgs {
     #[command(flatten)]
@@ -197,6 +221,16 @@ struct SharedRuntimeArgs {
         help = "Directory containing DSLogic Plus firmware and bitstream resources; bundled resources are used by default"
     )]
     resource_dir: Option<PathBuf>,
+    #[arg(
+        long = "log-level",
+        value_enum,
+        default_value_t = LogLevelArg::Warn,
+        help = "Verbosity of the native library's stderr logging. The library's \
+                own default is `info`, which prints scan chatter on every command; \
+                this defaults to `warn` so stdout stays parseable. Raise it when \
+                diagnosing a device that will not enumerate."
+    )]
+    log_level: LogLevelArg,
     #[arg(
         long,
         value_enum,
@@ -1735,7 +1769,7 @@ fn run_options(args: OptionsArgs) -> Result<(), FailedCommand> {
 }
 
 fn connect_runtime(args: &SharedRuntimeArgs) -> Result<Discovery, FailedCommand> {
-    Discovery::connect_auto(args.resource_dir.as_deref())
+    Discovery::connect_auto_with_log_level(args.resource_dir.as_deref(), args.log_level.into())
         .map_err(|error| command_error(args.format, classify_error(&error)))
 }
 
@@ -3805,12 +3839,15 @@ mod tests {
         CaptureArgs {
             runtime: SharedRuntimeArgs {
                 resource_dir: None,
+                log_level: LogLevelArg::Warn,
                 format: OutputFormat::Json,
             },
             handle: 7,
             sample_rate_hz: 100_000_000,
             sample_limit: 4096,
             channels: vec![0, 1, 2, 3],
+            trigger: None,
+            trigger_position: 0,
             device_options: CaptureDeviceOptionArgs::default(),
             output: PathBuf::from("artifacts/run.vcd"),
             metadata_output: None,

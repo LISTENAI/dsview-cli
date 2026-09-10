@@ -1931,13 +1931,55 @@ pub struct DecodeDiscovery {
     paths: DecodeDiscoveryPaths,
 }
 
+/// Verbosity of the native libsigrok4DSL logger, which writes to stderr.
+///
+/// The library's own default is `Info`, which emits a dozen lines of scan
+/// chatter on every command. That is unhelpful in a tool whose output is meant
+/// to be piped, so this crate defaults to `Warn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NativeLogLevel {
+    None,
+    Error,
+    #[default]
+    Warn,
+    Info,
+    Debug,
+    Detail,
+}
+
+impl NativeLogLevel {
+    pub fn as_native(self) -> i32 {
+        match self {
+            NativeLogLevel::None => 0,
+            NativeLogLevel::Error => 1,
+            NativeLogLevel::Warn => 2,
+            NativeLogLevel::Info => 3,
+            NativeLogLevel::Debug => 4,
+            NativeLogLevel::Detail => 5,
+        }
+    }
+}
+
 impl Discovery {
     pub fn connect(
         library_path: impl AsRef<Path>,
         resource_dir: impl AsRef<Path>,
     ) -> Result<Self, BringUpError> {
+        Self::connect_with_log_level(library_path, resource_dir, NativeLogLevel::default())
+    }
+
+    pub fn connect_with_log_level(
+        library_path: impl AsRef<Path>,
+        resource_dir: impl AsRef<Path>,
+        log_level: NativeLogLevel,
+    ) -> Result<Self, BringUpError> {
         let resources = ResourceDirectory::discover(resource_dir)?;
         let runtime = RuntimeBridge::load(library_path).map_err(BringUpError::Runtime)?;
+        // Set verbosity before init(): the device scan happens inside init(),
+        // and that scan is where most of the native chatter comes from.
+        runtime
+            .set_log_level(log_level.as_native())
+            .map_err(BringUpError::Runtime)?;
         runtime
             .set_firmware_resource_dir(resources.path())
             .map_err(BringUpError::Runtime)?;
@@ -1947,8 +1989,15 @@ impl Discovery {
     }
 
     pub fn connect_auto(resource_override: Option<impl AsRef<Path>>) -> Result<Self, BringUpError> {
+        Self::connect_auto_with_log_level(resource_override, NativeLogLevel::default())
+    }
+
+    pub fn connect_auto_with_log_level(
+        resource_override: Option<impl AsRef<Path>>,
+        log_level: NativeLogLevel,
+    ) -> Result<Self, BringUpError> {
         let paths = RuntimeDiscoveryPaths::discover(resource_override)?;
-        Self::connect(&paths.runtime_library, &paths.resource_dir)
+        Self::connect_with_log_level(&paths.runtime_library, &paths.resource_dir, log_level)
     }
 
     pub fn discovery_paths(
