@@ -100,6 +100,11 @@ unsafe extern "C" {
     fn dsview_bridge_ds_is_collecting(value: *mut c_int) -> c_int;
     fn dsview_bridge_ds_reset_acquisition_summary() -> c_int;
     fn dsview_bridge_ds_get_acquisition_summary(out_summary: *mut RawAcquisitionSummary) -> c_int;
+    fn dsview_bridge_ds_apply_trigger(program: *const RawTriggerProgram) -> c_int;
+    fn dsview_bridge_ds_get_trigger_state(out_state: *mut RawTriggerState) -> c_int;
+    fn dsview_bridge_ds_get_trigger_observation(
+        out_observation: *mut RawTriggerObservation,
+    ) -> c_int;
     fn dsview_bridge_ds_export_recorded_vcd(
         request: *const RawVcdExportRequest,
         out_buffer: *mut RawExportBuffer,
@@ -757,6 +762,243 @@ struct RawAcquisitionSummary {
     saw_data_error_packet: c_int,
     last_error: c_int,
     is_collecting: c_int,
+}
+
+/// Number of logic probes covered by one DSView trigger pattern.
+pub const TRIGGER_PROBE_CAPACITY: usize = 16;
+/// Number of stages in the DSLogic stage trigger.
+pub const TRIGGER_STAGE_CAPACITY: usize = 16;
+
+const TRIGGER_MODE_SIMPLE: c_int = 0;
+const TRIGGER_MODE_STAGE: c_int = 1;
+const TRIGGER_MODE_SERIAL: c_int = 2;
+const TRIGGER_CONDITION_DONT_CARE: u8 = b'X';
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTriggerStageProgram {
+    value0: [c_char; TRIGGER_PROBE_CAPACITY],
+    value1: [c_char; TRIGGER_PROBE_CAPACITY],
+    logic: u8,
+    inv0: u8,
+    inv1: u8,
+    count0: u32,
+    count1: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTriggerProgram {
+    enabled: c_int,
+    mode: c_int,
+    position_percent: u16,
+    stage_selector: u16,
+    simple: [c_char; TRIGGER_PROBE_CAPACITY],
+    stage_count: u16,
+    stages: [RawTriggerStageProgram; TRIGGER_STAGE_CAPACITY],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTriggerState {
+    enabled: u16,
+    mode: u16,
+    position_percent: u16,
+    stage_selector: u16,
+    simple0: [c_char; TRIGGER_PROBE_CAPACITY],
+    simple1: [c_char; TRIGGER_PROBE_CAPACITY],
+    stages: [RawTriggerStageProgram; TRIGGER_STAGE_CAPACITY],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTriggerObservation {
+    saw_trigger_packet: c_int,
+    packet_status: c_int,
+    has_position: c_int,
+    raw_status: u32,
+    real_pos: u32,
+    remain_count: u64,
+}
+
+impl RawTriggerStageProgram {
+    const fn zeroed() -> Self {
+        Self {
+            value0: [0; TRIGGER_PROBE_CAPACITY],
+            value1: [0; TRIGGER_PROBE_CAPACITY],
+            logic: 0,
+            inv0: 0,
+            inv1: 0,
+            count0: 0,
+            count1: 0,
+        }
+    }
+}
+
+/// DSView trigger engine selected for a capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerProgramMode {
+    /// Per-channel conditions that must all hold on the same sample.
+    Simple,
+    /// Up to 16 sequential stages, each combining two patterns.
+    Stage,
+    /// Serial data match on one channel, framed by start, stop, and clock patterns.
+    Serial,
+}
+
+impl TriggerProgramMode {
+    const fn to_raw(self) -> c_int {
+        match self {
+            Self::Simple => TRIGGER_MODE_SIMPLE,
+            Self::Stage => TRIGGER_MODE_STAGE,
+            Self::Serial => TRIGGER_MODE_SERIAL,
+        }
+    }
+}
+
+/// One programmed trigger stage. Patterns are indexed by probe number and
+/// hold DSView condition characters (`X`, `0`, `1`, `R`, `F`, `C`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TriggerStageProgram {
+    pub value0: [u8; TRIGGER_PROBE_CAPACITY],
+    pub value1: [u8; TRIGGER_PROBE_CAPACITY],
+    /// `(contiguous << 1) | and`, as written by DSView's trigger dock.
+    pub logic: u8,
+    pub inv0: bool,
+    pub inv1: bool,
+    pub count0: u32,
+    pub count1: u32,
+}
+
+impl TriggerStageProgram {
+    /// The state `ds_trigger_init()` leaves in every stage.
+    pub const fn dont_care() -> Self {
+        Self {
+            value0: [TRIGGER_CONDITION_DONT_CARE; TRIGGER_PROBE_CAPACITY],
+            value1: [TRIGGER_CONDITION_DONT_CARE; TRIGGER_PROBE_CAPACITY],
+            logic: 1,
+            inv0: false,
+            inv1: false,
+            count0: 0,
+            count1: 0,
+        }
+    }
+
+    fn to_raw(self) -> RawTriggerStageProgram {
+        RawTriggerStageProgram {
+            value0: self.value0.map(|value| value as c_char),
+            value1: self.value1.map(|value| value as c_char),
+            logic: self.logic,
+            inv0: u8::from(self.inv0),
+            inv1: u8::from(self.inv1),
+            count0: self.count0,
+            count1: self.count1,
+        }
+    }
+
+    fn from_raw(raw: RawTriggerStageProgram) -> Self {
+        Self {
+            value0: raw.value0.map(|value| value as u8),
+            value1: raw.value1.map(|value| value as u8),
+            logic: raw.logic,
+            inv0: raw.inv0 != 0,
+            inv1: raw.inv1 != 0,
+            count0: raw.count0,
+            count1: raw.count1,
+        }
+    }
+}
+
+/// A complete native trigger program, replayed through the DSView setters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerProgram {
+    pub mode: TriggerProgramMode,
+    pub position_percent: u16,
+    /// Value passed to `ds_trigger_set_stage()`; the last active stage index.
+    pub stage_selector: u16,
+    /// Simple-trigger condition per probe.
+    pub simple: [u8; TRIGGER_PROBE_CAPACITY],
+    pub stages: Vec<TriggerStageProgram>,
+}
+
+impl TriggerProgram {
+    fn to_raw(&self) -> Result<RawTriggerProgram, RuntimeError> {
+        if self.stages.len() > TRIGGER_STAGE_CAPACITY {
+            return Err(RuntimeError::InvalidArgument(format!(
+                "trigger program has {} stages; the device supports {TRIGGER_STAGE_CAPACITY}",
+                self.stages.len()
+            )));
+        }
+        let mut stages = [RawTriggerStageProgram::zeroed(); TRIGGER_STAGE_CAPACITY];
+        for (slot, stage) in stages.iter_mut().zip(&self.stages) {
+            *slot = stage.to_raw();
+        }
+        Ok(RawTriggerProgram {
+            enabled: 1,
+            mode: self.mode.to_raw(),
+            position_percent: self.position_percent,
+            stage_selector: self.stage_selector,
+            simple: self.simple.map(|value| value as c_char),
+            stage_count: self.stages.len() as u16,
+            stages,
+        })
+    }
+}
+
+/// Read-back copy of the native trigger state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerState {
+    pub enabled: bool,
+    pub mode: u16,
+    pub position_percent: u16,
+    pub stage_selector: u16,
+    pub simple0: [u8; TRIGGER_PROBE_CAPACITY],
+    pub simple1: [u8; TRIGGER_PROBE_CAPACITY],
+    pub stages: Vec<TriggerStageProgram>,
+}
+
+/// Trigger position reported by the device in its trigger header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TriggerPosition {
+    /// Raw `ds_trigger_pos.status`; bit 0 is set when the trigger fired.
+    pub raw_status: u32,
+    /// Trigger sample index (`ds_trigger_pos.real_pos`).
+    pub real_pos: u32,
+    pub remain_count: u64,
+}
+
+impl TriggerPosition {
+    pub const fn fired(&self) -> bool {
+        self.raw_status & 0x01 != 0
+    }
+}
+
+/// Facts from the `SR_DF_TRIGGER` packet of the latest acquisition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TriggerObservation {
+    pub saw_trigger_packet: bool,
+    pub packet_status: Option<AcquisitionPacketStatus>,
+    pub position: Option<TriggerPosition>,
+}
+
+impl TriggerObservation {
+    fn from_raw(raw: RawTriggerObservation) -> Self {
+        Self {
+            saw_trigger_packet: raw.saw_trigger_packet != 0,
+            packet_status: (raw.saw_trigger_packet != 0)
+                .then(|| AcquisitionPacketStatus::from_raw(raw.packet_status)),
+            position: (raw.has_position != 0).then_some(TriggerPosition {
+                raw_status: raw.raw_status,
+                real_pos: raw.real_pos,
+                remain_count: raw.remain_count,
+            }),
+        }
+    }
+
+    /// True when the device reported a valid trigger header with the hit flag set.
+    pub fn fired(&self) -> bool {
+        self.position.is_some_and(|position| position.fired())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1563,6 +1805,79 @@ impl RuntimeBridge {
             dsview_bridge_ds_get_acquisition_summary(&mut raw)
         })?;
         Ok(AcquisitionSummary::from_raw(raw))
+    }
+
+    /// Resets the native trigger state and programs `program` into it.
+    pub fn apply_trigger(&self, program: &TriggerProgram) -> Result<(), RuntimeError> {
+        let raw = program.to_raw()?;
+        let status = unsafe { dsview_bridge_ds_apply_trigger(&raw) };
+        if status == DSVIEW_BRIDGE_ERR_ARG {
+            return Err(RuntimeError::InvalidArgument(
+                "bridge rejected the trigger program".to_string(),
+            ));
+        }
+        native_call_status("ds_apply_trigger", status)
+    }
+
+    /// Resets the native trigger state to DSView's disabled default.
+    pub fn disable_trigger(&self) -> Result<(), RuntimeError> {
+        let mut raw = TriggerProgram {
+            mode: TriggerProgramMode::Simple,
+            position_percent: 0,
+            stage_selector: 0,
+            simple: [TRIGGER_CONDITION_DONT_CARE; TRIGGER_PROBE_CAPACITY],
+            stages: Vec::new(),
+        }
+        .to_raw()?;
+        raw.enabled = 0;
+        native_call_status("ds_apply_trigger", unsafe {
+            dsview_bridge_ds_apply_trigger(&raw)
+        })
+    }
+
+    /// Reads the native trigger state back from the runtime.
+    pub fn trigger_state(&self) -> Result<TriggerState, RuntimeError> {
+        let mut raw = RawTriggerState {
+            enabled: 0,
+            mode: 0,
+            position_percent: 0,
+            stage_selector: 0,
+            simple0: [0; TRIGGER_PROBE_CAPACITY],
+            simple1: [0; TRIGGER_PROBE_CAPACITY],
+            stages: [RawTriggerStageProgram::zeroed(); TRIGGER_STAGE_CAPACITY],
+        };
+        native_call_status("ds_get_trigger_state", unsafe {
+            dsview_bridge_ds_get_trigger_state(&mut raw)
+        })?;
+        Ok(TriggerState {
+            enabled: raw.enabled != 0,
+            mode: raw.mode,
+            position_percent: raw.position_percent,
+            stage_selector: raw.stage_selector,
+            simple0: raw.simple0.map(|value| value as u8),
+            simple1: raw.simple1.map(|value| value as u8),
+            stages: raw
+                .stages
+                .into_iter()
+                .map(TriggerStageProgram::from_raw)
+                .collect(),
+        })
+    }
+
+    /// Returns the trigger header facts recorded during the latest acquisition.
+    pub fn trigger_observation(&self) -> Result<TriggerObservation, RuntimeError> {
+        let mut raw = RawTriggerObservation {
+            saw_trigger_packet: 0,
+            packet_status: -1,
+            has_position: 0,
+            raw_status: 0,
+            real_pos: 0,
+            remain_count: 0,
+        };
+        native_call_status("ds_get_trigger_observation", unsafe {
+            dsview_bridge_ds_get_trigger_observation(&mut raw)
+        })?;
+        Ok(TriggerObservation::from_raw(raw))
     }
 
     pub fn start_collect(&self) -> Result<AcquisitionStartResult, RuntimeError> {

@@ -370,7 +370,14 @@ fn device_options_text_shows_copy_paste_capture_flags() {
         "filters\n",
         "  current: off | stable_id=filter:1 | native_code=1\n",
         "  option: token=off | stable_id=filter:1 | native_code=1 | label=Off\n",
-        "  option: token=1-sample | stable_id=filter:2 | native_code=2 | label=1 Sample"
+        "  option: token=1-sample | stable_id=filter:2 | native_code=2 | label=1 Sample\n",
+        "trigger\n",
+        "  --trigger CH=COND[,CH=COND...]  simple trigger; all conditions on one sample\n",
+        "  --trigger-config PATH  JSON trigger config (version 1): simple, stage, serial\n",
+        "  --trigger-position PERCENT  1..=90 in buffer mode, default 1; stream mode fixes it at 1\n",
+        "  conditions: low, high, rising, falling, edge\n",
+        "  limits: channels 0..16, up to 16 stages, stage count 1..=2147483647, serial data up to 16 bits\n",
+        "  stream_mode: simple only"
     );
 
     assert_eq!(rendered, expected);

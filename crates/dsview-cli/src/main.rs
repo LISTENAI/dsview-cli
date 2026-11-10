@@ -8,7 +8,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use dsview_cli::{
     DecodeInspectResponse, DecodeListResponse, DecodeReportWriteError, DecodeValidateResponse,
     DeviceOptionsResponse, build_decode_contract_failure_report,
@@ -35,11 +35,14 @@ use dsview_core::{
     MetadataCaptureInfo, MetadataToolInfo, NativeErrorCode, OfflineDecodeInput,
     OfflineDecodeInputError, OfflineDecodeRunError, OperationModeValidationCapabilities,
     RuntimeError, SelectionHandle, SupportedDevice, ThresholdCapabilitySnapshot,
-    ValidatedCaptureConfig, ValidatedDecodeConfig, decode_inspect as core_decode_inspect,
+    TriggerConfigParseError, TriggerReport, TriggerRequest, TriggerValidationContext,
+    TriggerValidationError, ValidatedCaptureConfig, ValidatedDecodeConfig, ValidatedTrigger,
+    decode_inspect as core_decode_inspect,
     decode_list as core_decode_list, decode_registry_for_config, describe_native_error,
     parse_decode_config_slice, resolve_capture_artifact_paths,
     run_offline_decode as core_run_offline_decode, validate_decode_config,
     validate_decode_config_file as core_validate_decode_config_file,
+    parse_simple_trigger_tokens, parse_trigger_config, validate_trigger_request,
     validated_capture_config_from_device_options,
 };
 use serde::Serialize;
@@ -267,6 +270,8 @@ struct CaptureArgs {
     channels: Vec<u16>,
     #[command(flatten)]
     device_options: CaptureDeviceOptionArgs,
+    #[command(flatten)]
+    trigger: CaptureTriggerArgs,
     #[arg(
         long = "output",
         value_name = "PATH",
@@ -340,6 +345,42 @@ struct CaptureDeviceOptionArgs {
     filter: Option<String>,
 }
 
+#[derive(Args, Debug, Clone, Default, PartialEq)]
+#[command(next_help_heading = "Trigger")]
+#[command(group(
+    ArgGroup::new("trigger_source")
+        .args(["trigger", "trigger_config"])
+        .multiple(false)
+))]
+struct CaptureTriggerArgs {
+    #[arg(
+        long = "trigger",
+        value_name = "CH=COND[,CH=COND...]",
+        value_delimiter = ',',
+        help = "Arm a simple hardware trigger; every listed channel condition must hold on the same sample. Conditions: low, high, rising, falling, edge"
+    )]
+    trigger: Vec<String>,
+    #[arg(
+        long = "trigger-config",
+        value_name = "PATH",
+        help = "Arm a simple, stage, or serial hardware trigger from a JSON trigger config file"
+    )]
+    trigger_config: Option<PathBuf>,
+    #[arg(
+        long = "trigger-position",
+        value_name = "PERCENT",
+        requires = "trigger_source",
+        help = "Share of the capture kept before the trigger point: 1-90 in buffer mode (default 1); stream mode fixes it at 1"
+    )]
+    trigger_position: Option<u8>,
+}
+
+impl CaptureTriggerArgs {
+    fn is_requested(&self) -> bool {
+        !self.trigger.is_empty() || self.trigger_config.is_some()
+    }
+}
+
 impl dsview_cli::capture_device_options::CaptureDeviceOptionInput for CaptureDeviceOptionArgs {
     fn operation_mode(&self) -> Option<&str> {
         self.operation_mode.as_deref()
@@ -408,6 +449,8 @@ struct CaptureResponse {
     saw_terminal_normal_end: bool,
     cleanup_succeeded: bool,
     device_options: CaptureDeviceOptionFacts,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trigger: Option<TriggerReport>,
     artifacts: CaptureArtifactsResponse,
 }
 
@@ -1281,7 +1324,10 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
     };
     let handle = SelectionHandle::new(args.handle)
         .ok_or_else(|| command_error(args.runtime.format, invalid_handle_error()))?;
+    let trigger_request = load_trigger_request(&args.trigger)
+        .map_err(|error| command_error(args.runtime.format, error))?;
     let mut validated_device_options = None;
+    let mut validated_trigger = None;
     let mut device_options_snapshot = None;
     if uses_device_option_validation(&args) {
         let (snapshot, capabilities) =
@@ -1315,6 +1361,17 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         let validated = capabilities.validate_request(&request).map_err(|error| {
             command_error(args.runtime.format, classify_validation_error(&error))
         })?;
+        if let Some(trigger_request) = trigger_request.as_ref() {
+            let context = TriggerValidationContext::from_device_options(&capabilities, &validated);
+            validated_trigger = Some(
+                validate_trigger_request(trigger_request, &context).map_err(|error| {
+                    command_error(
+                        args.runtime.format,
+                        classify_trigger_validation_error(&error),
+                    )
+                })?,
+            );
+        }
         validated_device_options = Some(validated);
     }
     #[cfg(debug_assertions)]
@@ -1331,6 +1388,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
             validated_config,
             validated_device_options,
             device_options_snapshot,
+            validated_trigger,
             mode,
         );
     }
@@ -1347,6 +1405,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         stop_after: args.duration_ms.map(Duration::from_millis),
         stop_on_interrupt: interrupt_flag.clone(),
         stream_vcd_path: streaming_vcd_path.clone(),
+        trigger: validated_trigger.clone(),
         wait_timeout: Duration::from_millis(args.wait_timeout_ms),
         poll_interval: Duration::from_millis(args.poll_interval_ms),
     };
@@ -1361,9 +1420,19 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
             })?
     };
     let capture_started_at = std::time::SystemTime::now();
-    let result = discovery
-        .run_capture(&run_request)
-        .map_err(|error| command_error(args.runtime.format, classify_capture_error(&error)))?;
+    let result = discovery.run_capture(&run_request).map_err(|error| {
+        let trigger_observation = validated_trigger
+            .as_ref()
+            .and_then(|_| discovery.trigger_observation().ok());
+        command_error(
+            args.runtime.format,
+            classify_capture_error_with_trigger(
+                &error,
+                validated_trigger.as_ref(),
+                trigger_observation.as_ref(),
+            ),
+        )
+    })?;
     let device_options_snapshot = if let Some(snapshot) = device_options_snapshot {
         snapshot
     } else {
@@ -1396,6 +1465,7 @@ fn run_capture(args: CaptureArgs) -> Result<(), FailedCommand> {
         saw_terminal_normal_end: result.summary.saw_terminal_normal_end,
         cleanup_succeeded: result.cleanup.succeeded(),
         device_options: export.metadata.device_options.clone(),
+        trigger: export.metadata.trigger.clone(),
         artifacts: CaptureArtifactsResponse {
             vcd_path: export.vcd_path.display().to_string(),
             metadata_path: export.metadata_path.display().to_string(),
@@ -1440,6 +1510,7 @@ fn streaming_vcd_temp_path(vcd_path: &Path) -> PathBuf {
 enum CaptureTestFixtureMode {
     Success,
     ApplyFailureFilter,
+    TriggerNotFired,
 }
 
 #[cfg(debug_assertions)]
@@ -1453,6 +1524,7 @@ fn capture_test_fixture_mode(handle: SelectionHandle) -> Option<CaptureTestFixtu
         .as_deref()
     {
         Some("apply-failure-filter") => Some(CaptureTestFixtureMode::ApplyFailureFilter),
+        Some("trigger-not-fired") => Some(CaptureTestFixtureMode::TriggerNotFired),
         Some(_) => Some(CaptureTestFixtureMode::Success),
         None => None,
     }
@@ -1499,9 +1571,36 @@ fn run_capture_with_test_fixture(
     validated_config: ValidatedCaptureConfig,
     validated_device_options: Option<dsview_core::ValidatedDeviceOptionRequest>,
     device_options_snapshot: Option<DeviceOptionsSnapshot>,
+    validated_trigger: Option<ValidatedTrigger>,
     mode: CaptureTestFixtureMode,
 ) -> Result<(), FailedCommand> {
     match mode {
+        CaptureTestFixtureMode::TriggerNotFired => {
+            let error = CaptureRunError::Timeout {
+                summary: AcquisitionSummary {
+                    saw_terminal_normal_end: false,
+                    terminal_event: AcquisitionTerminalEvent::None,
+                    saw_logic_packet: false,
+                    saw_end_packet: false,
+                    saw_end_packet_ok: false,
+                    is_collecting: true,
+                    ..fixture_acquisition_summary()
+                },
+                cleanup: CaptureCleanup {
+                    stop_attempted: true,
+                    stop_succeeded: true,
+                    ..fixture_capture_cleanup()
+                },
+            };
+            Err(command_error(
+                format,
+                classify_capture_error_with_trigger(
+                    &error,
+                    validated_trigger.as_ref(),
+                    Some(&dsview_core::TriggerObservation::default()),
+                ),
+            ))
+        }
         CaptureTestFixtureMode::ApplyFailureFilter => {
             let error = DeviceOptionApplyFailure {
                 applied_steps: vec![
@@ -1540,13 +1639,18 @@ fn run_capture_with_test_fixture(
                         &validated_config,
                     )
                 });
+            let trigger = validated_trigger.map(|requested| {
+                fixture_trigger_outcome(requested, validated_config.effective_sample_limit)
+            });
             let capture = dsview_core::CaptureRunSummary {
                 completion: CaptureCompletion::CleanSuccess,
                 summary: fixture_acquisition_summary(),
                 cleanup: fixture_capture_cleanup(),
                 effective_device_options,
                 streamed_vcd: None,
+                trigger,
             };
+            let trigger_report = capture.trigger.as_ref().map(TriggerReport::from_outcome);
             let export_request = dsview_core::CaptureExportRequest {
                 capture: capture.clone(),
                 validated_config: validated_config.clone(),
@@ -1570,8 +1674,14 @@ fn run_capture_with_test_fixture(
                     ),
                 )
             })?;
-            write_capture_test_fixture_artifacts(artifact_paths, handle, &validated_config, &facts)
-                .map_err(|detail| {
+            write_capture_test_fixture_artifacts(
+                artifact_paths,
+                handle,
+                &validated_config,
+                &facts,
+                trigger_report.clone(),
+            )
+            .map_err(|detail| {
                     command_error(
                         format,
                         fixture_error_response("capture_test_fixture_write_failed", &detail),
@@ -1585,6 +1695,7 @@ fn run_capture_with_test_fixture(
                 saw_terminal_normal_end: capture.summary.saw_terminal_normal_end,
                 cleanup_succeeded: capture.cleanup.succeeded(),
                 device_options: facts,
+                trigger: trigger_report,
                 artifacts: CaptureArtifactsResponse {
                     vcd_path: artifact_paths.vcd_path.display().to_string(),
                     metadata_path: artifact_paths.metadata_path.display().to_string(),
@@ -1615,6 +1726,27 @@ fn fixture_acquisition_summary() -> AcquisitionSummary {
         saw_data_error_packet: false,
         last_error: NativeErrorCode::Ok,
         is_collecting: false,
+    }
+}
+
+/// Synthetic trigger hit at the requested pre-trigger position.
+#[cfg(debug_assertions)]
+fn fixture_trigger_outcome(
+    requested: ValidatedTrigger,
+    sample_limit: u64,
+) -> dsview_core::CaptureTriggerOutcome {
+    let real_pos = sample_limit * u64::from(requested.position_percent) / 100;
+    dsview_core::CaptureTriggerOutcome {
+        requested,
+        observation: dsview_core::TriggerObservation {
+            saw_trigger_packet: true,
+            packet_status: None,
+            position: Some(dsview_core::TriggerPosition {
+                raw_status: 1,
+                real_pos: u32::try_from(real_pos).unwrap_or(u32::MAX),
+                remain_count: 0,
+            }),
+        },
     }
 }
 
@@ -1666,6 +1798,7 @@ fn write_capture_test_fixture_artifacts(
     handle: SelectionHandle,
     validated_config: &ValidatedCaptureConfig,
     facts: &CaptureDeviceOptionFacts,
+    trigger: Option<TriggerReport>,
 ) -> Result<(), String> {
     if let Some(parent) = artifact_paths.vcd_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -1705,6 +1838,7 @@ fn write_capture_test_fixture_artifacts(
             metadata_path: artifact_paths.metadata_path.display().to_string(),
         },
         device_options: facts.clone(),
+        trigger,
     };
     let metadata_bytes = serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?;
     fs::write(&artifact_paths.metadata_path, metadata_bytes).map_err(|error| error.to_string())
@@ -2110,8 +2244,108 @@ fn device_record(device: &SupportedDevice) -> DeviceRecord {
     }
 }
 
+fn load_trigger_request(args: &CaptureTriggerArgs) -> Result<Option<TriggerRequest>, ErrorResponse> {
+    let spec = if let Some(path) = args.trigger_config.as_ref() {
+        let text = fs::read_to_string(path).map_err(|error| ErrorResponse {
+            code: "trigger_config_unreadable",
+            message: format!("failed to read trigger config `{}`", path.display()),
+            detail: Some(error.to_string()),
+            native_error: None,
+            terminal_event: None,
+            cleanup: None,
+        })?;
+        parse_trigger_config(&text)
+            .map_err(|error| classify_trigger_config_parse_error(&error, Some(path)))?
+    } else if !args.trigger.is_empty() {
+        parse_simple_trigger_tokens(&args.trigger)
+            .map_err(|error| classify_trigger_config_parse_error(&error, None))?
+    } else {
+        return Ok(None);
+    };
+
+    Ok(Some(TriggerRequest {
+        spec,
+        position_percent: args.trigger_position,
+    }))
+}
+
+fn classify_trigger_config_parse_error(
+    error: &TriggerConfigParseError,
+    path: Option<&Path>,
+) -> ErrorResponse {
+    ErrorResponse {
+        code: "trigger_config_invalid",
+        message: error.to_string(),
+        detail: path.map(|path| format!("trigger config `{}`", path.display())),
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    }
+}
+
+fn classify_trigger_validation_error(error: &TriggerValidationError) -> ErrorResponse {
+    let code = match error {
+        TriggerValidationError::ChannelOutsideChannelMode { .. } => "trigger_channel_unsupported",
+        TriggerValidationError::ChannelNotEnabled { .. } => "trigger_channel_not_enabled",
+        TriggerValidationError::ModeUnsupportedInStream { .. } => "trigger_mode_unsupported",
+        TriggerValidationError::StreamPositionFixed { .. }
+        | TriggerValidationError::PositionOutOfRange { .. } => "trigger_position_out_of_range",
+        TriggerValidationError::EmptySimpleTrigger
+        | TriggerValidationError::StageCountOutOfRange { .. }
+        | TriggerValidationError::InvalidStage { .. }
+        | TriggerValidationError::InvalidSerial { .. } => "trigger_config_invalid",
+    };
+    ErrorResponse {
+        code,
+        message: error.to_string(),
+        detail: None,
+        native_error: None,
+        terminal_event: None,
+        cleanup: None,
+    }
+}
+
+/// Reports a capture that waited for a trigger that never fired as
+/// `capture_trigger_not_fired` instead of a generic timeout or incomplete run.
+fn classify_capture_error_with_trigger(
+    error: &CaptureRunError,
+    trigger: Option<&ValidatedTrigger>,
+    observation: Option<&dsview_core::TriggerObservation>,
+) -> ErrorResponse {
+    let mut response = classify_capture_error(error);
+    let Some(trigger) = trigger else {
+        return response;
+    };
+    let waited_for_trigger = matches!(
+        error,
+        CaptureRunError::Timeout { .. } | CaptureRunError::Incomplete { .. }
+    );
+    let fired = observation.is_some_and(|observation| observation.fired());
+    if waited_for_trigger && !fired {
+        let original_code = response.code;
+        let hint = if matches!(error, CaptureRunError::Timeout { .. }) {
+            "raise --wait-timeout-ms"
+        } else {
+            "extend --duration-ms or wait longer before interrupting"
+        };
+        response.code = "capture_trigger_not_fired";
+        response.message = format!(
+            "the {} trigger condition was not met before the capture stopped",
+            trigger.mode_name()
+        );
+        response.detail = Some(format!(
+            "{original_code}: {}; trigger_packet={}; {hint}, or check the trigger condition and wiring",
+            response.detail.as_deref().unwrap_or("no detail"),
+            observation.is_some_and(|observation| observation.saw_trigger_packet),
+        ));
+    }
+    response
+}
+
 fn uses_device_option_validation(args: &CaptureArgs) -> bool {
-    !args.channels.is_empty() || args.device_options.has_overrides()
+    !args.channels.is_empty()
+        || args.device_options.has_overrides()
+        || args.trigger.is_requested()
 }
 
 #[cfg(debug_assertions)]
@@ -3092,9 +3326,26 @@ pub(crate) fn capture_success_text(response: &CaptureResponse) -> String {
     lines.extend(render_effective_capture_options_text(
         &response.device_options,
     ));
+    if let Some(trigger) = response.trigger.as_ref() {
+        lines.push(trigger_report_text(trigger));
+    }
     lines.push(format!("vcd {}", response.artifacts.vcd_path));
     lines.push(format!("metadata {}", response.artifacts.metadata_path));
     lines.join("\n")
+}
+
+fn trigger_report_text(trigger: &TriggerReport) -> String {
+    let mode = trigger.requested.spec.mode_name();
+    let position = trigger.requested.position_percent;
+    match trigger.observed.sample_index {
+        Some(sample_index) if trigger.observed.fired => {
+            format!("trigger {mode} fired at sample {sample_index} (position {position}%)")
+        }
+        _ => format!(
+            "trigger {mode} not reported as fired (position {position}%, trigger_packet={})",
+            trigger.observed.trigger_packet
+        ),
+    }
 }
 
 fn decode_run_failure_text(
@@ -3812,6 +4063,7 @@ mod tests {
             sample_limit: 4096,
             channels: vec![0, 1, 2, 3],
             device_options: CaptureDeviceOptionArgs::default(),
+            trigger: CaptureTriggerArgs::default(),
             output: PathBuf::from("artifacts/run.vcd"),
             metadata_output: None,
             wait_timeout_ms: 10_000,
@@ -3860,6 +4112,7 @@ mod tests {
                 metadata_path: "/tmp/run.json".to_string(),
             },
             device_options: sample_capture_device_option_facts(),
+            trigger: None,
         };
 
         let payload = serde_json::to_value(response).unwrap();
@@ -3889,6 +4142,7 @@ mod tests {
                 metadata_path: "/tmp/run.json".to_string(),
             },
             device_options: sample_capture_device_option_facts(),
+            trigger: None,
         };
 
         let text = capture_success_text(&response);

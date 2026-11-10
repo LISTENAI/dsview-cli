@@ -32,6 +32,24 @@ typedef int (*ds_start_collect_fn)(void);
 typedef int (*ds_stop_collect_fn)(void);
 typedef int (*ds_is_collecting_fn)(void);
 typedef int (*ds_enable_device_channel_index_fn)(int channel_index, gboolean enable);
+typedef int (*ds_trigger_reset_fn)(void);
+typedef int (*ds_trigger_set_en_fn)(uint16_t enable);
+typedef int (*ds_trigger_set_mode_fn)(uint16_t mode);
+typedef int (*ds_trigger_set_pos_fn)(uint16_t position);
+typedef int (*ds_trigger_set_stage_fn)(uint16_t stages);
+typedef int (*ds_trigger_probe_set_fn)(uint16_t probe, unsigned char trigger0, unsigned char trigger1);
+typedef int (*ds_trigger_stage_set_value_fn)(uint16_t stage, uint16_t probes, char *trigger0, char *trigger1);
+typedef int (*ds_trigger_stage_set_logic_fn)(uint16_t stage, uint16_t probes, unsigned char trigger_logic);
+typedef int (*ds_trigger_stage_set_inv_fn)(
+    uint16_t stage,
+    uint16_t probes,
+    unsigned char trigger0_inv,
+    unsigned char trigger1_inv);
+typedef int (*ds_trigger_stage_set_count_fn)(
+    uint16_t stage,
+    uint16_t probes,
+    uint32_t trigger0_count,
+    uint32_t trigger1_count);
 typedef const struct sr_output_module *(*sr_output_find_fn)(char *id);
 typedef const struct sr_output *(*sr_output_new_fn)(const struct sr_output_module *omod, GHashTable *options, const struct sr_dev_inst *sdi);
 typedef int (*sr_output_send_fn)(const struct sr_output *o, const struct sr_datafeed_packet *packet, GString **out);
@@ -112,6 +130,18 @@ struct dsview_bridge_api {
     ds_get_actived_device_config_list_fn ds_get_actived_device_config_list;
     ds_set_actived_device_config_fn ds_set_actived_device_config;
     ds_enable_device_channel_index_fn ds_enable_device_channel_index;
+    ds_trigger_reset_fn ds_trigger_reset;
+    ds_trigger_set_en_fn ds_trigger_set_en;
+    ds_trigger_set_mode_fn ds_trigger_set_mode;
+    ds_trigger_set_pos_fn ds_trigger_set_pos;
+    ds_trigger_set_stage_fn ds_trigger_set_stage;
+    ds_trigger_probe_set_fn ds_trigger_probe_set;
+    ds_trigger_stage_set_value_fn ds_trigger_stage_set_value;
+    ds_trigger_stage_set_logic_fn ds_trigger_stage_set_logic;
+    ds_trigger_stage_set_inv_fn ds_trigger_stage_set_inv;
+    ds_trigger_stage_set_count_fn ds_trigger_stage_set_count;
+    /* Optional data export; only used to read the programmed state back. */
+    struct ds_trigger **trigger_state;
     sr_output_find_fn sr_output_find;
     sr_output_new_fn sr_output_new;
     sr_output_send_fn sr_output_send;
@@ -211,6 +241,7 @@ static struct dsview_bridge_acquisition_summary g_acquisition_summary;
 static int g_acquisition_callback_registration_active = 0;
 static struct dsview_recorded_stream g_recorded_stream;
 static struct dsview_streaming_vcd_writer g_streaming_vcd_writer;
+static struct dsview_trigger_observation g_trigger_observation;
 
 #define DSVIEW_BRIDGE_INITIAL_PACKET_CAPACITY 1024U
 static uint8_t g_enabled_channel_state[DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY];
@@ -218,6 +249,7 @@ static uint8_t g_enabled_channel_state[DSVIEW_BRIDGE_CHANNEL_TRACK_CAPACITY];
 static void dsview_bridge_clear_registered_callbacks(void);
 static void dsview_bridge_reset_recorded_stream(void);
 static void dsview_bridge_reset_streaming_vcd_writer(void);
+static void dsview_bridge_reset_trigger_observation(void);
 static int dsview_bridge_prepare_recording_capacity(void);
 static int dsview_bridge_record_packet(const struct sr_datafeed_packet *packet);
 static int dsview_bridge_export_stream(const struct dsview_vcd_export_request *request, const struct dsview_recorded_stream *stream, struct dsview_export_buffer *out_buffer);
@@ -3075,6 +3107,79 @@ int dsview_bridge_load_library(const char *path)
         return status;
     }
 
+    g_bridge_api.ds_trigger_reset =
+        (ds_trigger_reset_fn)dsview_bridge_load_symbol("ds_trigger_reset", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_en =
+        (ds_trigger_set_en_fn)dsview_bridge_load_symbol("ds_trigger_set_en", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_mode =
+        (ds_trigger_set_mode_fn)dsview_bridge_load_symbol("ds_trigger_set_mode", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_pos =
+        (ds_trigger_set_pos_fn)dsview_bridge_load_symbol("ds_trigger_set_pos", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_stage =
+        (ds_trigger_set_stage_fn)dsview_bridge_load_symbol("ds_trigger_set_stage", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_probe_set =
+        (ds_trigger_probe_set_fn)dsview_bridge_load_symbol("ds_trigger_probe_set", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_stage_set_value =
+        (ds_trigger_stage_set_value_fn)dsview_bridge_load_symbol("ds_trigger_stage_set_value", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_stage_set_logic =
+        (ds_trigger_stage_set_logic_fn)dsview_bridge_load_symbol("ds_trigger_stage_set_logic", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_stage_set_inv =
+        (ds_trigger_stage_set_inv_fn)dsview_bridge_load_symbol("ds_trigger_stage_set_inv", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_stage_set_count =
+        (ds_trigger_stage_set_count_fn)dsview_bridge_load_symbol("ds_trigger_stage_set_count", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.trigger_state =
+        (struct ds_trigger **)dsview_bridge_dlsym(g_bridge_api.library_handle, "trigger");
+
     g_bridge_api.sr_output_find =
         (sr_output_find_fn)dsview_bridge_load_symbol("sr_output_find", &status);
     if (status != DSVIEW_BRIDGE_OK) {
@@ -3119,6 +3224,7 @@ void dsview_bridge_unload_library(void)
 
     memset(&g_bridge_api, 0, sizeof(g_bridge_api));
     memset(&g_acquisition_summary, 0, sizeof(g_acquisition_summary));
+    dsview_bridge_reset_trigger_observation();
 }
 
 int dsview_bridge_is_loaded(void)
@@ -3782,6 +3888,37 @@ static void dsview_bridge_event_callback(int event)
     }
 }
 
+static void dsview_bridge_reset_trigger_observation(void)
+{
+    memset(&g_trigger_observation, 0, sizeof(g_trigger_observation));
+    g_trigger_observation.packet_status = -1;
+}
+
+static void dsview_bridge_record_trigger_packet(const struct sr_datafeed_packet *packet)
+{
+    const struct ds_trigger_pos *position;
+
+    /* A logic capture reports one trigger header; keep the first one. */
+    if (g_trigger_observation.saw_trigger_packet) {
+        return;
+    }
+
+    g_trigger_observation.saw_trigger_packet = 1;
+    g_trigger_observation.packet_status = packet->status;
+
+    position = (const struct ds_trigger_pos *)packet->payload;
+    if (position == NULL || packet->status != SR_PKT_OK) {
+        return;
+    }
+
+    /* The payload is the USB transfer buffer, which is freed after forwarding. */
+    g_trigger_observation.has_position = 1;
+    g_trigger_observation.raw_status = position->status;
+    g_trigger_observation.real_pos = position->real_pos;
+    g_trigger_observation.remain_count =
+        ((unsigned long long)position->remain_cnt_h << 32) | (unsigned long long)position->remain_cnt_l;
+}
+
 static void dsview_bridge_datafeed_callback(const struct sr_dev_inst *sdi, const struct sr_datafeed_packet *packet)
 {
     int status;
@@ -3794,6 +3931,8 @@ static void dsview_bridge_datafeed_callback(const struct sr_dev_inst *sdi, const
 
     if (packet->type == SR_DF_LOGIC) {
         g_acquisition_summary.saw_logic_packet = 1;
+    } else if (packet->type == SR_DF_TRIGGER) {
+        dsview_bridge_record_trigger_packet(packet);
     } else if (packet->type == SR_DF_END) {
         g_acquisition_summary.saw_end_packet = 1;
         g_acquisition_summary.end_packet_status = packet->status;
@@ -3929,6 +4068,7 @@ int dsview_bridge_ds_reset_acquisition_summary(void)
     g_acquisition_summary.terminal_event = DSVIEW_ACQ_TERMINAL_NONE;
     g_acquisition_summary.end_packet_status = -1;
     g_acquisition_summary.callback_registration_active = g_acquisition_callback_registration_active ? 1 : 0;
+    dsview_bridge_reset_trigger_observation();
     dsview_bridge_reset_recorded_stream();
     dsview_bridge_refresh_last_error();
     dsview_bridge_refresh_collecting_flag();
@@ -3944,6 +4084,237 @@ int dsview_bridge_ds_get_acquisition_summary(struct dsview_bridge_acquisition_su
     dsview_bridge_refresh_last_error();
     dsview_bridge_refresh_collecting_flag();
     *out_summary = g_acquisition_summary;
+    return SR_OK;
+}
+
+static int dsview_bridge_trigger_symbols_loaded(void)
+{
+    return g_bridge_api.ds_trigger_reset != NULL
+        && g_bridge_api.ds_trigger_set_en != NULL
+        && g_bridge_api.ds_trigger_set_mode != NULL
+        && g_bridge_api.ds_trigger_set_pos != NULL
+        && g_bridge_api.ds_trigger_set_stage != NULL
+        && g_bridge_api.ds_trigger_probe_set != NULL
+        && g_bridge_api.ds_trigger_stage_set_value != NULL
+        && g_bridge_api.ds_trigger_stage_set_logic != NULL
+        && g_bridge_api.ds_trigger_stage_set_inv != NULL
+        && g_bridge_api.ds_trigger_stage_set_count != NULL;
+}
+
+static int dsview_bridge_trigger_condition_is_valid(char value)
+{
+    switch (value) {
+    case 'X':
+    case '0':
+    case '1':
+    case 'R':
+    case 'F':
+    case 'C':
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int dsview_bridge_trigger_pattern_is_valid(const char *values)
+{
+    size_t index;
+
+    for (index = 0; index < DSVIEW_TRIGGER_PROBE_CAPACITY; index++) {
+        if (!dsview_bridge_trigger_condition_is_valid(values[index])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int dsview_bridge_trigger_program_is_valid(const struct dsview_trigger_program *program)
+{
+    uint16_t stage;
+
+    if (program->mode != DSVIEW_TRIGGER_MODE_SIMPLE
+        && program->mode != DSVIEW_TRIGGER_MODE_STAGE
+        && program->mode != DSVIEW_TRIGGER_MODE_SERIAL) {
+        return 0;
+    }
+    /* The DSView setters assert on these bounds, so reject them up front. */
+    if (program->position_percent > 100
+        || program->stage_count > DSVIEW_TRIGGER_STAGE_CAPACITY
+        || program->stage_selector >= TriggerStages) {
+        return 0;
+    }
+    if (program->mode != DSVIEW_TRIGGER_MODE_SIMPLE && program->stage_count == 0) {
+        return 0;
+    }
+    if (!dsview_bridge_trigger_pattern_is_valid(program->simple)) {
+        return 0;
+    }
+    for (stage = 0; stage < program->stage_count; stage++) {
+        const struct dsview_trigger_stage_program *entry = &program->stages[stage];
+        if (!dsview_bridge_trigger_pattern_is_valid(entry->value0)
+            || !dsview_bridge_trigger_pattern_is_valid(entry->value1)
+            || entry->logic > 3
+            || entry->inv0 > 1
+            || entry->inv1 > 1) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void dsview_bridge_format_trigger_pattern(const char *values, char *out)
+{
+    size_t index;
+
+    /*
+     * ds_trigger_stage_set_value() reads character (j * 2) of a
+     * space-separated, MSB-first string into probe (probes - j - 1).
+     */
+    memset(out, ' ', DSVIEW_TRIGGER_PROBE_CAPACITY * 2);
+    for (index = 0; index < DSVIEW_TRIGGER_PROBE_CAPACITY; index++) {
+        out[index * 2] = values[DSVIEW_TRIGGER_PROBE_CAPACITY - 1 - index];
+    }
+    out[DSVIEW_TRIGGER_PROBE_CAPACITY * 2 - 1] = '\0';
+}
+
+static int dsview_bridge_program_trigger(const struct dsview_trigger_program *program)
+{
+    int status;
+    uint16_t probe;
+    uint16_t stage;
+    char pattern0[DSVIEW_TRIGGER_PROBE_CAPACITY * 2];
+    char pattern1[DSVIEW_TRIGGER_PROBE_CAPACITY * 2];
+
+    status = g_bridge_api.ds_trigger_set_pos(program->position_percent);
+    if (status != SR_OK) {
+        return status;
+    }
+    status = g_bridge_api.ds_trigger_set_mode((uint16_t)program->mode);
+    if (status != SR_OK) {
+        return status;
+    }
+
+    for (probe = 0; probe < DSVIEW_TRIGGER_PROBE_CAPACITY; probe++) {
+        status = g_bridge_api.ds_trigger_probe_set(probe, (unsigned char)program->simple[probe], 'X');
+        if (status != SR_OK) {
+            return status;
+        }
+    }
+
+    if (program->mode != DSVIEW_TRIGGER_MODE_SIMPLE) {
+        status = g_bridge_api.ds_trigger_set_stage(program->stage_selector);
+        if (status != SR_OK) {
+            return status;
+        }
+
+        for (stage = 0; stage < program->stage_count; stage++) {
+            const struct dsview_trigger_stage_program *entry = &program->stages[stage];
+
+            dsview_bridge_format_trigger_pattern(entry->value0, pattern0);
+            dsview_bridge_format_trigger_pattern(entry->value1, pattern1);
+            status = g_bridge_api.ds_trigger_stage_set_value(
+                stage, DSVIEW_TRIGGER_PROBE_CAPACITY, pattern0, pattern1);
+            if (status != SR_OK) {
+                return status;
+            }
+            status = g_bridge_api.ds_trigger_stage_set_logic(
+                stage, DSVIEW_TRIGGER_PROBE_CAPACITY, entry->logic);
+            if (status != SR_OK) {
+                return status;
+            }
+            status = g_bridge_api.ds_trigger_stage_set_inv(
+                stage, DSVIEW_TRIGGER_PROBE_CAPACITY, entry->inv0, entry->inv1);
+            if (status != SR_OK) {
+                return status;
+            }
+            status = g_bridge_api.ds_trigger_stage_set_count(
+                stage, DSVIEW_TRIGGER_PROBE_CAPACITY, entry->count0, entry->count1);
+            if (status != SR_OK) {
+                return status;
+            }
+        }
+    }
+
+    return g_bridge_api.ds_trigger_set_en(1);
+}
+
+int dsview_bridge_ds_apply_trigger(const struct dsview_trigger_program *program)
+{
+    int status;
+
+    if (program == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (!dsview_bridge_trigger_symbols_loaded()) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+    if (program->enabled && !dsview_bridge_trigger_program_is_valid(program)) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    status = g_bridge_api.ds_trigger_reset();
+    if (status != SR_OK || !program->enabled) {
+        return status;
+    }
+
+    status = dsview_bridge_program_trigger(program);
+    if (status != SR_OK) {
+        /* Never leave a partially programmed trigger armed. */
+        g_bridge_api.ds_trigger_reset();
+    }
+    return status;
+}
+
+int dsview_bridge_ds_get_trigger_state(struct dsview_trigger_state *out_state)
+{
+    const struct ds_trigger *state;
+    size_t probe;
+    size_t stage;
+
+    if (out_state == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+    if (g_bridge_api.trigger_state == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    state = *g_bridge_api.trigger_state;
+    if (state == NULL) {
+        return SR_ERR_CALL_STATUS;
+    }
+
+    memset(out_state, 0, sizeof(*out_state));
+    out_state->enabled = state->trigger_en;
+    out_state->mode = state->trigger_mode;
+    out_state->position_percent = state->trigger_pos;
+    out_state->stage_selector = state->trigger_stages;
+    for (probe = 0; probe < DSVIEW_TRIGGER_PROBE_CAPACITY; probe++) {
+        out_state->simple0[probe] = state->trigger0[TriggerStages][probe];
+        out_state->simple1[probe] = state->trigger1[TriggerStages][probe];
+    }
+    for (stage = 0; stage < DSVIEW_TRIGGER_STAGE_CAPACITY; stage++) {
+        struct dsview_trigger_stage_program *entry = &out_state->stages[stage];
+
+        for (probe = 0; probe < DSVIEW_TRIGGER_PROBE_CAPACITY; probe++) {
+            entry->value0[probe] = state->trigger0[stage][probe];
+            entry->value1[probe] = state->trigger1[stage][probe];
+        }
+        entry->logic = state->trigger_logic[stage];
+        entry->inv0 = state->trigger0_inv[stage];
+        entry->inv1 = state->trigger1_inv[stage];
+        entry->count0 = state->trigger0_count[stage];
+        entry->count1 = state->trigger1_count[stage];
+    }
+    return SR_OK;
+}
+
+int dsview_bridge_ds_get_trigger_observation(struct dsview_trigger_observation *out_observation)
+{
+    if (out_observation == NULL) {
+        return DSVIEW_BRIDGE_ERR_ARG;
+    }
+
+    *out_observation = g_trigger_observation;
     return SR_OK;
 }
 

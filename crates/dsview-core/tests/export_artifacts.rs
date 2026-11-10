@@ -46,6 +46,7 @@ fn clean_capture() -> CaptureRunSummary {
         },
         effective_device_options: None,
         streamed_vcd: None,
+        trigger: None,
     }
 }
 
@@ -355,6 +356,7 @@ fn metadata_sidecar_schema_uses_numeric_capture_fields_and_utc_timestamp() {
                     sample_limit: 4096,
                 },
             },
+            trigger: None,
         }
     )
     .unwrap();
@@ -435,6 +437,7 @@ fn metadata_schema_version_is_2_when_device_option_facts_are_present() {
         },
         device_options: build_capture_device_option_facts(&export_request(CaptureCompletion::CleanSuccess))
             .expect("device option facts should build"),
+        trigger: None,
     };
 
     assert_eq!(serde_json::to_value(metadata).unwrap()["schema_version"], 2);
