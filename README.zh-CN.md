@@ -18,6 +18,7 @@ DSView CLI 是面向 DSLogic Plus 设备的命令行工具。它把 DSView/libsi
 
 - 对 DSLogic Plus 执行有限长度逻辑分析采集。
 - 导出 VCD 波形文件和 JSON 元数据，便于后续工具处理。
+- 支持 DSLogic Plus 硬件触发（简单、多级、串行），并输出触发点所在的采样位置。
 - 通过命令行查看 DSView 协议解码器。
 - 从 JSON 逻辑采样输入执行离线协议解码。
 - 发布为自包含 release bundle，内含原生运行时、固件资源、解码器脚本和 Python 运行时。
@@ -152,6 +153,74 @@ dsview-cli capture \
   --output capture.vcd
 ```
 
+### 硬件触发采集
+
+启用 DSLogic Plus 的硬件触发后，采集窗口会围绕触发事件放置，而不是一启动就开始记录。
+
+简单触发由若干 `通道=条件` 组成，所有条件必须在同一个采样点同时满足。条件可以是 `low`、`high`、`rising`、`falling`、`edge`，也可以写成 DSView 的字母 `0`、`1`、`R`、`F`、`C`。
+
+```bash
+dsview-cli capture \
+  --handle 1 \
+  --operation-mode buffer \
+  --sample-rate-hz 100000000 \
+  --sample-limit 1000000 \
+  --channels 0,1,2,3 \
+  --trigger 0=falling,1=high \
+  --trigger-position 10 \
+  --wait-timeout-ms 30000 \
+  --output capture.vcd
+```
+
+- `--trigger-position` 表示触发点之前的数据占整段采集的百分比。Buffer 模式下可取 1-90，默认 1。
+- Stream 模式只支持简单触发，位置固定为 1。
+- 触发通道必须已通过 `--channels` 启用，并且在当前通道模式下可用。
+- 等待触发的时间计入超时：有限长度采集计入 `--wait-timeout-ms`，stream 采集计入 `--duration-ms` 或中断前的时长。条件一直不满足时，命令会以 `capture_trigger_not_fired` 失败，并释放设备。
+
+多级触发和串行触发通过 JSON 触发配置文件设置：
+
+```json
+{
+  "version": 1,
+  "mode": "stage",
+  "stages": [
+    {"pattern_a": {"channels": {"0": "falling"}}},
+    {"pattern_a": {"channels": {"1": "rising", "2": "low"}}, "count": 3}
+  ]
+}
+```
+
+```bash
+dsview-cli capture ... --trigger-config trigger.json --trigger-position 50
+```
+
+- `stage`：最多 16 级，按顺序逐级匹配。
+  - 每一级由 `pattern_a` 和可选的 `pattern_b` 组成，两者用 `combine` 组合：默认 `and`，也可以是 `or`。
+  - `invert: true` 表示对该 pattern 取反。
+  - 该级匹配满 `count` 次（默认 1）后进入下一级。设置 `contiguous: true` 时，这些匹配必须落在连续的采样点上。
+- `serial`：
+  - 出现 `start` 标志后，设备在 `clock` 的每个边沿采样 `data_channel`，把收到的前 `data_bits` 位与 `data_value` 比较。
+  - 出现 `stop` 标志时放弃当前帧。
+  - `start`、`stop`、`clock` 都必须至少包含一个边沿条件。
+  - `data_value` 可以是 `0`/`1`/`X` 组成的位串，先收到的位写在最左边（MSB 在前），也可以是 `0x` 十六进制值。
+  - 例如，下面的配置可以匹配一个 I2C 地址字节：`{"version": 1, "mode": "serial", "start": {"1": "falling", "0": "high"}, "stop": {"1": "rising", "0": "high"}, "clock": {"0": "rising"}, "data_channel": 1, "data_bits": 8, "data_value": "0xA0"}`。
+- `simple`：`{"version": 1, "mode": "simple", "channels": {"0": "rising"}}`。
+
+启用触发后，采集的 JSON 输出和元数据文件中都会多出一个 `trigger` 块：
+
+```json
+"trigger": {
+  "requested": {"mode": "simple", "channels": {"0": "falling", "1": "high"}, "position_percent": 10},
+  "observed": {"trigger_packet": true, "fired": true, "sample_index": 100032, "raw_status": 1}
+}
+```
+
+- `observed.sample_index` 是触发点在导出 VCD 中的采样序号，对应时间为 `sample_index / sample_rate_hz`。
+- 如果条件在触发前的数据还没录够时就已满足，采集会提前开始，此时 `sample_index` 会小于按请求位置算出的值。周期信号经常出现这种情况，因为事件在触发前的这段时间内就会再次出现。
+- 其余情况下位置是近似值：硬件实测中，触发点最多比请求的位置晚约 0.3% 的采集长度。定位触发点请以 `observed.sample_index` 为准，不要按百分比推算。
+- 未启用触发时不输出 `trigger` 块。
+- `devices options` 会列出触发相关的限制。
+
 ### 列出协议解码器
 
 ```bash
@@ -255,6 +324,8 @@ dsview-cli capture \
   [--channel-mode TOKEN] \
   [--threshold-volts VOLTS] \
   [--filter TOKEN] \
+  [--trigger CH=COND[,CH=COND...] | --trigger-config PATH] \
+  [--trigger-position PERCENT] \
   [--wait-timeout-ms MS] \
   [--poll-interval-ms MS] \
   [--format json|text] \
