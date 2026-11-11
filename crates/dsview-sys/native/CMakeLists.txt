@@ -23,7 +23,6 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
 if(DSVIEW_BUILD_CAPTURE_RUNTIME)
     pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-    pkg_check_modules(FFTW REQUIRED fftw3)
 
     set(LIBUSB_NORMALIZED_INCLUDE_DIRS ${LIBUSB_INCLUDE_DIRS})
     foreach(LIBUSB_INCLUDE_DIR IN LISTS LIBUSB_INCLUDE_DIRS)
@@ -150,7 +149,6 @@ if(DSVIEW_BUILD_CAPTURE_RUNTIME)
         ${COMMON_ROOT}
         ${GLIB_INCLUDE_DIRS}
         ${LIBUSB_NORMALIZED_INCLUDE_DIRS}
-        ${FFTW_INCLUDE_DIRS}
     )
 
     target_compile_definitions(dsview_runtime PRIVATE
@@ -166,7 +164,6 @@ if(DSVIEW_BUILD_CAPTURE_RUNTIME)
         Threads::Threads
         ${GLIB_LIBRARIES}
         ${LIBUSB_LIBRARIES}
-        ${FFTW_LIBRARIES}
     )
 
     if(NOT MSVC)
@@ -176,7 +173,6 @@ if(DSVIEW_BUILD_CAPTURE_RUNTIME)
     target_link_directories(dsview_runtime PRIVATE
         ${GLIB_LIBRARY_DIRS}
         ${LIBUSB_LIBRARY_DIRS}
-        ${FFTW_LIBRARY_DIRS}
     )
 
     if(MSVC)

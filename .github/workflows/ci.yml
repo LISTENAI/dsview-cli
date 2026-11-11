@@ -90,8 +90,9 @@ jobs:
           "VCPKG_DOWNLOADS=$DownloadsCache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Restore Windows vcpkg cache
+        id: vcpkg-cache
         if: contains(matrix.target, 'windows')
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: |
             .cache/vcpkg/binary
@@ -104,6 +105,15 @@ jobs:
         uses: ./.github/actions/setup-native-prereqs
         with:
           target: ${{ matrix.target }}
+
+      - name: Save Windows vcpkg cache
+        if: contains(matrix.target, 'windows') && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .cache/vcpkg/binary
+            .cache/vcpkg/downloads
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Derive build version
         id: version
@@ -120,9 +130,9 @@ jobs:
       - name: Build workspace
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Run tests (Windows Release)
+      - name: Run tests (Windows optimized)
         if: contains(matrix.target, 'windows')
-        run: cargo test --workspace --release --target ${{ matrix.target }}
+        run: cargo test --workspace --profile ci-test --target ${{ matrix.target }}
 
       - name: Run tests (Unix)
         if: ${{ !contains(matrix.target, 'windows') }}

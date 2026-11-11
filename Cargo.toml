@@ -5,3 +5,9 @@ members = [
   "crates/dsview-sys",
 ]
 resolver = "2"
+
+# Keep CLI integration-test fixtures enabled without rebuilding native
+# dependencies in Debug or overwriting the production release executable.
+[profile.ci-test]
+inherits = "release"
+debug-assertions = true

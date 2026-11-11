@@ -332,7 +332,7 @@ fn build_source_runtimes(
         return Err("pkg-config is not available".to_string());
     }
 
-    let required_packages = ["glib-2.0", "libusb-1.0", "fftw3"];
+    let required_packages = ["glib-2.0", "libusb-1.0"];
     for package in required_packages {
         if !pkg_config_has(package) {
             return Err(format!("pkg-config could not resolve `{package}`"));
@@ -493,7 +493,7 @@ fn pkg_config_output(package: &str, flag: &str) -> Vec<String> {
 
 fn bridge_dependency_include_flags(_target: &TargetInfo) -> Vec<String> {
     let mut flags = Vec::new();
-    for package in ["glib-2.0", "libusb-1.0", "fftw3"] {
+    for package in ["glib-2.0", "libusb-1.0"] {
         for flag in pkg_config_output(package, "--cflags") {
             let parent_flag = if package == "libusb-1.0" {
                 normalized_libusb_include_flag(&flag)

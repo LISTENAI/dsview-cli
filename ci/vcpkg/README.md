@@ -6,8 +6,13 @@ without modifying the runner's preinstalled vcpkg.
 
 The native x64 and ARM64 jobs use the matching `*-windows-release` triplet for
 both target libraries and host tools. These triplets retain dynamic libraries
-and the dynamic CRT, but build only Release. Windows tests therefore run with
-`cargo test --workspace --release`; Unix jobs retain Debug test coverage.
+and the dynamic CRT, but build only Release. Windows tests run with
+`cargo test --workspace --profile ci-test`. This Release-derived profile keeps
+`debug_assertions` enabled for CLI test fixtures and writes binaries to a
+separate `ci-test` directory. Cargo reports `PROFILE=release` to build scripts,
+so native runtimes still use Release dependencies. The packaged executable
+always comes from the normal Release profile, with fixture hooks disabled.
+Unix jobs retain Debug test coverage.
 Changing Windows tests back to Debug requires restoring Debug dependencies too.
 
 The binary/download cache is separate from the old dual-configuration cache.
@@ -31,3 +36,6 @@ Next experiments should isolate gettext host tools or cross-build dependencies
 on x64, retaining native ARM64 build, tests and bundle validation. Do not remove
 GLib's gettext-libintl/libiconv dependencies or replace tools with unchecked
 downloads merely to shorten the benchmark.
+
+FFTW is not installed or linked: only the upstream GUI spectrum implementation
+uses it, and that source is not part of either CLI native runtime.

@@ -17,8 +17,7 @@ runs:
           cmake \
           pkg-config \
           libglib2.0-dev \
-          libusb-1.0-0-dev \
-          libfftw3-dev
+          libusb-1.0-0-dev
 
     - name: Install Linux ARM64 dependencies
       if: inputs.target == 'aarch64-unknown-linux-gnu'
@@ -30,14 +29,13 @@ runs:
           cmake \
           pkg-config \
           libglib2.0-dev \
-          libusb-1.0-0-dev \
-          libfftw3-dev
+          libusb-1.0-0-dev
 
     - name: Install macOS dependencies
       if: startsWith(inputs.target, 'x86_64-apple-darwin') || startsWith(inputs.target, 'aarch64-apple-darwin')
       shell: bash
       run: |
-        for formula in cmake pkg-config glib libusb fftw; do
+        for formula in cmake pkg-config glib libusb; do
           if brew list --versions "$formula" >/dev/null 2>&1; then
             echo "$formula is already installed"
           else

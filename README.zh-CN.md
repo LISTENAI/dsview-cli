@@ -350,20 +350,19 @@ sudo apt-get install -y \
   cmake \
   pkg-config \
   libglib2.0-dev \
-  libusb-1.0-0-dev \
-  libfftw3-dev
+  libusb-1.0-0-dev
 ```
 
 macOS：
 
 ```bash
-brew install cmake pkg-config glib libusb fftw
+brew install cmake pkg-config glib libusb
 ```
 
 Windows + vcpkg：
 
 ```powershell
-vcpkg install glib:x64-windows libusb:x64-windows fftw3:x64-windows pkgconf:x64-windows
+vcpkg install glib:x64-windows libusb:x64-windows pkgconf:x64-windows
 ```
 
 Windows ARM64 源码构建请使用 `arm64-windows` triplet。

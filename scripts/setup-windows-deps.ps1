@@ -43,7 +43,7 @@ $env:VCPKG_ROOT = $VcpkgRoot
 $env:VCPKG_INSTALLATION_ROOT = $VcpkgRoot
 Write-Host "Using vcpkg at $VcpkgExe"
 
-$Packages = @("glib:$Triplet", "libusb:$Triplet", "fftw3:$Triplet", "pkgconf:$Triplet")
+$Packages = @("glib:$Triplet", "libusb:$Triplet", "pkgconf:$Triplet")
 # Host tools also use the Release-only triplet on these native runners.
 $InstallTimer = [System.Diagnostics.Stopwatch]::StartNew()
 & $VcpkgExe install $Packages "--host-triplet=$Triplet" "--overlay-triplets=$OverlayTriplets"
