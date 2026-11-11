@@ -18,6 +18,7 @@ mod device_options;
 pub use capture_config::{
     CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
     ValidatedCaptureConfig,
+    TriggerCondition, TriggerParseError, TriggerSpec,
 };
 pub use device_option_validation::{
     ChannelModeValidationCapabilities, DeviceOptionValidationCapabilities,
@@ -1931,13 +1932,55 @@ pub struct DecodeDiscovery {
     paths: DecodeDiscoveryPaths,
 }
 
+/// Verbosity of the native libsigrok4DSL logger, which writes to stderr.
+///
+/// The library's own default is `Info`, which emits a dozen lines of scan
+/// chatter on every command. That is unhelpful in a tool whose output is meant
+/// to be piped, so this crate defaults to `Warn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NativeLogLevel {
+    None,
+    Error,
+    #[default]
+    Warn,
+    Info,
+    Debug,
+    Detail,
+}
+
+impl NativeLogLevel {
+    pub fn as_native(self) -> i32 {
+        match self {
+            NativeLogLevel::None => 0,
+            NativeLogLevel::Error => 1,
+            NativeLogLevel::Warn => 2,
+            NativeLogLevel::Info => 3,
+            NativeLogLevel::Debug => 4,
+            NativeLogLevel::Detail => 5,
+        }
+    }
+}
+
 impl Discovery {
     pub fn connect(
         library_path: impl AsRef<Path>,
         resource_dir: impl AsRef<Path>,
     ) -> Result<Self, BringUpError> {
+        Self::connect_with_log_level(library_path, resource_dir, NativeLogLevel::default())
+    }
+
+    pub fn connect_with_log_level(
+        library_path: impl AsRef<Path>,
+        resource_dir: impl AsRef<Path>,
+        log_level: NativeLogLevel,
+    ) -> Result<Self, BringUpError> {
         let resources = ResourceDirectory::discover(resource_dir)?;
         let runtime = RuntimeBridge::load(library_path).map_err(BringUpError::Runtime)?;
+        // Set verbosity before init(): the device scan happens inside init(),
+        // and that scan is where most of the native chatter comes from.
+        runtime
+            .set_log_level(log_level.as_native())
+            .map_err(BringUpError::Runtime)?;
         runtime
             .set_firmware_resource_dir(resources.path())
             .map_err(BringUpError::Runtime)?;
@@ -1947,8 +1990,15 @@ impl Discovery {
     }
 
     pub fn connect_auto(resource_override: Option<impl AsRef<Path>>) -> Result<Self, BringUpError> {
+        Self::connect_auto_with_log_level(resource_override, NativeLogLevel::default())
+    }
+
+    pub fn connect_auto_with_log_level(
+        resource_override: Option<impl AsRef<Path>>,
+        log_level: NativeLogLevel,
+    ) -> Result<Self, BringUpError> {
         let paths = RuntimeDiscoveryPaths::discover(resource_override)?;
-        Self::connect(&paths.runtime_library, &paths.resource_dir)
+        Self::connect_with_log_level(&paths.runtime_library, &paths.resource_dir, log_level)
     }
 
     pub fn discovery_paths(
@@ -2132,6 +2182,7 @@ pub fn validated_capture_config_from_device_options(
     request: &ValidatedDeviceOptionRequest,
 ) -> ValidatedCaptureConfig {
     ValidatedCaptureConfig {
+        trigger: None,
         sample_rate_hz: request.sample_rate_hz,
         requested_sample_limit: request.requested_sample_limit,
         effective_sample_limit: request.effective_sample_limit,
@@ -2407,6 +2458,42 @@ impl Discovery {
         Ok(())
     }
 
+    /// Program the simple trigger, or clear it when `spec` is `None`.
+    ///
+    /// libsigrok4DSL keeps trigger state in a process-global, so this always
+    /// resets first: without that, a channel armed by an earlier capture in the
+    /// same process would still be live and the device would wait on it.
+    fn apply_trigger(&self, spec: Option<&TriggerSpec>) -> Result<(), BringUpError> {
+        self.runtime.trigger_reset().map_err(BringUpError::Runtime)?;
+
+        let Some(spec) = spec else {
+            self.runtime
+                .trigger_set_enabled(false)
+                .map_err(BringUpError::Runtime)?;
+            return Ok(());
+        };
+
+        for (channel, condition) in &spec.conditions {
+            let native = condition.as_native_char();
+            // Simple mode evaluates both comparator banks; giving them the same
+            // character makes the pair express one condition.
+            self.runtime
+                .trigger_probe_set(*channel, native, native)
+                .map_err(BringUpError::Runtime)?;
+        }
+
+        // 0 = SIMPLE_TRIGGER, and a simple trigger occupies no staged slots.
+        self.runtime.trigger_set_stage(0).map_err(BringUpError::Runtime)?;
+        self.runtime.trigger_set_mode(0).map_err(BringUpError::Runtime)?;
+        self.runtime
+            .trigger_set_position(spec.position_percent)
+            .map_err(BringUpError::Runtime)?;
+        self.runtime
+            .trigger_set_enabled(true)
+            .map_err(BringUpError::Runtime)?;
+        Ok(())
+    }
+
     pub fn acquisition_preflight(
         &self,
         selection_handle: SelectionHandle,
@@ -2480,6 +2567,7 @@ impl Discovery {
             sample_rate_hz: config.sample_rate_hz,
             sample_limit: config.requested_sample_limit,
             enabled_channels: config.enabled_channels.iter().copied().collect(),
+            trigger: config.trigger.clone(),
         };
         let preflight = self.acquisition_preflight(selection_handle, &request);
         if preflight.status != PreflightStatus::Ready {
@@ -2577,6 +2665,12 @@ impl Discovery {
             )?;
             (session, None)
         };
+
+        // Both preparation paths above converge here, so the trigger is
+        // programmed in exactly one place. Doing it inside apply_capture_config
+        // would silently skip every capture that supplies device options,
+        // because those take the other path.
+        self.apply_trigger(request.config.trigger.as_ref())?;
 
         let started = self
             .runtime
@@ -3820,6 +3914,7 @@ mod tests {
                 effective_sample_limit: 2048,
                 enabled_channels: vec![0, 1, 2, 3],
                 channel_mode_id: 20,
+                trigger: None,
             },
             vcd_path,
             metadata_path: None,

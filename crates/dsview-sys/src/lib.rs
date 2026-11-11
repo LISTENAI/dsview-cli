@@ -93,6 +93,13 @@ unsafe extern "C" {
     fn dsview_bridge_ds_set_samplerate(value: u64) -> c_int;
     fn dsview_bridge_ds_set_sample_limit(value: u64) -> c_int;
     fn dsview_bridge_ds_enable_channel(channel_index: c_int, enable: c_int) -> c_int;
+    fn dsview_bridge_ds_log_level(level: c_int) -> c_int;
+    fn dsview_bridge_ds_trigger_reset() -> c_int;
+    fn dsview_bridge_ds_trigger_probe_set(probe: u16, trigger0: u8, trigger1: u8) -> c_int;
+    fn dsview_bridge_ds_trigger_set_en(enable: u16) -> c_int;
+    fn dsview_bridge_ds_trigger_set_mode(mode: u16) -> c_int;
+    fn dsview_bridge_ds_trigger_set_pos(position: u16) -> c_int;
+    fn dsview_bridge_ds_trigger_set_stage(stages: u16) -> c_int;
     fn dsview_bridge_ds_register_acquisition_callbacks() -> c_int;
     fn dsview_bridge_ds_clear_acquisition_callbacks() -> c_int;
     fn dsview_bridge_ds_start_collect() -> c_int;
@@ -1414,6 +1421,58 @@ impl RuntimeBridge {
     pub fn set_operation_mode(&self, value: i16) -> Result<(), RuntimeError> {
         native_call_status("ds_set_operation_mode", unsafe {
             dsview_bridge_ds_set_operation_mode(value as c_int)
+        })
+    }
+
+    /// Set native library log verbosity: 0 none, 1 error, 2 warn, 3 info,
+    /// 4 debug, 5 detail. The library defaults to info, which is far too
+    /// chatty for a tool whose output is meant to be parsed.
+    pub fn set_log_level(&self, level: i32) -> Result<(), RuntimeError> {
+        native_call_status("ds_log_level", unsafe {
+            dsview_bridge_ds_log_level(level as c_int)
+        })
+    }
+
+    /// Clear any previously configured trigger back to "don't care" on every
+    /// probe. Always call this before programming a new trigger: the library
+    /// keeps trigger state in a global, so a stale probe from an earlier run
+    /// would otherwise still be armed.
+    pub fn trigger_reset(&self) -> Result<(), RuntimeError> {
+        native_call_status("ds_trigger_reset", unsafe { dsview_bridge_ds_trigger_reset() })
+    }
+
+    /// Set the simple-trigger condition for one probe. `trigger0`/`trigger1`
+    /// are the uppercase characters libsigrok4DSL matches on: `X` don't care,
+    /// `0`/`1` level, `R` rising, `F` falling, `C` either edge.
+    pub fn trigger_probe_set(&self, probe: u16, trigger0: u8, trigger1: u8) -> Result<(), RuntimeError> {
+        native_call_status("ds_trigger_probe_set", unsafe {
+            dsview_bridge_ds_trigger_probe_set(probe, trigger0, trigger1)
+        })
+    }
+
+    pub fn trigger_set_enabled(&self, enable: bool) -> Result<(), RuntimeError> {
+        native_call_status("ds_trigger_set_en", unsafe {
+            dsview_bridge_ds_trigger_set_en(u16::from(enable))
+        })
+    }
+
+    pub fn trigger_set_mode(&self, mode: u16) -> Result<(), RuntimeError> {
+        native_call_status("ds_trigger_set_mode", unsafe {
+            dsview_bridge_ds_trigger_set_mode(mode)
+        })
+    }
+
+    /// Trigger position as a percentage of the capture buffer (0-100): how
+    /// much of the capture is kept from *before* the trigger fires.
+    pub fn trigger_set_position(&self, position: u16) -> Result<(), RuntimeError> {
+        native_call_status("ds_trigger_set_pos", unsafe {
+            dsview_bridge_ds_trigger_set_pos(position)
+        })
+    }
+
+    pub fn trigger_set_stage(&self, stages: u16) -> Result<(), RuntimeError> {
+        native_call_status("ds_trigger_set_stage", unsafe {
+            dsview_bridge_ds_trigger_set_stage(stages)
         })
     }
 

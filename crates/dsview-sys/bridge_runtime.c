@@ -72,6 +72,14 @@ typedef int (*srd_inst_stack_fn)(
     struct srd_decoder_inst *di_bottom,
     struct srd_decoder_inst *di_top);
 
+typedef void (*ds_log_level_fn)(int level);
+typedef int (*ds_trigger_reset_fn)(void);
+typedef int (*ds_trigger_probe_set_fn)(uint16_t probe, unsigned char trigger0, unsigned char trigger1);
+typedef int (*ds_trigger_set_en_fn)(uint16_t enable);
+typedef int (*ds_trigger_set_mode_fn)(uint16_t mode);
+typedef int (*ds_trigger_set_pos_fn)(uint16_t position);
+typedef int (*ds_trigger_set_stage_fn)(uint16_t stages);
+
 typedef void (*dslib_event_callback_t)(int event);
 typedef void (*ds_datafeed_callback_t)(const struct sr_dev_inst *sdi, const struct sr_datafeed_packet *packet);
 
@@ -112,6 +120,13 @@ struct dsview_bridge_api {
     ds_get_actived_device_config_list_fn ds_get_actived_device_config_list;
     ds_set_actived_device_config_fn ds_set_actived_device_config;
     ds_enable_device_channel_index_fn ds_enable_device_channel_index;
+    ds_log_level_fn ds_log_level;
+    ds_trigger_reset_fn ds_trigger_reset;
+    ds_trigger_probe_set_fn ds_trigger_probe_set;
+    ds_trigger_set_en_fn ds_trigger_set_en;
+    ds_trigger_set_mode_fn ds_trigger_set_mode;
+    ds_trigger_set_pos_fn ds_trigger_set_pos;
+    ds_trigger_set_stage_fn ds_trigger_set_stage;
     sr_output_find_fn sr_output_find;
     sr_output_new_fn sr_output_new;
     sr_output_send_fn sr_output_send;
@@ -3075,6 +3090,55 @@ int dsview_bridge_load_library(const char *path)
         return status;
     }
 
+    g_bridge_api.ds_log_level =
+        (ds_log_level_fn)dsview_bridge_load_symbol("ds_log_level", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_reset =
+        (ds_trigger_reset_fn)dsview_bridge_load_symbol("ds_trigger_reset", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_probe_set =
+        (ds_trigger_probe_set_fn)dsview_bridge_load_symbol("ds_trigger_probe_set", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_en =
+        (ds_trigger_set_en_fn)dsview_bridge_load_symbol("ds_trigger_set_en", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_mode =
+        (ds_trigger_set_mode_fn)dsview_bridge_load_symbol("ds_trigger_set_mode", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_pos =
+        (ds_trigger_set_pos_fn)dsview_bridge_load_symbol("ds_trigger_set_pos", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
+    g_bridge_api.ds_trigger_set_stage =
+        (ds_trigger_set_stage_fn)dsview_bridge_load_symbol("ds_trigger_set_stage", &status);
+    if (status != DSVIEW_BRIDGE_OK) {
+        dsview_bridge_unload_library();
+        return status;
+    }
+
     g_bridge_api.sr_output_find =
         (sr_output_find_fn)dsview_bridge_load_symbol("sr_output_find", &status);
     if (status != DSVIEW_BRIDGE_OK) {
@@ -3708,6 +3772,84 @@ int dsview_bridge_ds_set_vth(double value)
 
     data = g_variant_new_double(value);
     return g_bridge_api.ds_set_actived_device_config(NULL, NULL, SR_CONF_VTH, data);
+}
+
+/*
+ * Native log verbosity. libsigrok4DSL defaults to INFO, which prints a dozen
+ * lines of scan chatter to stderr on every single command; that is noise in a
+ * tool meant to be scripted. Levels: 0 none, 1 error, 2 warn, 3 info, 4 debug,
+ * 5 detail.
+ */
+int dsview_bridge_ds_log_level(int level)
+{
+    if (g_bridge_api.ds_log_level == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    g_bridge_api.ds_log_level(level);
+    return 0;
+}
+
+/*
+ * Trigger control.
+ *
+ * libsigrok4DSL keeps a simple (single-stage) trigger in the slot past the
+ * staged-trigger array, which is what ds_trigger_probe_set() writes to. Values
+ * are the uppercase characters the library matches on: 'X' don't care, '0'/'1'
+ * level, 'R' rising, 'F' falling, 'C' either edge.
+ */
+int dsview_bridge_ds_trigger_reset(void)
+{
+    if (g_bridge_api.ds_trigger_reset == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    return g_bridge_api.ds_trigger_reset();
+}
+
+int dsview_bridge_ds_trigger_probe_set(uint16_t probe, unsigned char trigger0, unsigned char trigger1)
+{
+    if (g_bridge_api.ds_trigger_probe_set == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    return g_bridge_api.ds_trigger_probe_set(probe, trigger0, trigger1);
+}
+
+int dsview_bridge_ds_trigger_set_en(uint16_t enable)
+{
+    if (g_bridge_api.ds_trigger_set_en == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    return g_bridge_api.ds_trigger_set_en(enable);
+}
+
+int dsview_bridge_ds_trigger_set_mode(uint16_t mode)
+{
+    if (g_bridge_api.ds_trigger_set_mode == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    return g_bridge_api.ds_trigger_set_mode(mode);
+}
+
+int dsview_bridge_ds_trigger_set_pos(uint16_t position)
+{
+    if (g_bridge_api.ds_trigger_set_pos == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    return g_bridge_api.ds_trigger_set_pos(position);
+}
+
+int dsview_bridge_ds_trigger_set_stage(uint16_t stages)
+{
+    if (g_bridge_api.ds_trigger_set_stage == NULL) {
+        return DSVIEW_BRIDGE_ERR_NOT_LOADED;
+    }
+
+    return g_bridge_api.ds_trigger_set_stage(stages);
 }
 
 int dsview_bridge_ds_set_filter(int value)

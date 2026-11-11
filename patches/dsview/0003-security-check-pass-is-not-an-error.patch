@@ -1,0 +1,13 @@
+diff --git a/libsigrok4DSL/hardware/DSL/dsl.c b/libsigrok4DSL/hardware/DSL/dsl.c
+index 38ffde6..4f56ecc 100644
+--- a/libsigrok4DSL/hardware/DSL/dsl.c
++++ b/libsigrok4DSL/hardware/DSL/dsl.c
+@@ -1960,7 +1960,7 @@ SR_PRIV int dsl_dev_open(struct sr_dev_driver *di, struct sr_dev_inst *sdi, gboo
+         if (ret != SR_OK){
+             sr_err("Security check failed!");
+         } else {
+-            sr_err("Security check pass!");
++            sr_info("Security check pass!");
+         }
+     }
+ 

@@ -515,7 +515,8 @@ fn capture_without_validated_device_options_keeps_config_only_baseline() {
             sample_rate_hz: 25_000_000,
             sample_limit: 2048,
             enabled_channels: BTreeSet::from([0_u16, 1_u16]),
-        },
+        
+            trigger: None,},
         validated_device_options: None,
         stop_after: None,
         stop_on_interrupt: None,
