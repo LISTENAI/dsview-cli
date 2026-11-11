@@ -18,6 +18,8 @@ Changing Windows tests back to Debug requires restoring Debug dependencies too.
 The binary/download cache is separate from the old dual-configuration cache.
 Its key includes the target, MSVC tools version, revision, triplets and setup
 script. vcpkg additionally checks package ABI hashes before reusing binaries.
+The cache is saved immediately after dependency installation succeeds, so a
+later compile/test/package failure does not discard the dependency build.
 
 ## Measuring changes
 
@@ -36,6 +38,22 @@ Next experiments should isolate gettext host tools or cross-build dependencies
 on x64, retaining native ARM64 build, tests and bundle validation. Do not remove
 GLib's gettext-libintl/libiconv dependencies or replace tools with unchecked
 downloads merely to shorten the benchmark.
+
+The CI workflow has a manual `benchmark-arm64-deps` boolean input. When enabled,
+it builds dependencies on `windows-2022`, using ARM64 target
+libraries and x64 host tools. It disables binary caches, uses a fresh download
+directory, and uploads vcpkg build logs even on failure. A following native
+ARM64 job consumes a raw vcpkg export and runs the project build, optimized
+tests and bundle validation. Its bundles are experiment artifacts; it does not
+replace the normal native ARM64 CI job. For example:
+
+```powershell
+gh workflow run ci.yml -R LISTENAI/dsview-cli --ref codex/feature-windows-cold-build -f benchmark-arm64-deps=true
+```
+
+An ordinary manual dispatch (input false) runs the full build/test/package
+matrix. Cross-build timing alone is not sufficient to switch production CI;
+the exported dependencies must also pass native ARM64 tests and bundle checks.
 
 FFTW is not installed or linked: only the upstream GUI spectrum implementation
 uses it, and that source is not part of either CLI native runtime.

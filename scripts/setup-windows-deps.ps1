@@ -59,18 +59,4 @@ if ($LASTEXITCODE -ne 0) {
 $InstallTimer.Stop()
 Write-Host ("vcpkg install elapsed: {0:N1} seconds" -f $InstallTimer.Elapsed.TotalSeconds)
 
-$PkgConfigExe = "$VcpkgRoot/installed/$Triplet/tools/pkgconf/pkgconf.exe"
-$PkgConfigPath = "$VcpkgRoot/installed/$Triplet/lib/pkgconfig;$VcpkgRoot/installed/$Triplet/share/pkgconfig"
-$PkgConfigBin = "$VcpkgRoot/installed/$Triplet/tools/pkgconf"
-$RuntimeBin = "$VcpkgRoot/installed/$Triplet/bin"
-
-"VCPKG_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"VCPKG_INSTALLATION_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"VCPKG_OVERLAY_TRIPLETS=$OverlayTriplets" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"DSVIEW_VCPKG_ROOT=$VcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"DSVIEW_VCPKG_TRIPLET=$Triplet" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"CMAKE_TOOLCHAIN_FILE=$VcpkgRoot/scripts/buildsystems/vcpkg.cmake" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"PKG_CONFIG=$PkgConfigExe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"PKG_CONFIG_PATH=$PkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"PKG_CONFIG_LIBDIR=$PkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-"PATH=$RuntimeBin;$PkgConfigBin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+& (Join-Path $PSScriptRoot 'use-windows-deps.ps1') -VcpkgRoot $VcpkgRoot -Triplet $Triplet
