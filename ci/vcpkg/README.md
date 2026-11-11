@@ -40,15 +40,15 @@ GLib's gettext-libintl/libiconv dependencies or replace tools with unchecked
 downloads merely to shorten the benchmark.
 
 The CI workflow has a manual `benchmark-arm64-deps` boolean input. When enabled,
-it builds dependencies on `windows-2022`, using ARM64 target
-libraries and x64 host tools. It disables binary caches, uses a fresh download
-directory, and uploads vcpkg build logs even on failure. A following native
+it calls the shared `windows-arm64.yml` workflow to build dependencies on `windows-2022`, using ARM64 target
+libraries and x64 host tools. Set the additional `cold-build` input to true to disable cache restoration and
+saving. Dependency build logs are uploaded on failure. A following native
 ARM64 job consumes a raw vcpkg export and runs the project build, optimized
 tests and bundle validation. Its bundles are experiment artifacts; it does not
 replace the normal native ARM64 CI job. For example:
 
 ```powershell
-gh workflow run ci.yml -R LISTENAI/dsview-cli --ref codex/feature-windows-cold-build -f benchmark-arm64-deps=true
+gh workflow run ci.yml -R LISTENAI/dsview-cli --ref codex/feature-windows-cold-build -f benchmark-arm64-deps=true -f cold-build=true
 ```
 
 An ordinary manual dispatch (input false) runs the full build/test/package

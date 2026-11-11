@@ -4,7 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       benchmark-arm64-deps:
-        description: 'Cold-build ARM64 dependencies on an x64 runner (experiment only)'
+        description: 'Run only ARM64 dependency build and native validation'
+        type: boolean
+        default: false
+      cold-build:
+        description: 'Disable ARM64 dependency cache restore/save'
         type: boolean
         default: false
   push:
@@ -241,93 +245,6 @@ jobs:
 
   benchmark-arm64-deps:
     if: github.event_name == 'workflow_dispatch' && inputs.benchmark-arm64-deps
-    name: Cold ARM64 dependencies on x64 (experimental)
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-msvc-dev-cmd
-        with:
-          arch: x64
-      - name: Cross-build dependencies without caches
-        shell: pwsh
-        run: |
-          $env:VCPKG_BINARY_SOURCES = 'clear'
-          $env:VCPKG_DOWNLOADS = Join-Path $env:GITHUB_WORKSPACE '.cache/vcpkg/downloads'
-          ./scripts/setup-windows-deps.ps1 -Target aarch64-pc-windows-msvc -HostTriplet x64-windows-release
-      - name: Export ARM64 dependencies
-        shell: pwsh
-        run: |
-          ./.cache/vcpkg/source/vcpkg.exe export glib:arm64-windows-release libusb:arm64-windows-release pkgconf:arm64-windows-release --raw --output=arm64-deps --output-dir="$env:GITHUB_WORKSPACE/.cache/exports"
-          if ($LASTEXITCODE -ne 0) { throw 'vcpkg export failed' }
-          tar -czf .cache/arm64-deps.tar.gz -C .cache/exports/arm64-deps .
-          if ($LASTEXITCODE -ne 0) { throw 'Dependency archive failed' }
-      - name: Upload ARM64 dependencies
-        uses: actions/upload-artifact@v6
-        with:
-          name: arm64-cross-dependencies
-          path: .cache/arm64-deps.tar.gz
-          include-hidden-files: true
-          retention-days: 7
-      - name: Upload dependency build logs
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: arm64-cross-dependency-logs
-          path: .cache/vcpkg/source/buildtrees/**/*.log
-          include-hidden-files: true
-          retention-days: 7
-
-  validate-arm64-cross-deps:
-    needs: benchmark-arm64-deps
-    name: Validate cross-built dependencies on native ARM64
-    runs-on: windows-11-arm
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - name: Apply DSView local patches
-        shell: pwsh
-        run: ./scripts/apply-dsview-patches.ps1
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-pc-windows-msvc
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-          architecture: arm64
-      - uses: ./.github/actions/setup-msvc-dev-cmd
-        with:
-          arch: arm64
-      - uses: actions/download-artifact@v8
-        with:
-          name: arm64-cross-dependencies
-          path: .cache/cross-artifact
-      - name: Activate cross-built dependencies
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force .cache/cross-deps | Out-Null
-          tar -xzf .cache/cross-artifact/arm64-deps.tar.gz -C .cache/cross-deps
-          if ($LASTEXITCODE -ne 0) { throw 'Dependency extraction failed' }
-          ./scripts/use-windows-deps.ps1 -VcpkgRoot .cache/cross-deps -Triplet arm64-windows-release
-      - name: Build workspace
-        run: cargo build --release --target aarch64-pc-windows-msvc
-      - name: Run tests
-        run: cargo test --workspace --profile ci-test --target aarch64-pc-windows-msvc
-      - name: Locate native runtimes
-        id: runtimes
-        shell: pwsh
-        run: |
-          $BuildRoot = 'target/aarch64-pc-windows-msvc/release/build'
-          foreach ($Entry in @(@('capture', 'dsview_runtime.dll'), @('decode', 'dsview_decode_runtime.dll'))) {
-            $Runtime = Get-ChildItem $BuildRoot -Recurse -Filter $Entry[1] | Select-Object -First 1 -ExpandProperty FullName
-            if (-not $Runtime) { throw "Missing runtime: $($Entry[1])" }
-            "$($Entry[0])=$Runtime" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          }
-      - uses: ./.github/actions/package-and-validate
-        with:
-          target: aarch64-pc-windows-msvc
-          version: cross-benchmark-${{ github.run_id }}
-          exe-path: target/aarch64-pc-windows-msvc/release/dsview-cli.exe
-          runtime-path: ${{ steps.runtimes.outputs.capture }}
-          decode-runtime-path: ${{ steps.runtimes.outputs.decode }}
-          decoder-dir: DSView/libsigrokdecode4DSL/decoders
+    uses: ./.github/workflows/windows-arm64.yml
+    with:
+      cold-build: ${{ inputs.cold-build }}
