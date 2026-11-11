@@ -1,6 +1,12 @@
 name: CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      benchmark-arm64-deps:
+        description: 'Cold-build ARM64 dependencies on an x64 runner (experiment only)'
+        type: boolean
+        default: false
   push:
   pull_request:
     branches: [master]
@@ -11,6 +17,7 @@ env:
 
 jobs:
   build-test-package:
+    if: ${{ !inputs.benchmark-arm64-deps }}
     name: build-test-package (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -231,3 +238,27 @@ jobs:
           runtime-path: ${{ contains(matrix.target, 'windows') && steps.find-runtime-windows.outputs.runtime-lib || steps.find-runtime-unix.outputs.runtime-lib }}
           decode-runtime-path: ${{ contains(matrix.target, 'windows') && steps.find-decode-runtime-windows.outputs.runtime-lib || steps.find-decode-runtime-unix.outputs.runtime-lib }}
           decoder-dir: DSView/libsigrokdecode4DSL/decoders
+
+  benchmark-arm64-deps:
+    if: github.event_name == 'workflow_dispatch' && inputs.benchmark-arm64-deps
+    name: Cold ARM64 dependencies on x64 (experimental)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-msvc-dev-cmd
+        with:
+          arch: x64
+      - name: Cross-build dependencies without caches
+        shell: pwsh
+        run: |
+          $env:VCPKG_BINARY_SOURCES = 'clear'
+          $env:VCPKG_DOWNLOADS = Join-Path $env:GITHUB_WORKSPACE '.cache/vcpkg/downloads'
+          ./scripts/setup-windows-deps.ps1 -Target aarch64-pc-windows-msvc -HostTriplet x64-windows-release
+      - name: Upload dependency build logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arm64-cross-dependency-logs
+          path: .cache/vcpkg/source/buildtrees/**/*.log
+          include-hidden-files: true
+          retention-days: 7

@@ -1,7 +1,9 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')]
-    [string]$Target
+    [string]$Target,
+    [ValidateSet('x64-windows-release', 'arm64-windows-release')]
+    [string]$HostTriplet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +19,9 @@ $Triplet = switch ("$Target") {
   "x86_64-pc-windows-msvc" { "x64-windows-release" }
   "aarch64-pc-windows-msvc" { "arm64-windows-release" }
   default { throw "unsupported Windows target: $Target" }
+}
+if (-not $HostTriplet) {
+    $HostTriplet = $Triplet
 }
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -44,9 +49,9 @@ $env:VCPKG_INSTALLATION_ROOT = $VcpkgRoot
 Write-Host "Using vcpkg at $VcpkgExe"
 
 $Packages = @("glib:$Triplet", "libusb:$Triplet", "pkgconf:$Triplet")
-# Host tools also use the Release-only triplet on these native runners.
+# Native jobs use matching host tools; the manual benchmark can cross-build.
 $InstallTimer = [System.Diagnostics.Stopwatch]::StartNew()
-& $VcpkgExe install $Packages "--host-triplet=$Triplet" "--overlay-triplets=$OverlayTriplets"
+& $VcpkgExe install $Packages "--host-triplet=$HostTriplet" "--overlay-triplets=$OverlayTriplets"
 if ($LASTEXITCODE -ne 0) {
   throw "vcpkg install failed with exit code $LASTEXITCODE"
 }
