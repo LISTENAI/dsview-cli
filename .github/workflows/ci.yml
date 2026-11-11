@@ -27,7 +27,7 @@ jobs:
             runner: macos-15-intel
             package_bundle: true
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
             package_bundle: true
           - target: x86_64-pc-windows-msvc
             runner: windows-2022
