@@ -22,8 +22,10 @@ jobs:
         with:
           arch: x64
       - name: Prepare dependency caches
+        id: cache-env
         shell: pwsh
         run: |
+          "image=$env:ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           $BinaryCache = Join-Path $env:GITHUB_WORKSPACE '.cache/vcpkg/binary'
           $DownloadsCache = Join-Path $env:GITHUB_WORKSPACE '.cache/vcpkg/downloads'
           New-Item -ItemType Directory -Force $BinaryCache, $DownloadsCache | Out-Null
@@ -37,7 +39,7 @@ jobs:
           path: |
             .cache/vcpkg/binary
             .cache/vcpkg/downloads
-          key: windows-vcpkg-cross-v1-arm64-${{ env.VCToolsVersion }}-${{ hashFiles('ci/vcpkg/**', 'scripts/setup-windows-deps.ps1') }}
+          key: windows-vcpkg-cross-v1-arm64-${{ env.VCToolsVersion }}-${{ steps.cache-env.outputs.image }}-${{ hashFiles('ci/vcpkg/**', 'scripts/setup-windows-deps.ps1') }}
           restore-keys: |
             windows-vcpkg-cross-v1-arm64-${{ env.VCToolsVersion }}-
       - name: Disable binary cache for cold benchmark

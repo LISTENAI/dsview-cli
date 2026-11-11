@@ -44,10 +44,6 @@ jobs:
             runner: windows-2022
             msvc_arch: x64
             package_bundle: true
-          - target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
-            msvc_arch: arm64
-            package_bundle: true
 
     steps:
       - name: Checkout repository
@@ -90,9 +86,11 @@ jobs:
           arch: ${{ matrix.msvc_arch }}
 
       - name: Prepare Windows vcpkg cache directories
+        id: vcpkg-cache-env
         if: contains(matrix.target, 'windows')
         shell: pwsh
         run: |
+          "image=$env:ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           $BinaryCache = Join-Path $env:GITHUB_WORKSPACE ".cache\vcpkg\binary"
           $DownloadsCache = Join-Path $env:GITHUB_WORKSPACE ".cache\vcpkg\downloads"
           New-Item -ItemType Directory -Force -Path $BinaryCache | Out-Null
@@ -108,7 +106,7 @@ jobs:
           path: |
             .cache/vcpkg/binary
             .cache/vcpkg/downloads
-          key: windows-vcpkg-release-v1-${{ matrix.target }}-${{ env.VCToolsVersion }}-${{ hashFiles('ci/vcpkg/**', 'scripts/setup-windows-deps.ps1') }}
+          key: windows-vcpkg-release-v1-${{ matrix.target }}-${{ env.VCToolsVersion }}-${{ steps.vcpkg-cache-env.outputs.image }}-${{ hashFiles('ci/vcpkg/**', 'scripts/setup-windows-deps.ps1') }}
           restore-keys: |
             windows-vcpkg-release-v1-${{ matrix.target }}-${{ env.VCToolsVersion }}-
 
@@ -243,8 +241,7 @@ jobs:
           decode-runtime-path: ${{ contains(matrix.target, 'windows') && steps.find-decode-runtime-windows.outputs.runtime-lib || steps.find-decode-runtime-unix.outputs.runtime-lib }}
           decoder-dir: DSView/libsigrokdecode4DSL/decoders
 
-  benchmark-arm64-deps:
-    if: github.event_name == 'workflow_dispatch' && inputs.benchmark-arm64-deps
+  windows-arm64:
     uses: ./.github/workflows/windows-arm64.yml
     with:
-      cold-build: ${{ inputs.cold-build }}
+      cold-build: ${{ inputs.cold-build || false }}
