@@ -96,9 +96,9 @@ jobs:
           path: |
             .cache/vcpkg/binary
             .cache/vcpkg/downloads
-          key: windows-vcpkg-${{ matrix.target }}-${{ hashFiles('.github/actions/setup-native-prereqs/action.yml', 'crates/dsview-sys/native/CMakeLists.txt') }}
+          key: windows-vcpkg-release-v1-${{ matrix.target }}-${{ env.VCToolsVersion }}-${{ hashFiles('ci/vcpkg/**', 'scripts/setup-windows-deps.ps1') }}
           restore-keys: |
-            windows-vcpkg-${{ matrix.target }}-
+            windows-vcpkg-release-v1-${{ matrix.target }}-${{ env.VCToolsVersion }}-
 
       - name: Setup native prerequisites
         uses: ./.github/actions/setup-native-prereqs
@@ -116,7 +116,12 @@ jobs:
       - name: Build workspace
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Run tests
+      - name: Run tests (Windows Release)
+        if: contains(matrix.target, 'windows')
+        run: cargo test --workspace --release --target ${{ matrix.target }}
+
+      - name: Run tests (Unix)
+        if: ${{ !contains(matrix.target, 'windows') }}
         run: cargo test --workspace --target ${{ matrix.target }}
 
       - name: Find runtime library (Windows)
