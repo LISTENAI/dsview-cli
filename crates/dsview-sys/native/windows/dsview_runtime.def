@@ -17,8 +17,19 @@ EXPORTS
     ds_set_firmware_resource_dir
     ds_start_collect
     ds_stop_collect
+    ds_trigger_probe_set
+    ds_trigger_reset
+    ds_trigger_set_en
+    ds_trigger_set_mode
+    ds_trigger_set_pos
+    ds_trigger_set_stage
+    ds_trigger_stage_set_count
+    ds_trigger_stage_set_inv
+    ds_trigger_stage_set_logic
+    ds_trigger_stage_set_value
     sr_get_lib_version_string
     sr_output_find
     sr_output_free
     sr_output_new
     sr_output_send
+    trigger DATA

@@ -7,6 +7,10 @@ use crate::capture_device_options::{
 };
 use dsview_core::{
     CurrentDeviceOptionValues, DeviceOptionsSnapshot, LegacyThresholdMetadataSnapshot,
+    TRIGGER_CHANNEL_CAPACITY, TRIGGER_CONFIG_VERSION, TRIGGER_MAX_SERIAL_DATA_BITS,
+    TRIGGER_MAX_STAGE_COUNT, TRIGGER_MAX_STAGES, TRIGGER_POSITION_DEFAULT_PERCENT,
+    TRIGGER_POSITION_MAX_PERCENT, TRIGGER_POSITION_MIN_PERCENT, TRIGGER_STREAM_POSITION_PERCENT,
+    TriggerCondition,
 };
 use serde::Serialize;
 
@@ -57,6 +61,63 @@ pub struct ThresholdGuideResponse {
     pub legacy_metadata: Option<LegacyThresholdMetadataSnapshot>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TriggerPositionGuideResponse {
+    pub min_percent: u8,
+    pub max_percent: u8,
+    pub default_percent: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TriggerStreamModeGuideResponse {
+    pub modes: Vec<&'static str>,
+    pub position_percent: u8,
+}
+
+/// Hardware trigger capabilities and the capture flags that use them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TriggerGuideResponse {
+    pub trigger_flag: &'static str,
+    pub trigger_config_flag: &'static str,
+    pub trigger_position_flag: &'static str,
+    pub config_version: u32,
+    pub modes: Vec<&'static str>,
+    pub conditions: Vec<&'static str>,
+    pub channel_capacity: u16,
+    pub max_stages: usize,
+    pub max_stage_count: u32,
+    pub max_serial_data_bits: u8,
+    pub position_percent: TriggerPositionGuideResponse,
+    pub stream_mode: TriggerStreamModeGuideResponse,
+}
+
+pub fn build_trigger_guide_response() -> TriggerGuideResponse {
+    TriggerGuideResponse {
+        trigger_flag: "--trigger",
+        trigger_config_flag: "--trigger-config",
+        trigger_position_flag: "--trigger-position",
+        config_version: TRIGGER_CONFIG_VERSION,
+        modes: vec!["simple", "stage", "serial"],
+        conditions: TriggerCondition::ALL
+            .iter()
+            .map(|condition| condition.as_str())
+            .collect(),
+        channel_capacity: TRIGGER_CHANNEL_CAPACITY,
+        max_stages: TRIGGER_MAX_STAGES,
+        max_stage_count: TRIGGER_MAX_STAGE_COUNT,
+        max_serial_data_bits: TRIGGER_MAX_SERIAL_DATA_BITS,
+        position_percent: TriggerPositionGuideResponse {
+            min_percent: TRIGGER_POSITION_MIN_PERCENT,
+            max_percent: TRIGGER_POSITION_MAX_PERCENT,
+            default_percent: TRIGGER_POSITION_DEFAULT_PERCENT,
+        },
+        stream_mode: TriggerStreamModeGuideResponse {
+            modes: vec!["simple"],
+            position_percent: TRIGGER_STREAM_POSITION_PERCENT,
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DeviceOptionsResponse {
     pub selected_handle: u64,
@@ -68,6 +129,7 @@ pub struct DeviceOptionsResponse {
     pub threshold: ThresholdGuideResponse,
     pub channel_modes_by_operation_mode: Vec<ChannelModeGroupResponse>,
     pub capture_guide: CaptureTokenGuide,
+    pub trigger: TriggerGuideResponse,
 }
 
 pub fn build_device_options_response(snapshot: &DeviceOptionsSnapshot) -> DeviceOptionsResponse {
@@ -133,6 +195,7 @@ pub fn build_device_options_response(snapshot: &DeviceOptionsSnapshot) -> Device
             })
             .collect(),
         capture_guide,
+        trigger: build_trigger_guide_response(),
     }
 }
 
@@ -245,7 +308,43 @@ pub fn render_device_options_text(response: &DeviceOptionsResponse) -> String {
     ));
     append_token_options(&mut lines, &response.filters);
 
+    lines.extend(render_trigger_guide_text(&response.trigger));
+
     lines.join("\n")
+}
+
+fn render_trigger_guide_text(trigger: &TriggerGuideResponse) -> Vec<String> {
+    let position = &trigger.position_percent;
+    vec![
+        "trigger".to_string(),
+        format!(
+            "  {} CH=COND[,CH=COND...]  simple trigger; all conditions on one sample",
+            trigger.trigger_flag
+        ),
+        format!(
+            "  {} PATH  JSON trigger config (version {}): {}",
+            trigger.trigger_config_flag,
+            trigger.config_version,
+            trigger.modes.join(", ")
+        ),
+        format!(
+            "  {} PERCENT  {}..={} in buffer mode, default {}; stream mode fixes it at {}",
+            trigger.trigger_position_flag,
+            position.min_percent,
+            position.max_percent,
+            position.default_percent,
+            trigger.stream_mode.position_percent
+        ),
+        format!("  conditions: {}", trigger.conditions.join(", ")),
+        format!(
+            "  limits: channels 0..{}, up to {} stages, stage count 1..={}, serial data up to {} bits",
+            trigger.channel_capacity,
+            trigger.max_stages,
+            trigger.max_stage_count,
+            trigger.max_serial_data_bits
+        ),
+        format!("  stream_mode: {} only", trigger.stream_mode.modes.join(", ")),
+    ]
 }
 
 fn build_current_values(

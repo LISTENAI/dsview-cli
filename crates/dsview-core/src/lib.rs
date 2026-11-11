@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime};
 mod capture_config;
 mod device_option_validation;
 mod device_options;
+mod trigger;
 
 pub use capture_config::{
     CaptureCapabilities, CaptureConfigError, CaptureConfigRequest, ChannelModeCapability,
@@ -31,6 +32,17 @@ pub use device_options::{
     normalize_device_options_snapshot,
 };
 use dsview_sys::{AcquisitionPacketStatus, DecodeRuntimeBridge, RuntimeBridge};
+pub use dsview_sys::{TriggerObservation, TriggerPosition};
+pub use trigger::{
+    CaptureTriggerOutcome, TRIGGER_CHANNEL_CAPACITY, TRIGGER_CONFIG_VERSION,
+    TRIGGER_MAX_SERIAL_DATA_BITS, TRIGGER_MAX_STAGE_COUNT, TRIGGER_MAX_STAGES,
+    TRIGGER_POSITION_DEFAULT_PERCENT, TRIGGER_POSITION_MAX_PERCENT, TRIGGER_POSITION_MIN_PERCENT,
+    TRIGGER_STREAM_POSITION_PERCENT, TriggerChannelConditions, TriggerCombine, TriggerCondition,
+    TriggerConfigParseError, TriggerObservedReport, TriggerPattern, TriggerReport, TriggerRequest,
+    TriggerRequestedReport, TriggerSerialSpec, TriggerSpec, TriggerStageSpec,
+    TriggerValidationContext, TriggerValidationError, ValidatedTrigger, build_trigger_program,
+    parse_simple_trigger_tokens, parse_trigger_config, validate_trigger_request,
+};
 pub use dsview_sys::{
     AcquisitionSummary, AcquisitionTerminalEvent, DecodeExecutionLogicFormat,
     DecodeOptionValueKind, DecodeRuntimeError, DecodeRuntimeErrorCode, DecodeSessionChannelBinding,
@@ -1626,6 +1638,7 @@ pub enum DeviceOptionApplyStep {
     EnabledChannels,
     SampleLimit,
     SampleRate,
+    Trigger,
 }
 
 impl DeviceOptionApplyStep {
@@ -1639,6 +1652,7 @@ impl DeviceOptionApplyStep {
             Self::EnabledChannels => "enabled_channels",
             Self::SampleLimit => "sample_limit",
             Self::SampleRate => "sample_rate",
+            Self::Trigger => "trigger",
         }
     }
 }
@@ -1694,6 +1708,8 @@ pub struct CaptureRunSummary {
     pub cleanup: CaptureCleanup,
     pub effective_device_options: Option<EffectiveDeviceOptionState>,
     pub streamed_vcd: Option<StreamedVcdArtifact>,
+    /// Requested trigger and device-reported trigger facts, when a trigger was armed.
+    pub trigger: Option<CaptureTriggerOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1780,6 +1796,9 @@ pub struct CaptureMetadata {
     pub acquisition: MetadataAcquisitionInfo,
     pub artifacts: MetadataArtifactInfo,
     pub device_options: CaptureDeviceOptionFacts,
+    /// Present only when the capture armed a hardware trigger.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<TriggerReport>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1822,6 +1841,8 @@ pub struct CaptureRunRequest {
     pub stop_after: Option<Duration>,
     pub stop_on_interrupt: Option<Arc<AtomicBool>>,
     pub stream_vcd_path: Option<PathBuf>,
+    /// Hardware trigger to arm; requires `validated_device_options`.
+    pub trigger: Option<ValidatedTrigger>,
     pub wait_timeout: Duration,
     pub poll_interval: Duration,
 }
@@ -2253,6 +2274,53 @@ pub fn apply_validated_device_options(
     })
 }
 
+/// Aborts an active streaming VCD and removes its partial temp file.
+///
+/// A failed stream capture, for example one whose trigger never fired, must not
+/// leave a truncated `*.streaming.tmp` file next to the requested output.
+fn discard_streaming_vcd(runtime: &RuntimeBridge, stream_vcd_path: Option<&Path>) {
+    if let Some(path) = stream_vcd_path {
+        runtime.abort_streaming_vcd();
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// Steps `apply_validated_device_options` completes for `request`, in order.
+fn device_option_apply_steps(request: &ValidatedDeviceOptionRequest) -> Vec<DeviceOptionApplyStep> {
+    let mut steps = vec![DeviceOptionApplyStep::OperationMode];
+    if request.stop_option_code.is_some() {
+        steps.push(DeviceOptionApplyStep::StopOption);
+    }
+    steps.push(DeviceOptionApplyStep::ChannelMode);
+    if request.threshold_volts.is_some() {
+        steps.push(DeviceOptionApplyStep::ThresholdVolts);
+    }
+    if request.filter_code.is_some() {
+        steps.push(DeviceOptionApplyStep::Filter);
+    }
+    steps.extend([
+        DeviceOptionApplyStep::EnabledChannels,
+        DeviceOptionApplyStep::SampleLimit,
+        DeviceOptionApplyStep::SampleRate,
+    ]);
+    steps
+}
+
+/// Programs the validated trigger after the device options it was validated against.
+pub fn apply_validated_trigger(
+    runtime: &RuntimeBridge,
+    request: &ValidatedDeviceOptionRequest,
+    trigger: &ValidatedTrigger,
+) -> Result<(), DeviceOptionApplyFailure> {
+    runtime
+        .apply_trigger(&trigger.program)
+        .map_err(|runtime_error| DeviceOptionApplyFailure {
+            applied_steps: device_option_apply_steps(request),
+            failed_step: DeviceOptionApplyStep::Trigger,
+            runtime_error,
+        })
+}
+
 #[derive(Debug)]
 pub struct OpenedDevice<'a> {
     runtime: &'a RuntimeBridge,
@@ -2500,9 +2568,7 @@ impl Discovery {
             .map_err(BringUpError::Runtime)?;
         self.begin_streaming_vcd_if_requested(&request, stream_vcd_path)?;
         if let Err(error) = self.runtime.register_acquisition_callbacks() {
-            if stream_vcd_path.is_some() {
-                self.runtime.abort_streaming_vcd();
-            }
+            discard_streaming_vcd(&self.runtime, stream_vcd_path);
             return Err(BringUpError::Runtime(error).into());
         }
         Ok(CaptureSession { opened })
@@ -2541,23 +2607,41 @@ impl Discovery {
         let effective_device_options =
             apply_capture_request_device_options(&self.runtime, request, total_channel_count)?
                 .expect("option-aware session requires validated device options");
+        if let (Some(trigger), Some(validated_device_options)) = (
+            request.trigger.as_ref(),
+            request.validated_device_options.as_ref(),
+        ) {
+            apply_validated_trigger(&self.runtime, validated_device_options, trigger)?;
+        }
         self.runtime
             .reset_acquisition_summary()
             .map_err(BringUpError::Runtime)?;
         self.begin_streaming_vcd_if_requested(&request.config, request.stream_vcd_path.as_deref())?;
         if let Err(error) = self.runtime.register_acquisition_callbacks() {
-            if request.stream_vcd_path.is_some() {
-                self.runtime.abort_streaming_vcd();
-            }
+            discard_streaming_vcd(&self.runtime, request.stream_vcd_path.as_deref());
             return Err(BringUpError::Runtime(error).into());
         }
         Ok((CaptureSession { opened }, effective_device_options))
+    }
+
+    /// Trigger header facts recorded during the latest acquisition.
+    pub fn trigger_observation(&self) -> Result<TriggerObservation, BringUpError> {
+        self.runtime
+            .trigger_observation()
+            .map_err(BringUpError::Runtime)
     }
 
     pub fn run_capture(
         &self,
         request: &CaptureRunRequest,
     ) -> Result<CaptureRunSummary, CaptureRunError> {
+        if request.trigger.is_some() && request.validated_device_options.is_none() {
+            return Err(CaptureRunError::BringUp(BringUpError::Runtime(
+                RuntimeError::InvalidArgument(
+                    "a hardware trigger requires validated device options".to_string(),
+                ),
+            )));
+        }
         let (session, effective_device_options) = if request.validated_device_options.is_some() {
             let (session, effective_device_options) =
                 self.prepare_option_aware_capture_session(request)?;
@@ -2584,9 +2668,7 @@ impl Discovery {
             .map_err(BringUpError::Runtime)?;
         if !started.start_status.is_ok() {
             let cleanup = session.cleanup(&self.runtime, true);
-            if request.stream_vcd_path.is_some() {
-                self.runtime.abort_streaming_vcd();
-            }
+            discard_streaming_vcd(&self.runtime, request.stream_vcd_path.as_deref());
             return Err(if cleanup.succeeded() {
                 CaptureRunError::StartFailed {
                     code: started.start_status,
@@ -2671,11 +2753,18 @@ impl Discovery {
             classify_capture_completion(&summary)
         };
         let cleanup = session.cleanup(&self.runtime, true);
+        // The observation only fails to read when the bridge is unloaded; report
+        // "no trigger header" then rather than discarding the capture.
+        let trigger = request
+            .trigger
+            .as_ref()
+            .map(|requested| CaptureTriggerOutcome {
+                requested: requested.clone(),
+                observation: self.runtime.trigger_observation().unwrap_or_default(),
+            });
 
         if !cleanup.succeeded() {
-            if request.stream_vcd_path.is_some() {
-                self.runtime.abort_streaming_vcd();
-            }
+            discard_streaming_vcd(&self.runtime, request.stream_vcd_path.as_deref());
             return Err(CaptureRunError::CleanupFailed {
                 during: capture_completion_stage(completion),
                 summary,
@@ -2695,7 +2784,7 @@ impl Discovery {
                         .map_err(BringUpError::Runtime)?,
                 }),
                 _ => {
-                    self.runtime.abort_streaming_vcd();
+                    discard_streaming_vcd(&self.runtime, Some(path.as_path()));
                     None
                 }
             }
@@ -2712,6 +2801,7 @@ impl Discovery {
                 cleanup,
                 effective_device_options,
                 streamed_vcd,
+                trigger,
             }),
             CaptureCompletion::StartFailure => Err(CaptureRunError::StartFailed {
                 code: NativeErrorCode::from_raw(summary.start_status),
@@ -3266,6 +3356,7 @@ fn build_capture_metadata(
             metadata_path: metadata_path.display().to_string(),
         },
         device_options,
+        trigger: request.capture.trigger.as_ref().map(TriggerReport::from_outcome),
     })
 }
 
@@ -3813,6 +3904,7 @@ mod tests {
                 },
                 effective_device_options: None,
                 streamed_vcd: None,
+                trigger: None,
             },
             validated_config: ValidatedCaptureConfig {
                 sample_rate_hz: 100_000_000,

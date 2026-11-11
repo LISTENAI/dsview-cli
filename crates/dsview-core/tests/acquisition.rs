@@ -520,6 +520,7 @@ fn capture_without_validated_device_options_keeps_config_only_baseline() {
         stop_after: None,
         stop_on_interrupt: None,
         stream_vcd_path: None,
+        trigger: None,
         wait_timeout: Duration::from_millis(100),
         poll_interval: Duration::from_millis(10),
     };

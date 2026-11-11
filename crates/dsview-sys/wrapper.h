@@ -56,6 +56,64 @@ struct dsview_stream_export_facts {
     unsigned long long output_bytes;
 };
 
+#define DSVIEW_TRIGGER_PROBE_CAPACITY 16
+#define DSVIEW_TRIGGER_STAGE_CAPACITY 16
+
+enum dsview_trigger_mode {
+    DSVIEW_TRIGGER_MODE_SIMPLE = 0,
+    DSVIEW_TRIGGER_MODE_STAGE = 1,
+    DSVIEW_TRIGGER_MODE_SERIAL = 2,
+};
+
+/*
+ * One programmed trigger stage. Pattern arrays are indexed by probe number and
+ * hold DSView condition characters: 'X', '0', '1', 'R', 'F', or 'C'.
+ */
+struct dsview_trigger_stage_program {
+    char value0[DSVIEW_TRIGGER_PROBE_CAPACITY];
+    char value1[DSVIEW_TRIGGER_PROBE_CAPACITY];
+    uint8_t logic;
+    uint8_t inv0;
+    uint8_t inv1;
+    uint32_t count0;
+    uint32_t count1;
+};
+
+/*
+ * A complete trigger program. The bridge resets the native trigger state and
+ * replays this program through the DSView setters without interpreting it.
+ */
+struct dsview_trigger_program {
+    int enabled;
+    int mode;
+    uint16_t position_percent;
+    uint16_t stage_selector;
+    char simple[DSVIEW_TRIGGER_PROBE_CAPACITY];
+    uint16_t stage_count;
+    struct dsview_trigger_stage_program stages[DSVIEW_TRIGGER_STAGE_CAPACITY];
+};
+
+/* Read-back copy of the native trigger state for the first 16 probes. */
+struct dsview_trigger_state {
+    uint16_t enabled;
+    uint16_t mode;
+    uint16_t position_percent;
+    uint16_t stage_selector;
+    char simple0[DSVIEW_TRIGGER_PROBE_CAPACITY];
+    char simple1[DSVIEW_TRIGGER_PROBE_CAPACITY];
+    struct dsview_trigger_stage_program stages[DSVIEW_TRIGGER_STAGE_CAPACITY];
+};
+
+/* Facts from the SR_DF_TRIGGER packet of the latest acquisition. */
+struct dsview_trigger_observation {
+    int saw_trigger_packet;
+    int packet_status;
+    int has_position;
+    uint32_t raw_status;
+    uint32_t real_pos;
+    unsigned long long remain_count;
+};
+
 enum dsview_bridge_status {
     DSVIEW_BRIDGE_OK = 0,
     DSVIEW_BRIDGE_ERR_ARG = -1,
@@ -336,6 +394,9 @@ int dsview_bridge_ds_stop_collect(void);
 int dsview_bridge_ds_is_collecting(int *value);
 int dsview_bridge_ds_reset_acquisition_summary(void);
 int dsview_bridge_ds_get_acquisition_summary(struct dsview_bridge_acquisition_summary *out_summary);
+int dsview_bridge_ds_apply_trigger(const struct dsview_trigger_program *program);
+int dsview_bridge_ds_get_trigger_state(struct dsview_trigger_state *out_state);
+int dsview_bridge_ds_get_trigger_observation(struct dsview_trigger_observation *out_observation);
 int dsview_bridge_ds_export_recorded_vcd(
     const struct dsview_vcd_export_request *request,
     struct dsview_export_buffer *out_buffer);
